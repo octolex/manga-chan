@@ -36,6 +36,8 @@ final class CanvasViewController: UIViewController {
     /// than starting a fresh disconnected segment each frame.
     private var lastCommittedPoint: StrokePoint?
 
+    private var inputStats = InputStats()
+
     override func loadView() {
         view = metalView
         view.backgroundColor = .white
@@ -78,6 +80,17 @@ final class CanvasViewController: UIViewController {
         clearGesture.numberOfTouchesRequired = 2
         view.addGestureRecognizer(clearGesture)
 
+        // Squeeze (Pencil Pro) and double-tap (Pencil 2 and later). Both are
+        // only wired to counters for now — the point is to confirm they arrive
+        // before we decide what they should do.
+        let pencilInteraction = UIPencilInteraction()
+        pencilInteraction.delegate = self
+        view.addInteraction(pencilInteraction)
+
+        // Hover requires an M-series iPad and a Pencil that supports it.
+        let hoverGesture = UIHoverGestureRecognizer(target: self, action: #selector(handleHover))
+        view.addGestureRecognizer(hoverGesture)
+
         registerLifecycleObservers()
     }
 
@@ -107,6 +120,16 @@ final class CanvasViewController: UIViewController {
         renderer?.clearCanvas()
     }
 
+    @objc private func handleHover(_ gesture: UIHoverGestureRecognizer) {
+        switch gesture.state {
+        case .began, .changed:
+            inputStats.hoverOffset = Float(gesture.zOffset)
+        default:
+            inputStats.hoverOffset = -1
+        }
+        hud.update(input: inputStats)
+    }
+
     // MARK: - Touch handling
 
     private func strokePoint(from touch: UITouch) -> StrokePoint {
@@ -121,6 +144,40 @@ final class CanvasViewController: UIViewController {
         return StrokePoint(location: touch.location(in: view),
                            pressure: pressure,
                            timestamp: touch.timestamp)
+    }
+
+    /// Mirrors every Pencil channel into the HUD. Reading a live value on
+    /// screen is the only way, without a debugger, to tell a channel that is
+    /// genuinely flat from one that is not being delivered at all.
+    private func recordInput(from touch: UITouch, samplesThisEvent: Int) {
+        switch touch.type {
+        case .pencil: inputStats.touchType = "pencil"
+        case .direct: inputStats.touchType = "finger"
+        default:      inputStats.touchType = "other"
+        }
+
+        if touch.maximumPossibleForce > 0 {
+            inputStats.pressure = Float(touch.force / touch.maximumPossibleForce)
+        } else {
+            inputStats.pressure = 0
+        }
+
+        // altitudeAngle is 0 when the pencil lies flat and π/2 when upright.
+        inputStats.altitudeDegrees = Float(touch.altitudeAngle * 180 / .pi)
+
+        var azimuth = Float(touch.azimuthAngle(in: view) * 180 / .pi)
+        if azimuth < 0 { azimuth += 360 }
+        inputStats.azimuthDegrees = azimuth
+
+        // Barrel roll is Apple Pencil Pro only, and needs iOS 17.5.
+        if #available(iOS 17.5, *), touch.type == .pencil {
+            var roll = Float(touch.rollAngle * 180 / .pi)
+            if roll < 0 { roll += 360 }
+            inputStats.rollDegrees = roll
+        }
+
+        inputStats.peakSamplesPerFrame = max(inputStats.peakSamplesPerFrame, samplesThisEvent)
+        hud.update(input: inputStats)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -149,6 +206,7 @@ final class CanvasViewController: UIViewController {
                                               color: renderer?.inkColor ?? .init(0, 0, 0, 1))
         renderer?.appendCommitted(committed, sampleCount: coalesced.count)
         lastCommittedPoint = samples.last
+        recordInput(from: active, samplesThisEvent: coalesced.count)
 
         // Predictions extend from the newest committed sample. They go only to
         // the drawable, never to the canvas — see the note in Renderer.
@@ -237,4 +295,24 @@ final class CanvasViewController: UIViewController {
 
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
+}
+
+// MARK: - Pencil squeeze and double-tap
+
+extension CanvasViewController: UIPencilInteractionDelegate {
+
+    @available(iOS 17.5, *)
+    func pencilInteraction(_ interaction: UIPencilInteraction,
+                           didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
+        guard squeeze.phase == .ended else { return }
+        inputStats.squeezeCount += 1
+        Diagnostics.log("pencil squeeze (\(inputStats.squeezeCount))")
+        hud.update(input: inputStats)
+    }
+
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+        inputStats.doubleTapCount += 1
+        Diagnostics.log("pencil double-tap (\(inputStats.doubleTapCount))")
+        hud.update(input: inputStats)
+    }
 }

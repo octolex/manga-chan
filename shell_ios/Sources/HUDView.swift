@@ -21,6 +21,7 @@ final class HUDView: UIView {
     private let label = UILabel()
     private var mode: Mode = .detailed
     private var latest = FrameStats()
+    private var input = InputStats()
     private var staticInfo: [String] = []
 
     override init(frame: CGRect) {
@@ -72,6 +73,11 @@ final class HUDView: UIView {
         render()
     }
 
+    func update(input stats: InputStats) {
+        input = stats
+        render()
+    }
+
     func addStaticLine(_ line: String) {
         staticInfo.append(line)
         render()
@@ -103,8 +109,24 @@ final class HUDView: UIView {
             // means coalesced touches are not being consumed.
             lines.append(String(format: "samples  %6d", latest.samplesThisFrame))
             lines.append(String(format: "verts    %6d", latest.strokeVerticesThisFrame))
+            lines.append(String(format: "peak/fr  %6d", input.peakSamplesPerFrame))
             lines.append(String(format: "drawable %.0f×%.0f",
                                 latest.drawableSize.width, latest.drawableSize.height))
+
+            lines.append("")
+            lines.append("input    \(input.touchType)")
+            lines.append(String(format: "pressure %6.3f", input.pressure))
+            lines.append(String(format: "tilt     %6.1f°", input.altitudeDegrees))
+            lines.append(String(format: "azimuth  %6.1f°", input.azimuthDegrees))
+            // A dash rather than a number distinguishes "this Pencil has no
+            // barrel roll" from "barrel roll is reading exactly zero".
+            lines.append("roll     " + (input.rollDegrees < 0
+                                        ? "     —" : String(format: "%6.1f°", input.rollDegrees)))
+            lines.append("hover    " + (input.hoverOffset < 0
+                                        ? "     —" : String(format: "%6.1f", input.hoverOffset)))
+            lines.append(String(format: "squeeze  %6d", input.squeezeCount))
+            lines.append(String(format: "dbl-tap  %6d", input.doubleTapCount))
+
             lines.append("")
             lines.append(contentsOf: staticInfo)
             label.text = lines.joined(separator: "\n")

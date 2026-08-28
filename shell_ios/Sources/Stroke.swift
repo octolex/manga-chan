@@ -25,6 +25,24 @@ struct StrokePoint {
     var timestamp: TimeInterval
 }
 
+/// Live readout of every input channel the Pencil exposes.
+///
+/// This exists to answer one question quickly: is each channel actually
+/// arriving, or is it silently reading zero? Without a debugger on the device,
+/// a value on screen is the only way to tell "tilt is flat" from "tilt is not
+/// being delivered at all".
+struct InputStats {
+    var touchType: String = "—"
+    var pressure: Float = 0
+    var altitudeDegrees: Float = 0   // 90° = perpendicular to the screen
+    var azimuthDegrees: Float = 0    // direction the pencil points, 0...360
+    var rollDegrees: Float = -1      // barrel roll; -1 means unsupported
+    var hoverOffset: Float = -1      // distance above the glass; -1 means not hovering
+    var squeezeCount: Int = 0
+    var doubleTapCount: Int = 0
+    var peakSamplesPerFrame: Int = 0
+}
+
 enum StrokeGeometry {
 
     /// Width in points at full pressure.
