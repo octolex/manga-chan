@@ -63,7 +63,13 @@ Pixels cross between GPU and engine **once per stroke**, never per frame. Undo
 and redo re-upload only the tiles that actually changed, so their cost tracks
 the size of the edit rather than the size of the document.
 
-*Awaiting device verification — see [TESTING.md](TESTING.md), items 14–22.*
+**Verified on device.** Undo and redo confirmed across non-linear history —
+undo, draw, undo, redo — including redo-branch invalidation. Full-canvas
+stroke commit costs 6.5 ms, once per stroke rather than per frame.
+
+That 6.5 ms is pixel copying, not tile selection, so M2 should back tile
+buffers with GPU-visible memory and remove the copy entirely. On unified
+memory it is free.
 
 ---
 

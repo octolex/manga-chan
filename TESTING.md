@@ -76,4 +76,22 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-08-28 | Clear, then undo to recover | Works |
 | 2026-08-28 | Rotation preserves drawing | Works |
 | 2026-08-28 | Tile accounting climbs with coverage | Works |
-| 2026-08-28 | **Undo of strokes** | **BROKEN** - strokes never bracketed. Fixed, awaiting retest |
+| 2026-08-28 | Undo/redo of strokes | Works after two fixes (see below) |
+| 2026-08-28 | Non-linear history: undo, draw, undo, redo | Consistent across repeated scenarios |
+| 2026-08-28 | Redo branch invalidation | Correct |
+| 2026-08-28 | Capture cost, full-canvas stroke | 6.5 ms, once per stroke. Accepted |
+
+Two bugs found and fixed during this session, both invisible to CI because
+they lived in the Swift shell rather than the engine:
+
+1. **Strokes were never bracketed.** `beginStroke` was never called, so no
+   stroke entered the undo history at all. Undo was unwinding earlier `clear`
+   operations, which looked like random cells reverting.
+2. **Gestures committed phantom strokes.** A two-finger tap still delivers
+   touches to the view, so the tap started a stroke, which committed an undo
+   action and cleared the redo stack. Undo appeared to work once and then
+   stop; redo never worked.
+
+The engine was correct throughout. Both bugs were in how the shell drove it,
+which is an argument for pushing more of this logic behind the C ABI where CI
+can reach it.
