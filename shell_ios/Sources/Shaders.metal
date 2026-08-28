@@ -1,11 +1,18 @@
 //
 //  Shaders.metal
 //
-//  M0 draws strokes as antialiased ribbons straight into a persistent canvas
-//  texture. This is deliberately NOT the real brush engine — M3 replaces it
-//  with dab stamping and scratch-buffer accumulation. What matters here is the
-//  structure: committed geometry goes into the canvas, predicted geometry only
-//  ever goes to the drawable.
+//  Stroke rendering is split into coverage and colour:
+//
+//    stroke_coverage_fragment  writes coverage into a single-channel scratch
+//                              texture, blended with MAX rather than alpha-over
+//    composite_fragment        tints that coverage with the ink colour and
+//                              composites it in one pass
+//
+//  The split is what makes overlapping geometry free. A dense ribbon overlaps
+//  itself constantly, and alpha-over would darken every overlap into a visible
+//  bead along the stroke. Taking the maximum coverage instead means a pixel
+//  covered ten times looks exactly like a pixel covered once — which is also
+//  what stops a semi-transparent stroke from darkening where it crosses itself.
 //
 
 #include <metal_stdlib>
@@ -31,20 +38,18 @@ vertex StrokeRasterData stroke_vertex(uint vertexID [[vertex_id]],
     return out;
 }
 
-fragment float4 stroke_fragment(StrokeRasterData in [[stage_in]])
+fragment float4 stroke_coverage_fragment(StrokeRasterData in [[stage_in]])
 {
     // `edge` runs -1..+1 across the ribbon. Fading the last pixel of that
     // range gives a cheap analytic antialiased edge without MSAA, which would
-    // cost us bandwidth we would rather spend on the brush engine later.
+    // cost bandwidth better spent on the brush engine later.
     float d = abs(in.edge);
     float w = clamp(fwidth(in.edge), 0.0001, 1.0);
-    float coverage = 1.0 - smoothstep(1.0 - w, 1.0, d);
-
-    float alpha = in.color.a * coverage;
-    return float4(in.color.rgb * alpha, alpha); // premultiplied
+    float coverage = (1.0 - smoothstep(1.0 - w, 1.0, d)) * in.color.a;
+    return float4(coverage, 0.0, 0.0, 0.0);
 }
 
-// MARK: - Canvas presentation
+// MARK: - Fullscreen passes
 
 struct BlitRasterData {
     float4 position [[position]];
@@ -68,4 +73,14 @@ fragment float4 blit_fragment(BlitRasterData in [[stage_in]],
 {
     constexpr sampler s(filter::nearest, address::clamp_to_edge);
     return canvas.sample(s, in.texCoord);
+}
+
+fragment float4 composite_fragment(BlitRasterData in [[stage_in]],
+                                   texture2d<float> scratch [[texture(0)]],
+                                   constant float4 &inkColor [[buffer(0)]])
+{
+    constexpr sampler s(filter::nearest, address::clamp_to_edge);
+    float coverage = scratch.sample(s, in.texCoord).r;
+    float alpha = inkColor.a * coverage;
+    return float4(inkColor.rgb * alpha, alpha); // premultiplied
 }

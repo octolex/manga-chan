@@ -32,9 +32,8 @@ final class CanvasViewController: UIViewController {
     /// a resting palm cannot start a second stroke.
     private var activeTouch: UITouch?
 
-    /// Last committed sample, kept so the next batch connects to it rather
-    /// than starting a fresh disconnected segment each frame.
-    private var lastCommittedPoint: StrokePoint?
+    /// Accumulates the stroke in progress. Nil when nothing is being drawn.
+    private var strokeBuilder: StrokeBuilder?
 
     private var inputStats = InputStats()
 
@@ -189,37 +188,36 @@ final class CanvasViewController: UIViewController {
         guard let touch else { return }
 
         activeTouch = touch
-        lastCommittedPoint = strokePoint(from: touch)
+        let builder = StrokeBuilder(viewSize: view.bounds.size,
+                                    color: renderer?.inkColor ?? .init(0, 0, 0, 1))
+        builder.append([strokePoint(from: touch)])
+        strokeBuilder = builder
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesMoved(touches, with: event)
-        guard let active = activeTouch, touches.contains(active) else { return }
+        guard let active = activeTouch, touches.contains(active),
+              let builder = strokeBuilder else { return }
 
+        // coalescedTouches carries every sample the digitiser captured since
+        // the last event, not just the newest one. Using active.location alone
+        // would discard most of a fast stroke.
         let coalesced = event?.coalescedTouches(for: active) ?? [active]
-        var samples: [StrokePoint] = []
-        if let last = lastCommittedPoint { samples.append(last) }
-        samples.append(contentsOf: coalesced.map(strokePoint(from:)))
-
-        let committed = StrokeGeometry.ribbon(points: samples,
-                                              viewSize: view.bounds.size,
-                                              color: renderer?.inkColor ?? .init(0, 0, 0, 1))
-        renderer?.appendCommitted(committed, sampleCount: coalesced.count)
-        lastCommittedPoint = samples.last
+        builder.append(coalesced.map(strokePoint(from:)))
+        renderer?.setStrokeGeometry(builder.vertices, sampleCount: coalesced.count)
         recordInput(from: active, samplesThisEvent: coalesced.count)
 
-        // Predictions extend from the newest committed sample. They go only to
-        // the drawable, never to the canvas — see the note in Renderer.
+        // Predictions extend from the newest real sample. They are drawn but
+        // never committed — see the note in Renderer.
         let predicted = event?.predictedTouches(for: active) ?? []
-        if predicted.isEmpty {
-            renderer?.setPredicted([])
+        if let seed = builder.lastRawPoint, !predicted.isEmpty {
+            let lookahead = [seed] + predicted.map(strokePoint(from:))
+            renderer?.setPredictionGeometry(
+                StrokeGeometry.simpleRibbon(points: lookahead,
+                                            viewSize: view.bounds.size,
+                                            color: renderer?.inkColor ?? .init(0, 0, 0, 1)))
         } else {
-            var lookahead: [StrokePoint] = []
-            if let last = lastCommittedPoint { lookahead.append(last) }
-            lookahead.append(contentsOf: predicted.map(strokePoint(from:)))
-            renderer?.setPredicted(StrokeGeometry.ribbon(points: lookahead,
-                                                         viewSize: view.bounds.size,
-                                                         color: renderer?.inkColor ?? .init(0, 0, 0, 1)))
+            renderer?.setPredictionGeometry([])
         }
     }
 
@@ -236,21 +234,23 @@ final class CanvasViewController: UIViewController {
     }
 
     private func finishStroke(_ touch: UITouch, event: UIEvent?) {
+        defer {
+            activeTouch = nil
+            strokeBuilder = nil
+        }
+        guard let builder = strokeBuilder else { return }
+
         let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
-        var samples: [StrokePoint] = []
-        if let last = lastCommittedPoint { samples.append(last) }
-        samples.append(contentsOf: coalesced.map(strokePoint(from:)))
+        builder.append(coalesced.map(strokePoint(from:)))
+        // Flush the trailing segments that were still waiting on a lookahead
+        // sample which will now never arrive.
+        builder.finish()
 
-        let committed = StrokeGeometry.ribbon(points: samples,
-                                              viewSize: view.bounds.size,
-                                              color: renderer?.inkColor ?? .init(0, 0, 0, 1))
-        renderer?.appendCommitted(committed, sampleCount: coalesced.count)
-
-        // Drop the prediction immediately; leaving it up would show a stub of
-        // line extending past where the stroke actually stopped.
-        renderer?.setPredicted([])
-        activeTouch = nil
-        lastCommittedPoint = nil
+        renderer?.setStrokeGeometry(builder.vertices, sampleCount: coalesced.count)
+        // Dropping the prediction here matters: leaving it up would commit a
+        // stub of line extending past where the stroke actually stopped.
+        renderer?.setPredictionGeometry([])
+        renderer?.endStroke()
     }
 
     // MARK: - Lifecycle
