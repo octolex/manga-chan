@@ -89,11 +89,20 @@ final class HUDView: UIView {
 
         case .detailed:
             alpha = 1.0
+            // Frame budget comes from the panel, not a constant — 16.6 ms on a
+            // 60Hz iPad Air, 8.3 ms on a 120Hz iPad Pro.
+            let budgetMs = latest.displayMaxFPS > 0 ? 1000.0 / Double(latest.displayMaxFPS) : 0
             var lines: [String] = []
-            lines.append(String(format: "fps      %6.1f", latest.fps))
+            lines.append(String(format: "fps      %6.1f / %d", latest.fps, latest.displayMaxFPS))
+            lines.append(String(format: "budget   %6.2f ms", budgetMs))
             lines.append(String(format: "cpu      %6.2f ms", latest.cpuFrameMs))
             lines.append(String(format: "gpu      %6.2f ms", latest.gpuFrameMs))
             lines.append(String(format: "frame    %6llu", latest.frameIndex))
+            // Pencil samples arriving per frame. At 60Hz with 240Hz Pencil
+            // sampling this should sit near 4 while drawing; a persistent 1
+            // means coalesced touches are not being consumed.
+            lines.append(String(format: "samples  %6d", latest.samplesThisFrame))
+            lines.append(String(format: "verts    %6d", latest.strokeVerticesThisFrame))
             lines.append(String(format: "drawable %.0f×%.0f",
                                 latest.drawableSize.width, latest.drawableSize.height))
             lines.append("")

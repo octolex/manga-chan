@@ -1,7 +1,12 @@
 //
 //  CanvasViewController.swift
 //
-//  Hosts the Metal layer and the instrumentation HUD.
+//  Hosts the Metal layer, the HUD, and the touch pipeline.
+//
+//  The input handling is the substance here. Apple Pencil samples at ~240Hz
+//  while this panel refreshes at 60Hz, so UIKit hands us roughly four
+//  coalesced samples per frame. Using only `touch.location` would discard
+//  three quarters of the stroke and produce visibly faceted curves at speed.
 //
 //  Note the failure handling: if the renderer cannot start, the reason is
 //  painted onto the screen in large text. On a device we cannot attach a
@@ -23,9 +28,18 @@ final class CanvasViewController: UIViewController {
     private let hud = HUDView()
     private var renderer: Renderer?
 
+    /// The touch currently drawing. Any other concurrent touch is ignored, so
+    /// a resting palm cannot start a second stroke.
+    private var activeTouch: UITouch?
+
+    /// Last committed sample, kept so the next batch connects to it rather
+    /// than starting a fresh disconnected segment each frame.
+    private var lastCommittedPoint: StrokePoint?
+
     override func loadView() {
         view = metalView
-        view.backgroundColor = .black
+        view.backgroundColor = .white
+        view.isMultipleTouchEnabled = true
     }
 
     override func viewDidLoad() {
@@ -52,12 +66,17 @@ final class CanvasViewController: UIViewController {
             }
             self.renderer = renderer
             hud.addStaticLine(MTLCreateSystemDefaultDevice()?.name ?? "unknown GPU")
+            hud.addStaticLine("two-finger tap to clear")
         } catch {
             let message = (error as? RendererError)?.description ?? String(describing: error)
             Diagnostics.log("RENDERER INIT FAILED: \(message)")
             Diagnostics.flush()
             showFatal(message)
         }
+
+        let clearGesture = UITapGestureRecognizer(target: self, action: #selector(clearCanvas))
+        clearGesture.numberOfTouchesRequired = 2
+        view.addGestureRecognizer(clearGesture)
 
         registerLifecycleObservers()
     }
@@ -72,12 +91,108 @@ final class CanvasViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        renderer?.start()
+        // Query the panel rather than assuming: iPad Air is 60Hz, iPad Pro is
+        // 120Hz, and a hardcoded value is wrong on one of them.
+        let maxFPS = view.window?.screen.maximumFramesPerSecond ?? UIScreen.main.maximumFramesPerSecond
+        hud.addStaticLine("panel max \(maxFPS) Hz")
+        renderer?.start(maxFramesPerSecond: maxFPS)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         renderer?.stop()
+    }
+
+    @objc private func clearCanvas() {
+        renderer?.clearCanvas()
+    }
+
+    // MARK: - Touch handling
+
+    private func strokePoint(from touch: UITouch) -> StrokePoint {
+        let pressure: Float
+        if touch.type == .pencil, touch.maximumPossibleForce > 0 {
+            pressure = Float(touch.force / touch.maximumPossibleForce)
+        } else {
+            // Fingers report no usable force on iPad, so draw at a constant
+            // mid weight rather than a stroke that tapers to nothing.
+            pressure = 0.5
+        }
+        return StrokePoint(location: touch.location(in: view),
+                           pressure: pressure,
+                           timestamp: touch.timestamp)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        guard activeTouch == nil else { return }
+
+        // Prefer the Pencil if both are down, so a resting hand never wins.
+        let touch = touches.first(where: { $0.type == .pencil }) ?? touches.first
+        guard let touch else { return }
+
+        activeTouch = touch
+        lastCommittedPoint = strokePoint(from: touch)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        guard let active = activeTouch, touches.contains(active) else { return }
+
+        let coalesced = event?.coalescedTouches(for: active) ?? [active]
+        var samples: [StrokePoint] = []
+        if let last = lastCommittedPoint { samples.append(last) }
+        samples.append(contentsOf: coalesced.map(strokePoint(from:)))
+
+        let committed = StrokeGeometry.ribbon(points: samples,
+                                              viewSize: view.bounds.size,
+                                              color: renderer?.inkColor ?? .init(0, 0, 0, 1))
+        renderer?.appendCommitted(committed, sampleCount: coalesced.count)
+        lastCommittedPoint = samples.last
+
+        // Predictions extend from the newest committed sample. They go only to
+        // the drawable, never to the canvas — see the note in Renderer.
+        let predicted = event?.predictedTouches(for: active) ?? []
+        if predicted.isEmpty {
+            renderer?.setPredicted([])
+        } else {
+            var lookahead: [StrokePoint] = []
+            if let last = lastCommittedPoint { lookahead.append(last) }
+            lookahead.append(contentsOf: predicted.map(strokePoint(from:)))
+            renderer?.setPredicted(StrokeGeometry.ribbon(points: lookahead,
+                                                         viewSize: view.bounds.size,
+                                                         color: renderer?.inkColor ?? .init(0, 0, 0, 1)))
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        guard let active = activeTouch, touches.contains(active) else { return }
+        finishStroke(active, event: event)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        guard let active = activeTouch, touches.contains(active) else { return }
+        finishStroke(active, event: event)
+    }
+
+    private func finishStroke(_ touch: UITouch, event: UIEvent?) {
+        let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
+        var samples: [StrokePoint] = []
+        if let last = lastCommittedPoint { samples.append(last) }
+        samples.append(contentsOf: coalesced.map(strokePoint(from:)))
+
+        let committed = StrokeGeometry.ribbon(points: samples,
+                                              viewSize: view.bounds.size,
+                                              color: renderer?.inkColor ?? .init(0, 0, 0, 1))
+        renderer?.appendCommitted(committed, sampleCount: coalesced.count)
+
+        // Drop the prediction immediately; leaving it up would show a stub of
+        // line extending past where the stroke actually stopped.
+        renderer?.setPredicted([])
+        activeTouch = nil
+        lastCommittedPoint = nil
     }
 
     // MARK: - Lifecycle
@@ -98,7 +213,8 @@ final class CanvasViewController: UIViewController {
     }
 
     @objc private func appWillEnterForeground() {
-        renderer?.start()
+        let maxFPS = view.window?.screen.maximumFramesPerSecond ?? UIScreen.main.maximumFramesPerSecond
+        renderer?.start(maxFramesPerSecond: maxFPS)
     }
 
     // MARK: - Failure display
@@ -108,7 +224,7 @@ final class CanvasViewController: UIViewController {
         label.text = "Renderer failed to start\n\n\(message)\n\nSee session.log in the Files app."
         label.numberOfLines = 0
         label.textAlignment = .center
-        label.textColor = UIColor(red: 1.0, green: 0.45, blue: 0.45, alpha: 1.0)
+        label.textColor = UIColor(red: 0.8, green: 0.1, blue: 0.1, alpha: 1.0)
         label.font = .monospacedSystemFont(ofSize: 18, weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(label)

@@ -1,10 +1,21 @@
 //
 //  Renderer.swift
 //
-//  M0 draws one triangle. The value here is not the triangle — it is that the
-//  frame pacing, the GPU timing capture and the stats plumbing are correct
-//  from the first commit, so that every later milestone is measured rather
-//  than guessed at.
+//  Two passes per frame:
+//
+//    1. Committed stroke geometry is drawn into a persistent canvas texture.
+//    2. The canvas is blitted to the drawable, then predicted geometry is
+//       drawn on top of it.
+//
+//  The split is the important part. Predicted touches are a guess about where
+//  the Pencil is going, and they are frequently wrong. Drawing them only to
+//  the drawable — which is discarded and rebuilt every frame — means a wrong
+//  guess vanishes on the next frame instead of leaving a permanent artefact
+//  on the canvas. That rule survives into the real tile engine at M1.
+//
+//  Threading: the display link runs on the main run loop and touches arrive on
+//  the main thread, so the vertex queues below need no locking. If the render
+//  loop ever moves to its own thread, that changes.
 //
 
 import Metal
@@ -14,10 +25,13 @@ import simd
 
 struct FrameStats {
     var fps: Double = 0
+    var displayMaxFPS: Int = 0
     var cpuFrameMs: Double = 0
     var gpuFrameMs: Double = 0
     var frameIndex: UInt64 = 0
     var drawableSize: CGSize = .zero
+    var samplesThisFrame: Int = 0
+    var strokeVerticesThisFrame: Int = 0
 }
 
 enum RendererError: Error, CustomStringConvertible {
@@ -40,13 +54,22 @@ final class Renderer: NSObject {
 
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
-    private let pipelineState: MTLRenderPipelineState
+    private let strokePipeline: MTLRenderPipelineState
+    private let blitPipeline: MTLRenderPipelineState
     private let layer: CAMetalLayer
 
     private var displayLink: CAMetalDisplayLink?
-    private var vertexBuffer: MTLBuffer?
 
-    /// Called on the main thread after every presented frame.
+    private var canvasTexture: MTLTexture?
+    private var canvasNeedsClear = true
+
+    private var committedVertices: [MSStrokeVertex] = []
+    private var predictedVertices: [MSStrokeVertex] = []
+    private var samplesThisFrame = 0
+
+    /// Ink colour, straight (not premultiplied); the shader premultiplies.
+    var inkColor = simd_float4(0.09, 0.09, 0.11, 1.0)
+
     var onStats: ((FrameStats) -> Void)?
 
     private var stats = FrameStats()
@@ -56,20 +79,15 @@ final class Renderer: NSObject {
     private var smoothedCPUMs: Double = 0
 
     init(layer: CAMetalLayer) throws {
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            throw RendererError.noDevice
-        }
-        guard let queue = device.makeCommandQueue() else {
-            throw RendererError.noCommandQueue
-        }
-        guard let library = device.makeDefaultLibrary() else {
-            throw RendererError.noShaderLibrary
-        }
-        guard let vertexFunction = library.makeFunction(name: "flat_vertex") else {
-            throw RendererError.missingFunction("flat_vertex")
-        }
-        guard let fragmentFunction = library.makeFunction(name: "flat_fragment") else {
-            throw RendererError.missingFunction("flat_fragment")
+        guard let device = MTLCreateSystemDefaultDevice() else { throw RendererError.noDevice }
+        guard let queue = device.makeCommandQueue() else { throw RendererError.noCommandQueue }
+        guard let library = device.makeDefaultLibrary() else { throw RendererError.noShaderLibrary }
+
+        func function(_ name: String) throws -> MTLFunction {
+            guard let f = library.makeFunction(name: name) else {
+                throw RendererError.missingFunction(name)
+            }
+            return f
         }
 
         self.device = device
@@ -83,16 +101,31 @@ final class Renderer: NSObject {
         // latency, which is the wrong trade for a drawing app.
         layer.maximumDrawableCount = 2
 
-        let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.label = "Flat colour pipeline"
-        descriptor.vertexFunction = vertexFunction
-        descriptor.fragmentFunction = fragmentFunction
-        descriptor.colorAttachments[0].pixelFormat = layer.pixelFormat
-        self.pipelineState = try device.makeRenderPipelineState(descriptor: descriptor)
+        let strokeDescriptor = MTLRenderPipelineDescriptor()
+        strokeDescriptor.label = "Stroke ribbon"
+        strokeDescriptor.vertexFunction = try function("stroke_vertex")
+        strokeDescriptor.fragmentFunction = try function("stroke_fragment")
+        let attachment = strokeDescriptor.colorAttachments[0]!
+        attachment.pixelFormat = layer.pixelFormat
+        attachment.isBlendingEnabled = true
+        attachment.rgbBlendOperation = .add
+        attachment.alphaBlendOperation = .add
+        // Source factor is .one because the fragment shader already outputs
+        // premultiplied alpha.
+        attachment.sourceRGBBlendFactor = .one
+        attachment.sourceAlphaBlendFactor = .one
+        attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        self.strokePipeline = try device.makeRenderPipelineState(descriptor: strokeDescriptor)
+
+        let blitDescriptor = MTLRenderPipelineDescriptor()
+        blitDescriptor.label = "Canvas blit"
+        blitDescriptor.vertexFunction = try function("fullscreen_vertex")
+        blitDescriptor.fragmentFunction = try function("blit_fragment")
+        blitDescriptor.colorAttachments[0].pixelFormat = layer.pixelFormat
+        self.blitPipeline = try device.makeRenderPipelineState(descriptor: blitDescriptor)
 
         super.init()
-
-        makeTriangle()
 
         Diagnostics.log("Metal device: \(device.name)")
         Diagnostics.log("  supportsFamily(.apple8): \(device.supportsFamily(.apple8))")
@@ -101,29 +134,47 @@ final class Renderer: NSObject {
         Diagnostics.log("  recommendedMaxWorkingSetSize: \(device.recommendedMaxWorkingSetSize / (1024 * 1024)) MB")
     }
 
-    private func makeTriangle() {
-        let vertices: [MSVertex] = [
-            MSVertex(position: simd_float2( 0.0,  0.55), color: simd_float4(0.95, 0.26, 0.35, 1.0)),
-            MSVertex(position: simd_float2(-0.55, -0.45), color: simd_float4(0.20, 0.65, 0.95, 1.0)),
-            MSVertex(position: simd_float2( 0.55, -0.45), color: simd_float4(0.98, 0.82, 0.25, 1.0)),
-        ]
-        vertexBuffer = device.makeBuffer(bytes: vertices,
-                                         length: MemoryLayout<MSVertex>.stride * vertices.count,
-                                         options: .storageModeShared)
-        vertexBuffer?.label = "Triangle vertices"
+    // MARK: - Input
+
+    func appendCommitted(_ vertices: [MSStrokeVertex], sampleCount: Int) {
+        committedVertices.append(contentsOf: vertices)
+        samplesThisFrame += sampleCount
+    }
+
+    func setPredicted(_ vertices: [MSStrokeVertex]) {
+        predictedVertices = vertices
+    }
+
+    func clearCanvas() {
+        canvasNeedsClear = true
+        committedVertices.removeAll(keepingCapacity: true)
+        predictedVertices.removeAll(keepingCapacity: true)
+        Diagnostics.log("canvas cleared")
     }
 
     // MARK: - Frame loop
 
-    func start() {
+    /// - Parameter maxFramesPerSecond: the panel's real capability, from
+    ///   `UIScreen.maximumFramesPerSecond`. Queried rather than assumed —
+    ///   iPad Air is 60Hz, iPad Pro is 120Hz, and hardcoding either is wrong
+    ///   on the other.
+    func start(maxFramesPerSecond: Int) {
+        guard displayLink == nil else { return }
+
+        let maxFPS = Float(max(30, maxFramesPerSecond))
         let link = CAMetalDisplayLink(metalLayer: layer)
         link.delegate = self
-        // Ask for the full 120Hz the iPad Air M4 can deliver. Info.plist must
-        // also set CADisableMinimumFrameDuration or this is silently ignored.
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        // Allowing the system to halve the rate when nothing is happening
+        // saves battery. M4 should tighten this to pin the rate while a stroke
+        // is in progress, where any drop is directly visible as lag.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: maxFPS / 2,
+                                                        maximum: maxFPS,
+                                                        preferred: maxFPS)
         link.add(to: .main, forMode: .common)
         displayLink = link
-        Diagnostics.log("display link started")
+
+        stats.displayMaxFPS = maxFramesPerSecond
+        Diagnostics.log("display link started (panel max \(maxFramesPerSecond) Hz)")
     }
 
     func stop() {
@@ -138,45 +189,99 @@ final class Renderer: NSObject {
         stats.drawableSize = size
     }
 
+    private func ensureCanvas() {
+        let width = Int(layer.drawableSize.width)
+        let height = Int(layer.drawableSize.height)
+        guard width > 0, height > 0 else { return }
+
+        if let existing = canvasTexture, existing.width == width, existing.height == height {
+            return
+        }
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: layer.pixelFormat,
+                                                                 width: width,
+                                                                 height: height,
+                                                                 mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .private
+        canvasTexture = device.makeTexture(descriptor: descriptor)
+        canvasTexture?.label = "Canvas"
+        canvasNeedsClear = true
+
+        let mb = (width * height * 4) / (1024 * 1024)
+        Diagnostics.log("canvas texture \(width)×\(height) (\(mb) MB)")
+    }
+
+    private func encode(_ vertices: [MSStrokeVertex], into encoder: MTLRenderCommandEncoder) {
+        guard !vertices.isEmpty else { return }
+        let length = MemoryLayout<MSStrokeVertex>.stride * vertices.count
+        guard let buffer = device.makeBuffer(bytes: vertices, length: length, options: .storageModeShared) else {
+            return
+        }
+        encoder.setRenderPipelineState(strokePipeline)
+        encoder.setVertexBuffer(buffer, offset: 0, index: Int(MSBufferIndexVertices.rawValue))
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
+    }
+
     private func render(to drawable: CAMetalDrawable, targetTimestamp: CFTimeInterval) {
         let cpuStart = CACurrentMediaTime()
 
-        let passDescriptor = MTLRenderPassDescriptor()
-        passDescriptor.colorAttachments[0].texture = drawable.texture
-        passDescriptor.colorAttachments[0].loadAction = .clear
-        passDescriptor.colorAttachments[0].storeAction = .store
-        passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0.07, green: 0.07, blue: 0.08, alpha: 1.0)
-
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
-            return
-        }
+        ensureCanvas()
+        guard let canvas = canvasTexture,
+              let commandBuffer = commandQueue.makeCommandBuffer() else { return }
         commandBuffer.label = "Frame \(stats.frameIndex)"
 
-        encoder.setRenderPipelineState(pipelineState)
-        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: Int(MSBufferIndexVertices.rawValue))
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        encoder.endEncoding()
+        let vertexCount = committedVertices.count + predictedVertices.count
+
+        // Pass 1 — commit finished geometry into the canvas.
+        if canvasNeedsClear || !committedVertices.isEmpty {
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = canvas
+            pass.colorAttachments[0].loadAction = canvasNeedsClear ? .clear : .load
+            pass.colorAttachments[0].storeAction = .store
+            pass.colorAttachments[0].clearColor = MTLClearColor(red: 1, green: 1, blue: 1, alpha: 1)
+
+            if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) {
+                encoder.label = "Commit strokes"
+                encode(committedVertices, into: encoder)
+                encoder.endEncoding()
+            }
+            canvasNeedsClear = false
+            committedVertices.removeAll(keepingCapacity: true)
+        }
+
+        // Pass 2 — present the canvas, then the transient prediction on top.
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = drawable.texture
+        // The fullscreen triangle covers every pixel, so there is nothing worth
+        // loading or clearing first.
+        pass.colorAttachments[0].loadAction = .dontCare
+        pass.colorAttachments[0].storeAction = .store
+
+        if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) {
+            encoder.label = "Present"
+            encoder.setRenderPipelineState(blitPipeline)
+            encoder.setFragmentTexture(canvas, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            encode(predictedVertices, into: encoder)
+            encoder.endEncoding()
+        }
 
         commandBuffer.addCompletedHandler { [weak self] buffer in
-            // gpuStartTime/gpuEndTime are the only GPU timings available to us
-            // without Instruments, so they carry a lot of weight in this project.
             let gpuMs = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000.0
-            DispatchQueue.main.async {
-                self?.recordGPUTime(gpuMs)
-            }
+            DispatchQueue.main.async { self?.recordGPUTime(gpuMs) }
         }
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
 
         let cpuMs = (CACurrentMediaTime() - cpuStart) * 1000.0
-        recordCPUTime(cpuMs, targetTimestamp: targetTimestamp)
+        recordFrame(cpuMs: cpuMs, targetTimestamp: targetTimestamp, vertexCount: vertexCount)
     }
 
     // MARK: - Statistics
 
-    private func recordCPUTime(_ cpuMs: Double, targetTimestamp: CFTimeInterval) {
+    private func recordFrame(cpuMs: Double, targetTimestamp: CFTimeInterval, vertexCount: Int) {
         stats.frameIndex &+= 1
 
         if lastFrameTimestamp > 0 {
@@ -187,13 +292,16 @@ final class Renderer: NSObject {
             }
         }
         lastFrameTimestamp = targetTimestamp
-
         smoothedCPUMs = smoothedCPUMs == 0 ? cpuMs : smoothedCPUMs * 0.9 + cpuMs * 0.1
 
         stats.fps = smoothedFPS
         stats.cpuFrameMs = smoothedCPUMs
         stats.gpuFrameMs = smoothedGPUMs
+        stats.samplesThisFrame = samplesThisFrame
+        stats.strokeVerticesThisFrame = vertexCount
         onStats?(stats)
+
+        samplesThisFrame = 0
     }
 
     private func recordGPUTime(_ gpuMs: Double) {
