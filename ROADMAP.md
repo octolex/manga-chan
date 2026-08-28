@@ -24,7 +24,7 @@ until this worked.
 | ✅ | Catmull-Rom resampling and max-coverage accumulation |
 | ✅ | Input inspector for pressure, tilt, azimuth, roll, hover, squeeze |
 
-**Measured:** ~10 min push-to-install · 60 fps · 0.14 ms CPU · 0.85 ms GPU.
+**Measured:** ~40 s from push to a downloadable `.ipa` · 60 fps · 0.14 ms CPU · 0.85 ms GPU.
 The iPad Air M4 is a 60 Hz panel with no ProMotion, so the frame budget on
 this device is 16.6 ms rather than 8.3 ms.
 

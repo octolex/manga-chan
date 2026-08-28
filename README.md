@@ -29,6 +29,10 @@ Windows  ──git push──▶  GitHub Actions (macos runner)
 CI never signs anything. Sideloadly signs on Windows with your free Apple ID,
 which is why this repository contains no certificates and needs no secrets.
 
+The macOS job takes about 40 seconds. Engine tests run separately on free
+Linux and Windows runners in under a minute, so most work never waits on a Mac
+at all.
+
 ## Layout
 
 | Path | What it is |
