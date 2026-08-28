@@ -205,7 +205,9 @@ final class CanvasViewController: UIViewController {
 
         activeTouch = touch
         let builder = StrokeBuilder(viewSize: view.bounds.size,
-                                    color: renderer?.inkColor ?? .init(0, 0, 0, 1))
+                                    color: renderer?.inkColor ?? .init(0, 0, 0, 1),
+                                    pixelScale: view.window?.screen.nativeScale ?? UIScreen.main.nativeScale,
+                                    tileSizeInPixels: renderer?.engineTileSize ?? 256)
         builder.append([strokePoint(from: touch)])
         strokeBuilder = builder
     }
@@ -266,14 +268,7 @@ final class CanvasViewController: UIViewController {
         // Dropping the prediction here matters: leaving it up would commit a
         // stub of line extending past where the stroke actually stopped.
         renderer?.setPredictionGeometry([])
-
-        // The builder measures in view points; the engine stores device
-        // pixels, so the dirty region has to be scaled on the way through.
-        let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
-        let dirtyInPixels = builder.bounds.isNull
-            ? CGRect.null
-            : builder.bounds.applying(CGAffineTransform(scaleX: scale, y: scale))
-        renderer?.endStroke(dirtyRect: dirtyInPixels)
+        renderer?.endStroke(tiles: builder.touchedTiles)
     }
 
     // MARK: - Lifecycle

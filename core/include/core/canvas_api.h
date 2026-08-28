@@ -106,6 +106,13 @@ typedef struct {
     uint64_t undoDepth;
     uint64_t redoDepth;
     uint64_t historyTiles;
+    /*
+     * Tiles written outside a begin/commit pair. Any value above zero means
+     * edits are landing with no undo history behind them. Surfaced because a
+     * missing begin_stroke is silent otherwise: painting looks perfect and
+     * only undo misbehaves, which is a long way from the cause.
+     */
+    uint64_t storesOutsideAction;
 } MCCanvasStats;
 
 void mc_canvas_stats(MCCanvas* canvas, MCCanvasStats* out);

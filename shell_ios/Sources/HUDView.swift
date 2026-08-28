@@ -125,6 +125,12 @@ final class HUDView: UIView {
             lines.append(String(format: "disk     %4llu KB", latest.spillBytes / 1024))
             lines.append(String(format: "history  %4llu steps, %llu tiles",
                                 latest.undoDepth, latest.historyTiles))
+            // Only shown when it is non-zero, where it means edits are landing
+            // with no undo history behind them.
+            if latest.storesOutsideAction > 0 {
+                lines.append(String(format: "!! UNTRACKED EDITS  %llu",
+                                    latest.storesOutsideAction))
+            }
 
             lines.append("")
             lines.append("input    \(input.touchType)")

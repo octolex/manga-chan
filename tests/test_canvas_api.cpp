@@ -149,6 +149,35 @@ void testStatsReflectResidency() {
     mc_canvas_destroy(canvas);
 }
 
+void testStoresOutsideActionAreCounted() {
+    std::printf("stores outside an action are counted\n");
+
+    // This is the exact bug that shipped: the shell painted without ever
+    // opening an action, so every edit landed with no undo history and the
+    // failure only showed up as undo behaving strangely much later.
+    MCCanvas* canvas = mc_canvas_create(nullptr);
+    const auto ink = solidTile(3);
+
+    mc_canvas_store_tile(canvas, 0, 0, ink.data());
+    mc_canvas_store_tile(canvas, 1, 0, ink.data());
+
+    MCCanvasStats stats;
+    mc_canvas_stats(canvas, &stats);
+    CHECK_EQ(stats.storesOutsideAction, 2);
+    CHECK_EQ(stats.undoDepth, 0);
+
+    // Correctly bracketed edits must not be counted.
+    mc_canvas_begin_stroke(canvas, "Stroke");
+    mc_canvas_store_tile(canvas, 2, 0, ink.data());
+    mc_canvas_commit_stroke(canvas);
+
+    mc_canvas_stats(canvas, &stats);
+    CHECK_EQ(stats.storesOutsideAction, 2);
+    CHECK_EQ(stats.undoDepth, 1);
+
+    mc_canvas_destroy(canvas);
+}
+
 void testNullHandlesAreSafe() {
     std::printf("null handles are safe\n");
 
@@ -177,6 +206,7 @@ int main() {
     testClearIsUndoable();
     testAbortDiscardsStroke();
     testStatsReflectResidency();
+    testStoresOutsideActionAreCounted();
     testNullHandlesAreSafe();
     return check::report("canvas_api");
 }

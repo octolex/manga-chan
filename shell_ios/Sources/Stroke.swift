@@ -131,10 +131,12 @@ final class StrokeBuilder {
     /// exactly where the committed stroke currently ends.
     var lastRawPoint: StrokePoint? { raw.last }
 
-    /// Area the stroke touched, in view points, already widened by the brush
-    /// radius. The renderer reads back exactly these tiles at commit time
-    /// rather than the whole canvas.
-    private(set) var bounds: CGRect = .null
+    /// Exactly the tiles this stroke touched.
+    ///
+    /// Not the bounding rectangle: a circle's bounding box is nearly the whole
+    /// canvas, so capturing by rectangle would read back — and push into undo
+    /// history — around six times more tiles than the stroke actually changed.
+    private(set) var touchedTiles: Set<EngineTile> = []
 
     private var raw: [StrokePoint] = []
     private var nextSegment = 0
@@ -143,9 +145,16 @@ final class StrokeBuilder {
     private let viewSize: CGSize
     private let color: simd_float4
 
-    init(viewSize: CGSize, color: simd_float4) {
+    /// Points-to-pixels, since the engine indexes tiles in device pixels while
+    /// touches arrive in view points.
+    private let pixelScale: CGFloat
+    private let tileSizeInPixels: CGFloat
+
+    init(viewSize: CGSize, color: simd_float4, pixelScale: CGFloat, tileSizeInPixels: Int) {
         self.viewSize = viewSize
         self.color = color
+        self.pixelScale = pixelScale
+        self.tileSizeInPixels = CGFloat(tileSizeInPixels)
     }
 
     func append(_ points: [StrokePoint]) {
@@ -159,19 +168,33 @@ final class StrokeBuilder {
             }
             raw.append(point)
 
-            // Widen by the brush radius plus a pixel for the antialiased edge,
-            // or the outermost ink would fall outside the captured region.
-            let reach = CGFloat(StrokeStyle.halfWidth(for: point.pressure)) + 2
-            let touched = CGRect(x: point.location.x - reach,
-                                 y: point.location.y - reach,
-                                 width: reach * 2,
-                                 height: reach * 2)
-            bounds = bounds.isNull ? touched : bounds.union(touched)
+            noteTilesTouched(by: point)
         }
         // A Catmull-Rom segment between raw[k] and raw[k+1] needs raw[k+2] as
         // its outgoing tangent, so a segment can only be emitted once two more
         // samples have arrived behind it.
         emitSegments(while: { $0 + 2 < self.raw.count })
+    }
+
+    private func noteTilesTouched(by point: StrokePoint) {
+        // Widen by the brush radius plus a pixel for the antialiased edge, or
+        // the outermost ink would fall outside the captured tiles.
+        let reach = CGFloat(StrokeStyle.halfWidth(for: point.pressure)) + 2
+        let minX = (point.location.x - reach) * pixelScale
+        let maxX = (point.location.x + reach) * pixelScale
+        let minY = (point.location.y - reach) * pixelScale
+        let maxY = (point.location.y + reach) * pixelScale
+
+        let tx0 = max(0, Int((minX / tileSizeInPixels).rounded(.down)))
+        let tx1 = max(0, Int((maxX / tileSizeInPixels).rounded(.down)))
+        let ty0 = max(0, Int((minY / tileSizeInPixels).rounded(.down)))
+        let ty1 = max(0, Int((maxY / tileSizeInPixels).rounded(.down)))
+
+        for ty in ty0...ty1 {
+            for tx in tx0...tx1 {
+                touchedTiles.insert(EngineTile(x: Int32(tx), y: Int32(ty)))
+            }
+        }
     }
 
     /// Flushes the trailing segments that were waiting on a lookahead sample

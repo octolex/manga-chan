@@ -19,6 +19,9 @@ struct MCCanvas {
     /// Tiles the shell needs to re-upload after the last history operation.
     std::vector<TileCoord> changed;
 
+    /// Counts edits made with no action open. See MCCanvasStats.
+    uint64_t storesOutsideAction = 0;
+
     MCCanvas() : store(0), layer(store), undo(store) {}
 };
 
@@ -73,6 +76,14 @@ void mc_canvas_store_tile(MCCanvas* canvas, int32_t tx, int32_t ty, const uint8_
     if (!ok(canvas) || rgba == nullptr) return;
 
     const TileCoord coord{tx, ty};
+
+    // Writing outside an action is almost always a caller bug, and a silent
+    // one: the paint lands correctly and only undo misbehaves. Count it so it
+    // can be seen rather than deduced.
+    if (!canvas->undo.isRecording()) {
+        ++canvas->storesOutsideAction;
+    }
+
     // Order matters: capture history before the tile is separated by writeTile,
     // or undo would record the pixels we are about to overwrite.
     canvas->undo.willModify(canvas->layer, coord);
@@ -182,4 +193,5 @@ void mc_canvas_stats(MCCanvas* canvas, MCCanvasStats* out) {
     out->undoDepth = canvas->undo.undoDepth();
     out->redoDepth = canvas->undo.redoDepth();
     out->historyTiles = canvas->undo.retainedTileCount();
+    out->storesOutsideAction = canvas->storesOutsideAction;
 }

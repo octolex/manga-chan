@@ -55,6 +55,7 @@ struct FrameStats {
     var spillBytes: UInt64 = 0
     var undoDepth: UInt64 = 0
     var historyTiles: UInt64 = 0
+    var storesOutsideAction: UInt64 = 0
     var lastCaptureMs: Double = 0
 }
 
@@ -98,7 +99,7 @@ final class Renderer: NSObject {
     private var strokeBufferDirty = false
     private var strokeActive = false
     private var pendingCommit = false
-    private var pendingDirtyRect: CGRect = .null
+    private var pendingTiles: [EngineTile] = []
     private var samplesThisFrame = 0
 
     /// Staging buffer for one tile, reused so a stroke commit does not churn
@@ -212,13 +213,17 @@ final class Renderer: NSObject {
         predictionVertices = vertices
     }
 
+    /// Tile edge in pixels, so the input layer can work out which tiles a
+    /// stroke covers without duplicating the constant.
+    var engineTileSize: Int { engine.tileSize }
+
     /// Flattens the stroke into the canvas on the next frame, then hands the
     /// tiles it touched to the engine.
-    /// - Parameter dirtyRect: stroke bounds in device pixels.
-    func endStroke(dirtyRect: CGRect) {
+    /// - Parameter tiles: exactly the tiles the stroke covered.
+    func endStroke(tiles: Set<EngineTile>) {
         guard strokeActive else { return }
         predictionVertices.removeAll(keepingCapacity: true)
-        pendingDirtyRect = dirtyRect
+        pendingTiles = Array(tiles)
         pendingCommit = true
     }
 
@@ -320,52 +325,39 @@ final class Renderer: NSObject {
 
     // MARK: - Engine handoff
 
-    private func tileRange(for rectInPixels: CGRect) -> (x: ClosedRange<Int>, y: ClosedRange<Int>)? {
-        guard let canvas = canvasTexture, !rectInPixels.isNull else { return nil }
-        let size = engine.tileSize
-
-        let minX = max(0, Int(rectInPixels.minX.rounded(.down)) / size)
-        let maxX = min((canvas.width - 1) / size, Int(rectInPixels.maxX.rounded(.down)) / size)
-        let minY = max(0, Int(rectInPixels.minY.rounded(.down)) / size)
-        let maxY = min((canvas.height - 1) / size, Int(rectInPixels.maxY.rounded(.down)) / size)
-
-        guard minX <= maxX, minY <= maxY else { return nil }
-        return (minX...maxX, minY...maxY)
-    }
-
     /// Reads the tiles a finished stroke touched out of the canvas texture and
     /// hands them to the engine, which takes it from there.
-    private func captureTiles(in rectInPixels: CGRect) {
-        guard let canvas = canvasTexture, let range = tileRange(for: rectInPixels) else { return }
+    private func captureTiles(_ tiles: [EngineTile]) {
+        guard let canvas = canvasTexture, !tiles.isEmpty else { return }
         let started = CACurrentMediaTime()
         let size = engine.tileSize
         let bytesPerRow = size * 4
 
-        for ty in range.y {
-            for tx in range.x {
-                let originX = tx * size
-                let originY = ty * size
-                let width = min(size, canvas.width - originX)
-                let height = min(size, canvas.height - originY)
-                guard width > 0, height > 0 else { continue }
+        for tile in tiles {
+            let originX = Int(tile.x) * size
+            let originY = Int(tile.y) * size
+            guard originX >= 0, originY >= 0,
+                  originX < canvas.width, originY < canvas.height else { continue }
 
-                tileScratch.withUnsafeMutableBytes { raw in
-                    guard let base = raw.baseAddress else { return }
-                    // Edge tiles are partial. Zeroing first means the unused
-                    // remainder is defined rather than whatever the previous
-                    // tile left behind.
-                    if width < size || height < size {
-                        raw.initializeMemory(as: UInt8.self, repeating: 0)
-                    }
-                    canvas.getBytes(base,
-                                    bytesPerRow: bytesPerRow,
-                                    from: MTLRegionMake2D(originX, originY, width, height),
-                                    mipmapLevel: 0)
+            let width = min(size, canvas.width - originX)
+            let height = min(size, canvas.height - originY)
+
+            tileScratch.withUnsafeMutableBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                // Edge tiles are partial. Zeroing first means the unused
+                // remainder is defined rather than whatever the previous tile
+                // left behind.
+                if width < size || height < size {
+                    raw.initializeMemory(as: UInt8.self, repeating: 0)
                 }
-                tileScratch.withUnsafeBufferPointer { buffer in
-                    guard let base = buffer.baseAddress else { return }
-                    engine.storeTile(EngineTile(x: Int32(tx), y: Int32(ty)), bytes: base)
-                }
+                canvas.getBytes(base,
+                                bytesPerRow: bytesPerRow,
+                                from: MTLRegionMake2D(originX, originY, width, height),
+                                mipmapLevel: 0)
+            }
+            tileScratch.withUnsafeBufferPointer { buffer in
+                guard let base = buffer.baseAddress else { return }
+                engine.storeTile(tile, bytes: base)
             }
         }
         stats.lastCaptureMs = (CACurrentMediaTime() - started) * 1000.0
@@ -544,7 +536,11 @@ final class Renderer: NSObject {
             // commit pass has actually run would capture the stroke as it was
             // one frame ago. It happens once per stroke, not per frame.
             commandBuffer.waitUntilCompleted()
-            captureTiles(in: pendingDirtyRect)
+            // Bracketing matters: storeTile only records undo state between a
+            // begin and a commit. Without the begin, every stroke was written
+            // straight through with no history at all.
+            engine.beginStroke("Stroke")
+            captureTiles(pendingTiles)
             engine.commitStroke()
             engine.evict()
 
@@ -554,7 +550,7 @@ final class Renderer: NSObject {
             strokeBufferDirty = false
             strokeActive = false
             pendingCommit = false
-            pendingDirtyRect = .null
+            pendingTiles.removeAll(keepingCapacity: true)
         }
 
         let cpuMs = (CACurrentMediaTime() - cpuStart) * 1000.0
@@ -592,6 +588,7 @@ final class Renderer: NSObject {
         stats.spillBytes = engineStats.spillFileBytes
         stats.undoDepth = engineStats.undoDepth
         stats.historyTiles = engineStats.historyTiles
+        stats.storesOutsideAction = engineStats.storesOutsideAction
 
         onStats?(stats)
         samplesThisFrame = 0
