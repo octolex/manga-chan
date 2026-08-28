@@ -51,3 +51,7 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-08-28 | Metal renders at panel rate | 60 fps, 0.14 ms CPU, 0.85 ms GPU |
 | 2026-08-28 | Panel capability query | 60 Hz — iPad Air M4 has no ProMotion |
 | 2026-08-28 | Finger drawing, two-finger clear | Works |
+| 2026-08-28 | Sparse tile storage, copy-on-write | 99 checks green, Linux + Windows |
+| 2026-08-28 | Tile compression | blank 102x, line art 41x, noise 1.0x (bounded) |
+| 2026-08-28 | LRU eviction respects budget, keeps hot tiles | Green |
+| 2026-08-28 | 4096x4096 line-art page memory | 64 MB dense -> 1.5 MB compressed |

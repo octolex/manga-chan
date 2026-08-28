@@ -1,0 +1,113 @@
+# Manga-Chan roadmap
+
+Milestone status. Each milestone ends with something that runs on the iPad.
+
+Legend: ✅ done · 🔨 in progress · ⬜ not started
+
+---
+
+## ✅ M0 — Pipeline proof
+
+Prove that code written on Windows reaches the iPad. Nothing else mattered
+until this worked.
+
+| | |
+|---|---|
+| ✅ | Repo, CMake, XcodeGen spec standing in for the `.xcodeproj` |
+| ✅ | CI builds an unsigned `.ipa` on a free macOS runner |
+| ✅ | Sideloadly signs on Windows with a free Apple ID — no certificates in CI |
+| ✅ | UIKit + `CAMetalLayer` + `CAMetalDisplayLink`, rendering at panel rate |
+| ✅ | C++ core cross-compiles, links, and is callable from Swift over a C ABI |
+| ✅ | Instrumentation HUD, standing in for Instruments |
+| ✅ | Crash handler and rotating logs in `Documents/`, our only crash reporting |
+| ✅ | Apple Pencil / touch input via `coalescedTouches` |
+| ✅ | Catmull-Rom resampling and max-coverage accumulation |
+| ✅ | Input inspector for pressure, tilt, azimuth, roll, hover, squeeze |
+
+**Measured:** ~10 min push-to-install · 60 fps · 0.14 ms CPU · 0.85 ms GPU.
+The iPad Air M4 is a 60 Hz panel with no ProMotion, so the frame budget on
+this device is 16.6 ms rather than 8.3 ms.
+
+---
+
+## 🔨 M1 — Tiled sparse canvas
+
+The foundation, and the thing that genuinely beats Procreate: memory becomes
+a function of what is *visible*, not of document size, which removes the
+layer cap entirely.
+
+| | |
+|---|---|
+| ✅ | 256×256 tiles, sparse per-layer maps, unbounded canvas in all directions |
+| ✅ | Reference-counted tile store with copy-on-write |
+| ✅ | Compression codec with a bounded worst case |
+| ✅ | Compressed-RAM residency tier with LRU eviction and a byte budget |
+| ⬜ | Disk tier — `mmap`'d tile file for cold tiles |
+| ⬜ | Per-tile undo ring |
+| ⬜ | Renderer reads from the tile store instead of one screen-sized texture |
+
+**Measured:** a 4096×4096 page of line art costs **1.5 MB compressed against
+64 MB dense — 41×**. A diagonal stroke across the same canvas touches 16 of
+256 tiles. 99 checks, green on Linux and Windows in ~40 s.
+
+---
+
+## ⬜ M2 — Compositor
+
+`under_cache + active_layer + over_cache` at view resolution over the visible
+region only. This is the largest single source of Procreate's perceived
+speed — more than the brush engine. A 200-layer document then costs the same
+per painting frame as a 3-layer one.
+
+Full blend-mode set via framebuffer fetch. Golden-image tests in the iOS
+Simulator on CI.
+
+---
+
+## ⬜ M3 — Brush engine
+
+Dab stamping, not ribbons. Arc-length resampling already exists from M0.
+Scratch-buffer accumulation already exists from M0. What is missing is
+textured dabs, per-tile culling, and the brush parameter model.
+
+Round stroke caps arrive here.
+
+---
+
+## ⬜ M4 — Input and latency
+
+`predictedTouches` into a transient overlay only. `maximumDrawableCount = 2`.
+End-to-end latency measurement.
+
+The milestone where having no Mac hurts most — a cloud-Mac day may be worth
+~€5 here if the in-app HUD is not saying enough.
+
+---
+
+## ⬜ M5 — Multi-page documents and panels
+
+The manga priority, and the one feature that is a rewrite if deferred, which
+is why the document model is being built page-aware from the start.
+
+Document as an ordered book of pages · page navigator · templates with bleed,
+trim and safe area at print DPI · panels as vector quads with gutters and
+panel-as-clipping-mask · versioned package format · per-page and book export.
+
+---
+
+## ⬜ M6+ — Vector layers, geometry kernel, text
+
+Vector line art rasterising into the same tile format · Clipper2 boolean ops ·
+perspective and symmetry rulers · text, lettering and screentones.
+
+---
+
+## Constraints shaping all of this
+
+- **No Mac.** CI compiles; it cannot run Instruments or the Metal debugger.
+  Compensated by keeping the engine platform-agnostic and testable off-device,
+  by the in-app HUD, and by on-device logs.
+- **10 App IDs per 7 days.** Device installs are budgeted, so device tests are
+  batched — see [TESTING.md](TESTING.md).
+- **60 Hz panel.** A 120 Hz latency target can only ever be validated on an
+  iPad Pro.

@@ -8,9 +8,11 @@ runner that does the final compile.
 
 ## Status
 
-**M0 — pipeline proof.** The app draws one triangle and reports frame timings.
-The triangle is not the point; proving that code written on Windows reaches the
-iPad is.
+**M0 complete** — Windows to iPad pipeline proven, Pencil input working.
+**M1 in progress** — sparse tiled canvas with compressed residency.
+
+See [ROADMAP.md](ROADMAP.md) for milestone status and [TESTING.md](TESTING.md)
+for the device-test backlog.
 
 ## How a build reaches the iPad
 
