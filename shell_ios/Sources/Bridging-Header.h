@@ -8,3 +8,4 @@
 
 #import "core/core_api.h"
 #import "ShaderTypes.h"
+#import "core/canvas_api.h"

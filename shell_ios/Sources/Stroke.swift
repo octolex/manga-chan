@@ -131,6 +131,11 @@ final class StrokeBuilder {
     /// exactly where the committed stroke currently ends.
     var lastRawPoint: StrokePoint? { raw.last }
 
+    /// Area the stroke touched, in view points, already widened by the brush
+    /// radius. The renderer reads back exactly these tiles at commit time
+    /// rather than the whole canvas.
+    private(set) var bounds: CGRect = .null
+
     private var raw: [StrokePoint] = []
     private var nextSegment = 0
     private var lastResampled: StrokePoint?
@@ -153,6 +158,15 @@ final class StrokeBuilder {
                 continue
             }
             raw.append(point)
+
+            // Widen by the brush radius plus a pixel for the antialiased edge,
+            // or the outermost ink would fall outside the captured region.
+            let reach = CGFloat(StrokeStyle.halfWidth(for: point.pressure)) + 2
+            let touched = CGRect(x: point.location.x - reach,
+                                 y: point.location.y - reach,
+                                 width: reach * 2,
+                                 height: reach * 2)
+            bounds = bounds.isNull ? touched : bounds.union(touched)
         }
         // A Catmull-Rom segment between raw[k] and raw[k+1] needs raw[k+2] as
         // its outgoing tangent, so a segment can only be emitted once two more

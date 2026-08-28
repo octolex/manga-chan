@@ -112,6 +112,19 @@ final class HUDView: UIView {
             lines.append(String(format: "peak/fr  %6d", input.peakSamplesPerFrame))
             lines.append(String(format: "drawable %.0f×%.0f",
                                 latest.drawableSize.width, latest.drawableSize.height))
+            lines.append(String(format: "capture  %6.2f ms", latest.lastCaptureMs))
+
+            // Engine memory. Without Instruments this readout is the only way
+            // to see the tier machinery working on real hardware.
+            lines.append("")
+            lines.append(String(format: "tiles    %4llu  (%llu res %llu zip %llu disk)",
+                                latest.liveTiles, latest.residentTiles,
+                                latest.compressedTiles, latest.spilledTiles))
+            lines.append(String(format: "ram      %4llu KB res  %llu KB zip",
+                                latest.residentBytes / 1024, latest.compressedBytes / 1024))
+            lines.append(String(format: "disk     %4llu KB", latest.spillBytes / 1024))
+            lines.append(String(format: "history  %4llu steps, %llu tiles",
+                                latest.undoDepth, latest.historyTiles))
 
             lines.append("")
             lines.append("input    \(input.touchType)")

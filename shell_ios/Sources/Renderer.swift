@@ -20,13 +20,14 @@
 //      geometry is redrawn at commit time.
 //    · Stroke opacity stays adjustable until the moment it is committed.
 //
-//  Rebuilding the whole stroke each frame is O(stroke length) of GPU work per
-//  frame. At M0 stroke lengths that is nothing. M3 replaces this with dab
-//  stamping and per-tile culling, at which point it needs revisiting.
+//  The engine handoff. When a stroke commits, the tiles it touched are read
+//  back from the canvas texture and handed to the C++ engine, which owns undo
+//  history, compression and paging. That crossing happens once per stroke, not
+//  once per frame — a readback in the frame loop would cost more than
+//  everything else here combined.
 //
 //  Threading: the display link runs on the main run loop and touches arrive on
-//  the main thread, so none of the state below needs locking. If the render
-//  loop ever moves to its own thread, that changes.
+//  the main thread, so none of the state below needs locking.
 //
 
 import Metal
@@ -43,6 +44,18 @@ struct FrameStats {
     var drawableSize: CGSize = .zero
     var samplesThisFrame: Int = 0
     var strokeVerticesThisFrame: Int = 0
+
+    // Engine-side memory, mirrored into the HUD because we have no Instruments.
+    var liveTiles: UInt64 = 0
+    var residentTiles: UInt64 = 0
+    var compressedTiles: UInt64 = 0
+    var spilledTiles: UInt64 = 0
+    var residentBytes: UInt64 = 0
+    var compressedBytes: UInt64 = 0
+    var spillBytes: UInt64 = 0
+    var undoDepth: UInt64 = 0
+    var historyTiles: UInt64 = 0
+    var lastCaptureMs: Double = 0
 }
 
 enum RendererError: Error, CustomStringConvertible {
@@ -50,6 +63,7 @@ enum RendererError: Error, CustomStringConvertible {
     case noCommandQueue
     case noShaderLibrary
     case missingFunction(String)
+    case engineUnavailable
 
     var description: String {
         switch self {
@@ -57,6 +71,7 @@ enum RendererError: Error, CustomStringConvertible {
         case .noCommandQueue: return "could not create a Metal command queue"
         case .noShaderLibrary: return "default.metallib missing — the .metal file did not compile into the bundle"
         case .missingFunction(let name): return "shader function '\(name)' not found in default.metallib"
+        case .engineUnavailable: return "the C++ canvas engine failed to start"
         }
     }
 }
@@ -69,6 +84,7 @@ final class Renderer: NSObject {
     private let compositePipeline: MTLRenderPipelineState
     private let blitPipeline: MTLRenderPipelineState
     private let layer: CAMetalLayer
+    private let engine: CanvasEngine
 
     private var displayLink: CAMetalDisplayLink?
 
@@ -82,7 +98,12 @@ final class Renderer: NSObject {
     private var strokeBufferDirty = false
     private var strokeActive = false
     private var pendingCommit = false
+    private var pendingDirtyRect: CGRect = .null
     private var samplesThisFrame = 0
+
+    /// Staging buffer for one tile, reused so a stroke commit does not churn
+    /// the allocator once per tile.
+    private var tileScratch: [UInt8]
 
     /// Ink colour, straight (not premultiplied); the composite shader
     /// premultiplies.
@@ -102,6 +123,7 @@ final class Renderer: NSObject {
         guard let device = MTLCreateSystemDefaultDevice() else { throw RendererError.noDevice }
         guard let queue = device.makeCommandQueue() else { throw RendererError.noCommandQueue }
         guard let library = device.makeDefaultLibrary() else { throw RendererError.noShaderLibrary }
+        guard let engine = CanvasEngine() else { throw RendererError.engineUnavailable }
 
         func function(_ name: String) throws -> MTLFunction {
             guard let f = library.makeFunction(name: name) else {
@@ -113,6 +135,8 @@ final class Renderer: NSObject {
         self.device = device
         self.commandQueue = queue
         self.layer = layer
+        self.engine = engine
+        self.tileScratch = [UInt8](repeating: 0, count: engine.tileByteCount)
 
         layer.device = device
         layer.pixelFormat = .bgra8Unorm
@@ -160,6 +184,12 @@ final class Renderer: NSObject {
 
         super.init()
 
+        // A budget generous enough that nothing pages during normal drawing,
+        // but low enough that the tier machinery is actually exercised on
+        // device rather than only in tests.
+        engine.setBudgets(residentBytes: 96 * UInt64(engine.tileByteCount),
+                          compressedBytes: 32 * 1024 * 1024)
+
         Diagnostics.log("Metal device: \(device.name)")
         Diagnostics.log("  supportsFamily(.apple8): \(device.supportsFamily(.apple8))")
         Diagnostics.log("  supportsFamily(.apple9): \(device.supportsFamily(.apple9))")
@@ -182,21 +212,36 @@ final class Renderer: NSObject {
         predictionVertices = vertices
     }
 
-    /// Flattens the stroke into the canvas on the next frame.
-    func endStroke() {
+    /// Flattens the stroke into the canvas on the next frame, then hands the
+    /// tiles it touched to the engine.
+    /// - Parameter dirtyRect: stroke bounds in device pixels.
+    func endStroke(dirtyRect: CGRect) {
         guard strokeActive else { return }
         predictionVertices.removeAll(keepingCapacity: true)
+        pendingDirtyRect = dirtyRect
         pendingCommit = true
     }
 
+    // MARK: - History
+
+    func undo() -> Bool {
+        guard let tiles = engine.undo() else { return false }
+        applyTiles(tiles)
+        Diagnostics.log("undo: \(tiles.count) tiles restored")
+        return true
+    }
+
+    func redo() -> Bool {
+        guard let tiles = engine.redo() else { return false }
+        applyTiles(tiles)
+        Diagnostics.log("redo: \(tiles.count) tiles restored")
+        return true
+    }
+
     func clearCanvas() {
-        canvasNeedsClear = true
-        strokeVertices.removeAll(keepingCapacity: true)
-        predictionVertices.removeAll(keepingCapacity: true)
-        strokeBufferDirty = true
-        strokeActive = false
-        pendingCommit = false
-        Diagnostics.log("canvas cleared")
+        let tiles = engine.clear()
+        applyTiles(tiles)
+        Diagnostics.log("canvas cleared (\(tiles.count) tiles, undoable)")
     }
 
     // MARK: - Frame loop
@@ -245,25 +290,138 @@ final class Renderer: NSObject {
             return
         }
 
-        func makeTexture(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
+        func makeTexture(_ format: MTLPixelFormat,
+                         _ storage: MTLStorageMode,
+                         _ label: String) -> MTLTexture? {
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format,
                                                                       width: width,
                                                                       height: height,
                                                                       mipmapped: false)
             descriptor.usage = [.renderTarget, .shaderRead]
-            descriptor.storageMode = .private
+            descriptor.storageMode = storage
             let texture = device.makeTexture(descriptor: descriptor)
             texture?.label = label
             return texture
         }
 
-        canvasTexture = makeTexture(layer.pixelFormat, "Canvas")
-        scratchTexture = makeTexture(Self.scratchFormat, "Stroke scratch")
+        // The canvas is shared rather than private because the CPU has to read
+        // it back at stroke end. On unified memory that costs nothing extra;
+        // the scratch texture stays private since it is never read by the CPU.
+        canvasTexture = makeTexture(layer.pixelFormat, .shared, "Canvas")
+        scratchTexture = makeTexture(Self.scratchFormat, .private, "Stroke scratch")
         canvasNeedsClear = true
 
-        let mb = (width * height * 5) / (1024 * 1024) // 4 bytes canvas + 1 scratch
-        Diagnostics.log("textures \(width)×\(height) (~\(mb) MB)")
+        Diagnostics.log("textures \(width)×\(height)")
+
+        // A resize throws away the canvas texture, so repaint it from the
+        // engine — otherwise rotating the iPad would silently erase the work.
+        repopulateFromEngine()
     }
+
+    // MARK: - Engine handoff
+
+    private func tileRange(for rectInPixels: CGRect) -> (x: ClosedRange<Int>, y: ClosedRange<Int>)? {
+        guard let canvas = canvasTexture, !rectInPixels.isNull else { return nil }
+        let size = engine.tileSize
+
+        let minX = max(0, Int(rectInPixels.minX.rounded(.down)) / size)
+        let maxX = min((canvas.width - 1) / size, Int(rectInPixels.maxX.rounded(.down)) / size)
+        let minY = max(0, Int(rectInPixels.minY.rounded(.down)) / size)
+        let maxY = min((canvas.height - 1) / size, Int(rectInPixels.maxY.rounded(.down)) / size)
+
+        guard minX <= maxX, minY <= maxY else { return nil }
+        return (minX...maxX, minY...maxY)
+    }
+
+    /// Reads the tiles a finished stroke touched out of the canvas texture and
+    /// hands them to the engine, which takes it from there.
+    private func captureTiles(in rectInPixels: CGRect) {
+        guard let canvas = canvasTexture, let range = tileRange(for: rectInPixels) else { return }
+        let started = CACurrentMediaTime()
+        let size = engine.tileSize
+        let bytesPerRow = size * 4
+
+        for ty in range.y {
+            for tx in range.x {
+                let originX = tx * size
+                let originY = ty * size
+                let width = min(size, canvas.width - originX)
+                let height = min(size, canvas.height - originY)
+                guard width > 0, height > 0 else { continue }
+
+                tileScratch.withUnsafeMutableBytes { raw in
+                    guard let base = raw.baseAddress else { return }
+                    // Edge tiles are partial. Zeroing first means the unused
+                    // remainder is defined rather than whatever the previous
+                    // tile left behind.
+                    if width < size || height < size {
+                        raw.initializeMemory(as: UInt8.self, repeating: 0)
+                    }
+                    canvas.getBytes(base,
+                                    bytesPerRow: bytesPerRow,
+                                    from: MTLRegionMake2D(originX, originY, width, height),
+                                    mipmapLevel: 0)
+                }
+                tileScratch.withUnsafeBufferPointer { buffer in
+                    guard let base = buffer.baseAddress else { return }
+                    engine.storeTile(EngineTile(x: Int32(tx), y: Int32(ty)), bytes: base)
+                }
+            }
+        }
+        stats.lastCaptureMs = (CACurrentMediaTime() - started) * 1000.0
+    }
+
+    /// Pushes tiles from the engine back into the canvas texture.
+    private func applyTiles(_ tiles: [EngineTile]) {
+        guard let canvas = canvasTexture else { return }
+        let size = engine.tileSize
+        let bytesPerRow = size * 4
+
+        for tile in tiles {
+            let originX = Int(tile.x) * size
+            let originY = Int(tile.y) * size
+            guard originX >= 0, originY >= 0,
+                  originX < canvas.width, originY < canvas.height else { continue }
+
+            let width = min(size, canvas.width - originX)
+            let height = min(size, canvas.height - originY)
+
+            let loaded = tileScratch.withUnsafeMutableBufferPointer { buffer -> Bool in
+                guard let base = buffer.baseAddress else { return false }
+                return engine.loadTile(tile, into: base)
+            }
+            if !loaded {
+                // Never painted, so it belongs at paper white rather than
+                // whatever the texture happens to be showing.
+                for index in tileScratch.indices { tileScratch[index] = 255 }
+            }
+
+            tileScratch.withUnsafeBufferPointer { buffer in
+                guard let base = buffer.baseAddress else { return }
+                canvas.replaceRegion(MTLRegionMake2D(originX, originY, width, height),
+                                     mipmapLevel: 0,
+                                     withBytes: base,
+                                     bytesPerRow: bytesPerRow)
+            }
+        }
+    }
+
+    /// Repaints the whole canvas texture from engine storage. Used after a
+    /// resize, which discards the texture.
+    private func repopulateFromEngine() {
+        guard let canvas = canvasTexture else { return }
+        let size = engine.tileSize
+        var tiles: [EngineTile] = []
+        for ty in 0...((canvas.height - 1) / size) {
+            for tx in 0...((canvas.width - 1) / size) {
+                tiles.append(EngineTile(x: Int32(tx), y: Int32(ty)))
+            }
+        }
+        applyTiles(tiles)
+        canvasNeedsClear = false
+    }
+
+    // MARK: - Rendering
 
     private func strokeVertexBuffer() -> MTLBuffer? {
         guard !strokeVertices.isEmpty else { return nil }
@@ -277,7 +435,6 @@ final class Renderer: NSObject {
         return strokeBuffer
     }
 
-    /// Redraws the in-progress stroke into the scratch texture.
     private func encodeScratch(in commandBuffer: MTLCommandBuffer,
                                scratch: MTLTexture,
                                includePrediction: Bool) {
@@ -357,8 +514,6 @@ final class Renderer: NSObject {
         // Pass 3 — present: canvas, then the live stroke on top of it.
         let present = MTLRenderPassDescriptor()
         present.colorAttachments[0].texture = drawable.texture
-        // The fullscreen triangle covers every pixel, so there is nothing worth
-        // loading or clearing first.
         present.colorAttachments[0].loadAction = .dontCare
         present.colorAttachments[0].storeAction = .store
 
@@ -376,15 +531,6 @@ final class Renderer: NSObject {
             encoder.endEncoding()
         }
 
-        if committingThisFrame {
-            strokeVertices.removeAll(keepingCapacity: true)
-            predictionVertices.removeAll(keepingCapacity: true)
-            strokeBuffer = nil
-            strokeBufferDirty = false
-            strokeActive = false
-            pendingCommit = false
-        }
-
         commandBuffer.addCompletedHandler { [weak self] buffer in
             let gpuMs = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000.0
             DispatchQueue.main.async { self?.recordGPUTime(gpuMs) }
@@ -392,6 +538,24 @@ final class Renderer: NSObject {
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+
+        if committingThisFrame {
+            // The one place we stall on the GPU. Reading the canvas before the
+            // commit pass has actually run would capture the stroke as it was
+            // one frame ago. It happens once per stroke, not per frame.
+            commandBuffer.waitUntilCompleted()
+            captureTiles(in: pendingDirtyRect)
+            engine.commitStroke()
+            engine.evict()
+
+            strokeVertices.removeAll(keepingCapacity: true)
+            predictionVertices.removeAll(keepingCapacity: true)
+            strokeBuffer = nil
+            strokeBufferDirty = false
+            strokeActive = false
+            pendingCommit = false
+            pendingDirtyRect = .null
+        }
 
         let cpuMs = (CACurrentMediaTime() - cpuStart) * 1000.0
         recordFrame(cpuMs: cpuMs, targetTimestamp: targetTimestamp, vertexCount: vertexCount)
@@ -417,8 +581,19 @@ final class Renderer: NSObject {
         stats.gpuFrameMs = smoothedGPUMs
         stats.samplesThisFrame = samplesThisFrame
         stats.strokeVerticesThisFrame = vertexCount
-        onStats?(stats)
 
+        let engineStats = engine.stats
+        stats.liveTiles = engineStats.liveTiles
+        stats.residentTiles = engineStats.residentTiles
+        stats.compressedTiles = engineStats.compressedTiles
+        stats.spilledTiles = engineStats.spilledTiles
+        stats.residentBytes = engineStats.residentBytes
+        stats.compressedBytes = engineStats.compressedBytes
+        stats.spillBytes = engineStats.spillFileBytes
+        stats.undoDepth = engineStats.undoDepth
+        stats.historyTiles = engineStats.historyTiles
+
+        onStats?(stats)
         samplesThisFrame = 0
     }
 

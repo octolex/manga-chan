@@ -67,7 +67,7 @@ final class CanvasViewController: UIViewController {
             }
             self.renderer = renderer
             hud.addStaticLine(MTLCreateSystemDefaultDevice()?.name ?? "unknown GPU")
-            hud.addStaticLine("two-finger tap to clear")
+            hud.addStaticLine("2f tap undo · 3f redo · 4f clear")
         } catch {
             let message = (error as? RendererError)?.description ?? String(describing: error)
             Diagnostics.log("RENDERER INIT FAILED: \(message)")
@@ -75,9 +75,11 @@ final class CanvasViewController: UIViewController {
             showFatal(message)
         }
 
-        let clearGesture = UITapGestureRecognizer(target: self, action: #selector(clearCanvas))
-        clearGesture.numberOfTouchesRequired = 2
-        view.addGestureRecognizer(clearGesture)
+        // Procreate's conventions, because they are the ones already in the
+        // user's fingers: two-finger tap undoes, three-finger tap redoes.
+        addTapGesture(touches: 2, action: #selector(handleUndo))
+        addTapGesture(touches: 3, action: #selector(handleRedo))
+        addTapGesture(touches: 4, action: #selector(handleClear))
 
         // Squeeze (Pencil Pro) and double-tap (Pencil 2 and later). Both are
         // only wired to counters for now — the point is to confirm they arrive
@@ -115,7 +117,21 @@ final class CanvasViewController: UIViewController {
         renderer?.stop()
     }
 
-    @objc private func clearCanvas() {
+    private func addTapGesture(touches: Int, action: Selector) {
+        let gesture = UITapGestureRecognizer(target: self, action: action)
+        gesture.numberOfTouchesRequired = touches
+        view.addGestureRecognizer(gesture)
+    }
+
+    @objc private func handleUndo() {
+        _ = renderer?.undo()
+    }
+
+    @objc private func handleRedo() {
+        _ = renderer?.redo()
+    }
+
+    @objc private func handleClear() {
         renderer?.clearCanvas()
     }
 
@@ -250,7 +266,14 @@ final class CanvasViewController: UIViewController {
         // Dropping the prediction here matters: leaving it up would commit a
         // stub of line extending past where the stroke actually stopped.
         renderer?.setPredictionGeometry([])
-        renderer?.endStroke()
+
+        // The builder measures in view points; the engine stores device
+        // pixels, so the dirty region has to be scaled on the way through.
+        let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        let dirtyInPixels = builder.bounds.isNull
+            ? CGRect.null
+            : builder.bounds.applying(CGAffineTransform(scaleX: scale, y: scale))
+        renderer?.endStroke(dirtyRect: dirtyInPixels)
     }
 
     // MARK: - Lifecycle
