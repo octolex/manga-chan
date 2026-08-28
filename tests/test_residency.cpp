@@ -225,8 +225,9 @@ void testMangaPageMemoryProfile() {
                 denseBytes / 1024, compressed / 1024,
                 static_cast<double>(denseBytes) / static_cast<double>(compressed));
 
-    // Content survives the round trip.
-    CHECK(layer.pixel(0, 0) == (Rgba8{255, 255, 255, 255}));
+    // Content survives the round trip. (1,0) is off both strokes so it is
+    // paper white; (5,5) sits on the diagonal so it is ink.
+    CHECK(layer.pixel(1, 0) == (Rgba8{255, 255, 255, 255}));
     CHECK(layer.pixel(5, 5) == (Rgba8{0, 0, 0, 255}));
 }
 

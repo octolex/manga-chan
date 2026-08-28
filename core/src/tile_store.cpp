@@ -178,7 +178,11 @@ bool TileStore::compressTile(TileId id) {
     slot.compressed = codec_.encode(slot.pixels.get());
     compressedBytes_ += slot.compressed.size();
 
-    recycleBuffer(std::move(slot.pixels));
+    // Released outright, never pooled. The pool absorbs churn from
+    // acquire/release, but pooled buffers still count against the budget —
+    // so recycling here would hold on to exactly the memory that compressing
+    // just worked to free, and an eviction loop would never converge.
+    slot.pixels.reset();
     --residentBuffers_;
     ++compressions_;
     return true;
