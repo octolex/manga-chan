@@ -42,13 +42,22 @@ layer cap entirely.
 | ✅ | Reference-counted tile store with copy-on-write |
 | ✅ | Compression codec with a bounded worst case |
 | ✅ | Compressed-RAM residency tier with LRU eviction and a byte budget |
-| ⬜ | Disk tier — `mmap`'d tile file for cold tiles |
-| ⬜ | Per-tile undo ring |
+| ✅ | Disk tier — scratch file with block reuse for cold tiles |
+| ✅ | Per-tile undo ring with copy-on-write history |
 | ⬜ | Renderer reads from the tile store instead of one screen-sized texture |
 
-**Measured:** a 4096×4096 page of line art costs **1.5 MB compressed against
-64 MB dense — 41×**. A diagonal stroke across the same canvas touches 16 of
-256 tiles. 99 checks, green on Linux and Windows in ~40 s.
+**Measured**, all in CI on Linux and Windows in ~40 s, 245 checks:
+
+| | |
+|---|---|
+| 4096×4096 page of line art | 64 MB dense → **1.5 MB** compressed (41×) |
+| Diagonal stroke across that canvas | touches 16 of 256 tiles |
+| 100 undo steps | **3 MB**, against 6.4 GB for layer snapshots |
+| 400 tiles across 100 layers | 100 MB dense → 17 MB RAM + 235 KB disk |
+
+The last row is the one that matters: RAM stayed pinned to its budget while
+every one of the 100 layers remained instantly readable. That is the layer cap
+gone.
 
 ---
 

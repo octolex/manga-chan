@@ -55,3 +55,6 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-08-28 | Tile compression | blank 102x, line art 41x, noise 1.0x (bounded) |
 | 2026-08-28 | LRU eviction respects budget, keeps hot tiles | Green |
 | 2026-08-28 | 4096x4096 line-art page memory | 64 MB dense -> 1.5 MB compressed |
+| 2026-08-28 | Per-tile undo, 100 steps | 3 MB vs 6.4 GB for layer snapshots |
+| 2026-08-28 | Disk spill tier, block reuse | Green, file stays proportional to working set |
+| 2026-08-28 | 100-layer document under budget | 17 MB RAM, all layers readable |
