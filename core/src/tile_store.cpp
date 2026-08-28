@@ -102,6 +102,12 @@ void TileStore::release(TileId id) {
     slot.compressed.clear();
     slot.compressed.shrink_to_fit();
 
+    if (slot.spill.valid() && spillFile_ != nullptr) {
+        spillFile_->release(slot.spill);
+        slot.spill = TileSpillFile::Ref{};
+        --spilledTiles_;
+    }
+
     freeIds_.push_back(id);
     --liveTiles_;
 }
@@ -117,6 +123,21 @@ uint8_t* TileStore::materialise(TileId id) const {
     const Slot& slot = slots_[id];
 
     if (slot.pixels == nullptr) {
+        // Cold tier first: the payload has to be back in RAM before it can be
+        // decoded.
+        if (slot.compressed.empty() && slot.spill.valid() && spillFile_ != nullptr) {
+            std::vector<uint8_t> payload;
+            if (!spillFile_->read(slot.spill, payload)) {
+                assert(false && "spilled tile could not be read back");
+                return nullptr;
+            }
+            spillFile_->release(slot.spill);
+            slot.spill = TileSpillFile::Ref{};
+            slot.compressed = std::move(payload);
+            compressedBytes_ += slot.compressed.size();
+            --spilledTiles_;
+        }
+
         auto buffer = takeBuffer();
         if (!codec_.decode(slot.compressed.data(), slot.compressed.size(), buffer.get())) {
             // A corrupt payload is unrecoverable, and handing back stale or
@@ -163,7 +184,49 @@ size_t TileStore::residentTileCount() const {
 }
 
 size_t TileStore::compressedTileCount() const {
-    return liveTiles_ - residentBuffers_;
+    return liveTiles_ - residentBuffers_ - spilledTiles_;
+}
+
+void TileStore::setCompressedBudget(size_t bytes) {
+    compressedBudget_ = bytes;
+}
+
+bool TileStore::enableSpilling(const std::filesystem::path& scratchFile) {
+    auto file = std::make_unique<TileSpillFile>(scratchFile);
+    if (!file->isOpen()) {
+        return false;
+    }
+    spillFile_ = std::move(file);
+    return true;
+}
+
+uint64_t TileStore::spillFileBytes() const {
+    return spillFile_ != nullptr ? spillFile_->fileBytes() : 0;
+}
+
+uint64_t TileStore::spillReadCount() const {
+    return spillFile_ != nullptr ? spillFile_->readCount() : 0;
+}
+
+bool TileStore::spillTile(TileId id) {
+    if (spillFile_ == nullptr || !valid(id)) return false;
+    Slot& slot = slots_[id];
+    if (slot.pixels != nullptr) return false;    // compress it first
+    if (slot.compressed.empty()) return false;   // nothing to write, or already spilled
+
+    const auto ref = spillFile_->write(slot.compressed.data(), slot.compressed.size());
+    if (!ref.valid()) {
+        // Disk full or unwritable. Keeping the tile in RAM is the only safe
+        // answer; dropping it would lose the user's work.
+        return false;
+    }
+
+    slot.spill = ref;
+    compressedBytes_ -= slot.compressed.size();
+    slot.compressed.clear();
+    slot.compressed.shrink_to_fit();
+    ++spilledTiles_;
+    return true;
 }
 
 size_t TileStore::residentBytes() const {
@@ -189,37 +252,54 @@ bool TileStore::compressTile(TileId id) {
 }
 
 size_t TileStore::evictToBudget() {
-    if (residentBudget_ == 0) return 0;          // unlimited
-    if (residentBytes() <= residentBudget_) return 0;
+    size_t demoted = 0;
 
-    // Free pooled buffers first. They hold no content, so releasing them is
-    // pure profit compared to compressing a tile someone may want back.
-    bufferPool_.clear();
-    if (residentBytes() <= residentBudget_) return 0;
+    // Tier 1 -> 2: uncompressed pixels become compressed payloads.
+    if (residentBudget_ > 0 && residentBytes() > residentBudget_) {
+        // Pooled buffers hold no content, so releasing them is pure profit
+        // compared to compressing a tile someone may want back.
+        bufferPool_.clear();
 
-    // Oldest touch first, so the tiles most likely to be needed again — the
-    // ones just drawn on — are the last to go.
-    std::vector<std::pair<uint64_t, TileId>> candidates;
-    candidates.reserve(residentBuffers_);
-    for (size_t i = 1; i < slots_.size(); ++i) {
-        const Slot& slot = slots_[i];
-        if (slot.refs > 0 && slot.pixels != nullptr) {
-            candidates.emplace_back(slot.lastTouch, static_cast<TileId>(i));
+        if (residentBytes() > residentBudget_) {
+            // Oldest touch first, so the tiles most likely to be needed again
+            // — the ones just drawn on — are the last to go.
+            std::vector<std::pair<uint64_t, TileId>> candidates;
+            candidates.reserve(residentBuffers_);
+            for (size_t i = 1; i < slots_.size(); ++i) {
+                const Slot& slot = slots_[i];
+                if (slot.refs > 0 && slot.pixels != nullptr) {
+                    candidates.emplace_back(slot.lastTouch, static_cast<TileId>(i));
+                }
+            }
+            std::sort(candidates.begin(), candidates.end());
+
+            for (const auto& [touch, id] : candidates) {
+                if (residentBytes() <= residentBudget_) break;
+                if (compressTile(id)) ++demoted;
+            }
+            bufferPool_.clear();
         }
     }
-    std::sort(candidates.begin(), candidates.end());
 
-    size_t compressed = 0;
-    for (const auto& [touch, id] : candidates) {
-        if (residentBytes() <= residentBudget_) break;
-        if (compressTile(id)) {
-            ++compressed;
+    // Tier 2 -> 3: compressed payloads that are still cold leave RAM entirely.
+    if (spillFile_ != nullptr && compressedBudget_ > 0
+        && compressedBytes_ > compressedBudget_) {
+        std::vector<std::pair<uint64_t, TileId>> cold;
+        for (size_t i = 1; i < slots_.size(); ++i) {
+            const Slot& slot = slots_[i];
+            if (slot.refs > 0 && slot.pixels == nullptr && !slot.compressed.empty()) {
+                cold.emplace_back(slot.lastTouch, static_cast<TileId>(i));
+            }
+        }
+        std::sort(cold.begin(), cold.end());
+
+        for (const auto& [touch, id] : cold) {
+            if (compressedBytes_ <= compressedBudget_) break;
+            if (spillTile(id)) ++demoted;
         }
     }
-    // Compression recycles buffers into the pool, which counts against the
-    // budget; drop them so the eviction actually lands.
-    bufferPool_.clear();
-    return compressed;
+
+    return demoted;
 }
 
 } // namespace mc

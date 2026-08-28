@@ -28,8 +28,10 @@
 
 #include "core/tile.h"
 #include "core/tile_codec.h"
+#include "core/tile_spill.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -80,14 +82,31 @@ public:
     void setResidentBudget(size_t bytes);
     size_t residentBudget() const { return residentBudget_; }
 
-    /// Compresses least-recently-used tiles until resident memory fits the
-    /// budget. Returns the number of tiles compressed.
+    /// Ceiling on RAM held by compressed payloads. Past this, the coldest
+    /// compressed tiles are written to the spill file. Requires
+    /// enableSpilling(); 0 means unlimited.
+    void setCompressedBudget(size_t bytes);
+    size_t compressedBudget() const { return compressedBudget_; }
+
+    /// Opens a scratch file for the cold tier. Without this, tiles can be
+    /// compressed but never leave RAM.
+    bool enableSpilling(const std::filesystem::path& scratchFile);
+    bool spillingEnabled() const { return spillFile_ != nullptr; }
+
+    /// Walks least-recently-used tiles down a tier until both budgets are
+    /// satisfied: resident pixels become compressed payloads, and cold
+    /// compressed payloads go out to the spill file. Returns how many tiles
+    /// were demoted.
     ///
     /// Invalidates every pointer previously returned by data()/mutableData().
     size_t evictToBudget();
 
     /// Compresses one specific tile regardless of budget. Mainly for tests.
     bool compressTile(TileId id);
+
+    /// Writes an already-compressed tile out to the spill file. Fails if the
+    /// tile is still resident, or if spilling is not enabled.
+    bool spillTile(TileId id);
 
     // MARK: - Instrumentation
     //
@@ -98,6 +117,7 @@ public:
     size_t liveTileCount() const { return liveTiles_; }
     size_t residentTileCount() const;
     size_t compressedTileCount() const;
+    size_t spilledTileCount() const { return spilledTiles_; }
     size_t pooledBufferCount() const { return bufferPool_.size(); }
 
     /// Uncompressed pixel buffers currently held, including pooled ones. This
@@ -115,6 +135,12 @@ public:
 
     uint64_t compressionCount() const { return compressions_; }
 
+    /// Bytes occupied by the scratch file, and how often we have had to go to
+    /// disk. A climbing read count during drawing means the working set does
+    /// not fit and tiles are round-tripping through the cold tier.
+    uint64_t spillFileBytes() const;
+    uint64_t spillReadCount() const;
+
 private:
     struct Slot {
         // Mutable because materialising a compressed tile is a caching
@@ -122,6 +148,8 @@ private:
         // are still logically const.
         mutable std::unique_ptr<uint8_t[]> pixels;
         mutable std::vector<uint8_t> compressed;
+        /// Set only when the payload lives on disk rather than in `compressed`.
+        mutable TileSpillFile::Ref spill;
         mutable uint64_t lastTouch = 0;
         uint32_t refs = 0;
     };
@@ -139,13 +167,16 @@ private:
     void noteResidentBytes() const;
 
     PixelRunCodec codec_;
+    std::unique_ptr<TileSpillFile> spillFile_;
 
     mutable std::vector<Slot> slots_;   // index 0 is a permanently empty sentinel
     std::vector<TileId> freeIds_;
     mutable std::vector<std::unique_ptr<uint8_t[]>> bufferPool_;
 
     size_t residentBudget_ = 0;
+    size_t compressedBudget_ = 0;
     size_t liveTiles_ = 0;
+    mutable size_t spilledTiles_ = 0;
     mutable size_t residentBuffers_ = 0;   // tiles holding pixels
     mutable size_t compressedBytes_ = 0;
     mutable size_t peakResidentBytes_ = 0;
