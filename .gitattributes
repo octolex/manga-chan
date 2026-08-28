@@ -1,0 +1,9 @@
+# Normalise to LF in the repository. The macOS and Linux runners execute these
+# files directly, and a stray CR breaks shell scripts in ways whose error
+# messages point nowhere useful.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ipa binary
+*.metallib binary

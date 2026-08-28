@@ -1,0 +1,91 @@
+name: iOS build
+
+# Produces an UNSIGNED .ipa as a workflow artifact. Signing happens later on
+# Windows, in Sideloadly, using your free Apple ID — which is why this workflow
+# needs no certificates, no provisioning profiles and no repository secrets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned .ipa
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          cmake --version | head -n 1
+          sw_vers
+
+      - name: Install XcodeGen and Ninja
+        run: brew install xcodegen ninja
+
+      - name: Build engine core for iOS (arm64)
+        run: |
+          cmake -B build-ios -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-ios
+
+      - name: Verify core library is iOS arm64
+        run: |
+          test -f build-ios/lib/libcore.a || { echo "::error::libcore.a was not produced"; exit 1; }
+          lipo -info build-ios/lib/libcore.a
+          lipo -info build-ios/lib/libcore.a | grep -q arm64 \
+            || { echo "::error::libcore.a is not arm64"; exit 1; }
+
+      - name: Generate Xcode project
+        working-directory: shell_ios
+        run: xcodegen generate
+
+      - name: Build app (unsigned)
+        run: |
+          xcodebuild \
+            -project shell_ios/MangaChan.xcodeproj \
+            -scheme MangaChan \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build-app \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify app bundle
+        run: |
+          APP="build-app/Build/Products/Release-iphoneos/MangaChan.app"
+          test -d "$APP" || { echo "::error::app bundle missing"; exit 1; }
+
+          # A missing metallib is a silent black screen on device, so catch it here.
+          test -f "$APP/default.metallib" \
+            || { echo "::error::default.metallib missing — the .metal file did not compile"; exit 1; }
+
+          lipo -info "$APP/MangaChan"
+          echo "Bundle contents:"
+          ls -la "$APP"
+
+      - name: Package .ipa
+        run: |
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R build-app/Build/Products/Release-iphoneos/MangaChan.app Payload/
+          zip -qry MangaChan.ipa Payload
+          ls -lh MangaChan.ipa
+
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: MangaChan-ipa
+          path: MangaChan.ipa
+          if-no-files-found: error
+          retention-days: 30

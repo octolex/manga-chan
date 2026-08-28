@@ -1,0 +1,96 @@
+# XcodeGen spec. This file replaces the .xcodeproj you would normally edit in
+# Xcode — the project is generated fresh on the CI runner by `xcodegen generate`.
+# Edit this on Windows; never commit a .xcodeproj.
+#
+# Target/product name is "MangaChan" (no hyphen) because that becomes the
+# executable name; the hyphenated "Manga-Chan" is the display name shown on
+# the iPad home screen.
+
+name: MangaChan
+
+options:
+  bundleIdPrefix: com.mangachan
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ONLY_ACTIVE_ARCH: NO
+    # iPad only. "1" is iPhone, "2" is iPad.
+    TARGETED_DEVICE_FAMILY: "2"
+
+targets:
+  MangaChan:
+    type: application
+    platform: iOS
+
+    sources:
+      - path: Sources
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mangachan.app
+        PRODUCT_NAME: MangaChan
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.0.1"
+        GENERATE_INFOPLIST_FILE: NO
+
+        # Bridge to the C++ engine core.
+        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/Sources/Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/../core/include
+        LIBRARY_SEARCH_PATHS:
+          - $(SRCROOT)/../build-ios/lib
+        OTHER_LDFLAGS:
+          - -lcore
+          - -lc++
+
+        # Metal: keep fast-math off. A brush engine needs predictable float
+        # behaviour more than it needs the last few percent of shader speed,
+        # and silent NaN handling differences would be miserable to debug
+        # without a frame capture tool.
+        MTL_FAST_MATH: NO
+        MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE
+
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Manga-Chan
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+
+        # Without this, iOS silently caps the app at 60Hz and every ProMotion
+        # latency measurement we take would be wrong.
+        CADisableMinimumFrameDuration: true
+
+        # Expose Documents/ in the Files app so diagnostics and crash logs can
+        # be pulled off the device. With no Mac and no TestFlight, this is the
+        # only channel we have for getting information back off the iPad.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+
+        UIRequiredDeviceCapabilities:
+          - metal
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIStatusBarHidden: true
+        UIRequiresFullScreen: false
+
+# XcodeGen does not create schemes unless asked, and `xcodebuild -scheme`
+# fails without one. Declared explicitly so CI cannot break on this.
+schemes:
+  MangaChan:
+    build:
+      targets:
+        MangaChan: all
+    run:
+      config: Debug
+    archive:
+      config: Release
