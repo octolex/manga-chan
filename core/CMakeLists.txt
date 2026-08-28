@@ -1,4 +1,5 @@
 add_library(core STATIC
+    src/canvas_api.cpp
     src/core_api.cpp
     src/tile_codec.cpp
     src/layer.cpp

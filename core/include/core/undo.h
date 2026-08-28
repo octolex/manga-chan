@@ -84,6 +84,12 @@ public:
     bool undo();
     bool redo();
 
+    /// Tiles touched by the most recent undo() or redo(). The renderer uses
+    /// this to re-upload only what actually changed, rather than the whole
+    /// canvas — otherwise the cost of undo would scale with document size
+    /// instead of with the size of the edit.
+    const std::vector<TileCoord>& lastAffectedTiles() const { return lastAffected_; }
+
     void clear();
 
     // MARK: - Instrumentation
@@ -138,6 +144,7 @@ private:
 
     std::deque<Action> undoStack_;
     std::deque<Action> redoStack_;
+    std::vector<TileCoord> lastAffected_;
 };
 
 } // namespace mc

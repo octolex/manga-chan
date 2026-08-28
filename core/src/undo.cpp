@@ -126,9 +126,11 @@ bool UndoStack::undo() {
     Action action = std::move(undoStack_.back());
     undoStack_.pop_back();
 
+    lastAffected_.clear();
     // Reverse order, so overlapping edits unwind in the order they were made.
     for (auto it = action.edits.rbegin(); it != action.edits.rend(); ++it) {
         applyAndSwap(*it);
+        lastAffected_.push_back(it->coord);
     }
 
     redoStack_.push_back(std::move(action));
@@ -141,8 +143,10 @@ bool UndoStack::redo() {
     Action action = std::move(redoStack_.back());
     redoStack_.pop_back();
 
+    lastAffected_.clear();
     for (auto& edit : action.edits) {
         applyAndSwap(edit);
+        lastAffected_.push_back(edit.coord);
     }
 
     undoStack_.push_back(std::move(action));
