@@ -3,6 +3,7 @@ add_library(core STATIC
     src/tile_codec.cpp
     src/layer.cpp
     src/tile_store.cpp
+    src/undo.cpp
 )
 
 target_include_directories(core PUBLIC
