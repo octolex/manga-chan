@@ -227,6 +227,24 @@ final class Renderer: NSObject {
         pendingCommit = true
     }
 
+    /// Discards the stroke in progress without committing it to the canvas or
+    /// the undo history. Used when a gesture takes over, or when a touch
+    /// produced no geometry.
+    ///
+    /// Nothing needs repainting: the scratch texture is rebuilt from
+    /// `strokeVertices` every frame and only composited while a stroke is
+    /// active, so dropping the geometry is enough to make it vanish.
+    func abortStroke() {
+        guard strokeActive || pendingCommit else { return }
+        strokeVertices.removeAll(keepingCapacity: true)
+        predictionVertices.removeAll(keepingCapacity: true)
+        pendingTiles.removeAll(keepingCapacity: true)
+        strokeBuffer = nil
+        strokeBufferDirty = false
+        strokeActive = false
+        pendingCommit = false
+    }
+
     // MARK: - History
 
     func undo() -> Bool {

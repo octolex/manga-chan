@@ -197,11 +197,27 @@ final class CanvasViewController: UIViewController {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
-        guard activeTouch == nil else { return }
+
+        if let active = activeTouch {
+            // A Pencil stroke ignores extra contacts — that is palm rejection.
+            // A second finger, though, means the user is starting a gesture, so
+            // the finger stroke in progress must be discarded rather than
+            // committed: committing it adds an undo step for a stray dot and,
+            // far worse, clears the redo stack.
+            if active.type != .pencil {
+                cancelStroke()
+            }
+            return
+        }
 
         // Prefer the Pencil if both are down, so a resting hand never wins.
         let touch = touches.first(where: { $0.type == .pencil }) ?? touches.first
         guard let touch else { return }
+
+        // Several fingers already on the glass is a gesture, not drawing.
+        if touch.type != .pencil, (event?.allTouches?.count ?? 1) > 1 {
+            return
+        }
 
         activeTouch = touch
         let builder = StrokeBuilder(viewSize: view.bounds.size,
@@ -248,7 +264,15 @@ final class CanvasViewController: UIViewController {
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesCancelled(touches, with: event)
         guard let active = activeTouch, touches.contains(active) else { return }
-        finishStroke(active, event: event)
+        // UIKit cancels touches once a gesture recognises. Committing a
+        // cancelled stroke is what turned every undo tap into a new undo step.
+        cancelStroke()
+    }
+
+    private func cancelStroke() {
+        activeTouch = nil
+        strokeBuilder = nil
+        renderer?.abortStroke()
     }
 
     private func finishStroke(_ touch: UITouch, event: UIEvent?) {
@@ -263,6 +287,13 @@ final class CanvasViewController: UIViewController {
         // Flush the trailing segments that were still waiting on a lookahead
         // sample which will now never arrive.
         builder.finish()
+
+        // A tap produces no geometry. Committing it anyway would record an
+        // undo step for nothing and discard the redo branch.
+        guard !builder.vertices.isEmpty, !builder.touchedTiles.isEmpty else {
+            renderer?.abortStroke()
+            return
+        }
 
         renderer?.setStrokeGeometry(builder.vertices, sampleCount: coalesced.count)
         // Dropping the prediction here matters: leaving it up would commit a
