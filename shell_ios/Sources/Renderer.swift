@@ -398,10 +398,10 @@ final class Renderer: NSObject {
 
             tileScratch.withUnsafeBufferPointer { buffer in
                 guard let base = buffer.baseAddress else { return }
-                canvas.replaceRegion(MTLRegionMake2D(originX, originY, width, height),
-                                     mipmapLevel: 0,
-                                     withBytes: base,
-                                     bytesPerRow: bytesPerRow)
+                canvas.replace(region: MTLRegionMake2D(originX, originY, width, height),
+                               mipmapLevel: 0,
+                               withBytes: base,
+                               bytesPerRow: bytesPerRow)
             }
         }
     }
