@@ -72,3 +72,8 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-08-28 | Per-tile undo, 100 steps | 3 MB vs 6.4 GB for layer snapshots |
 | 2026-08-28 | Disk spill tier, block reuse | Green, file stays proportional to working set |
 | 2026-08-28 | 100-layer document under budget | 17 MB RAM, all layers readable |
+| 2026-08-28 | Compression on device | 304 tiles -> 1857 KB, 42x. Matches CI |
+| 2026-08-28 | Clear, then undo to recover | Works |
+| 2026-08-28 | Rotation preserves drawing | Works |
+| 2026-08-28 | Tile accounting climbs with coverage | Works |
+| 2026-08-28 | **Undo of strokes** | **BROKEN** - strokes never bracketed. Fixed, awaiting retest |
