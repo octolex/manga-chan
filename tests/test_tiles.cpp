@@ -37,7 +37,7 @@ void testSparsity() {
     Layer layer(store);
 
     CHECK_EQ(layer.tileCount(), 0);
-    CHECK_EQ(store.allocatedBytes(), 0);
+    CHECK_EQ(store.residentBytes(), 0);
 
     layer.setPixel(10, 10, Rgba8{255, 0, 0, 255});
     CHECK_EQ(layer.tileCount(), 1);
@@ -75,9 +75,9 @@ void testSparsityBeatsDenseStorage() {
     CHECK_EQ(layer.tileCount(), 16);
 
     const size_t denseBytes = size_t(4096) * 4096 * 4;
-    CHECK(store.allocatedBytes() < denseBytes / 10);
+    CHECK(store.residentBytes() < denseBytes / 10);
     std::printf("  diagonal: %zu tiles, %zu KB (dense would be %zu KB)\n",
-                layer.tileCount(), store.allocatedBytes() / 1024, denseBytes / 1024);
+                layer.tileCount(), store.residentBytes() / 1024, denseBytes / 1024);
 }
 
 void testCopyOnWrite() {
@@ -87,14 +87,14 @@ void testCopyOnWrite() {
     Layer original(store);
     original.setPixel(10, 10, Rgba8{255, 0, 0, 255});
 
-    const size_t bytesBeforeClone = store.allocatedBytes();
+    const size_t bytesBeforeClone = store.residentBytes();
     const TileId sharedTile = original.tileId(TileCoord{0, 0});
     CHECK_EQ(store.refCount(sharedTile), 1);
 
     Layer copy = original.clone();
 
     // Cloning copies no pixels — it only adds a reference.
-    CHECK_EQ(store.allocatedBytes(), bytesBeforeClone);
+    CHECK_EQ(store.residentBytes(), bytesBeforeClone);
     CHECK_EQ(store.refCount(sharedTile), 2);
     CHECK_EQ(copy.tileCount(), 1);
     CHECK(copy.pixel(10, 10) == (Rgba8{255, 0, 0, 255}));
@@ -146,12 +146,12 @@ void testTilePooling() {
     // because painting churns tiles and re-allocating 256 KB blocks
     // repeatedly is what fragments a heap.
     CHECK_EQ(store.liveTileCount(), 0);
-    CHECK_EQ(store.pooledTileCount(), 2);
+    CHECK_EQ(store.pooledBufferCount(), 2);
 
-    const size_t bytesAfterRelease = store.allocatedBytes();
+    const size_t bytesAfterRelease = store.residentBytes();
     Layer reused(store);
     reused.setPixel(10, 10, Rgba8{9, 9, 9, 255});
-    CHECK_EQ(store.allocatedBytes(), bytesAfterRelease); // came from the pool
+    CHECK_EQ(store.residentBytes(), bytesAfterRelease); // came from the pool
 
     // Pooled tiles must come back blank, or a new layer would inherit the
     // previous one's pixels.
