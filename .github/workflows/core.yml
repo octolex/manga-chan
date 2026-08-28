@@ -29,5 +29,8 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+      # Verbose on purpose. The tile tests print real memory figures, and
+      # having those in the log of every push is how we notice a regression in
+      # sparsity long before it shows up as an out-of-memory crash on device.
       - name: Test
-        run: ctest --test-dir build --build-config Release --output-on-failure
+        run: ctest --test-dir build --build-config Release --verbose
