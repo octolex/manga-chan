@@ -23,6 +23,20 @@ Accumulated since the last install. One install should clear all of these.
 | 8 | `dbl-tap` counter | Double-tap the barrel | Increments |
 | 9 | `peak/fr` | Draw a fast stroke | Climbs toward ~4 |
 
+## Pending — engine integration (finger is fine)
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 14 | Undo | Two-finger tap after a stroke | Last stroke disappears |
+| 15 | Redo | Three-finger tap after undoing | Stroke comes back |
+| 16 | Deep undo | Draw 10 strokes, undo all 10 | Unwinds one stroke at a time, in order |
+| 17 | Clear is undoable | Four-finger tap, then two-finger tap | Drawing comes back |
+| 18 | Tile accounting | Watch `tiles` while drawing | Climbs as you cover more canvas |
+| 19 | History cost | Watch `history` after 10 strokes | Shows steps and retained tiles |
+| 20 | Capture cost | Watch `capture` at stroke end | Should be a couple of ms, not tens |
+| 21 | Rotation | Draw, then rotate the iPad | Drawing survives, repainted from tiles |
+| 22 | Paging | Draw across the whole screen | `zip`/`disk` counts become non-zero |
+
 ## Pending — testable with a finger
 
 | # | What | How | Expected |

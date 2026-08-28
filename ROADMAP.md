@@ -30,7 +30,7 @@ this device is 16.6 ms rather than 8.3 ms.
 
 ---
 
-## 🔨 M1 — Tiled sparse canvas
+## ✅ M1 — Tiled sparse canvas
 
 The foundation, and the thing that genuinely beats Procreate: memory becomes
 a function of what is *visible*, not of document size, which removes the
@@ -44,7 +44,7 @@ layer cap entirely.
 | ✅ | Compressed-RAM residency tier with LRU eviction and a byte budget |
 | ✅ | Disk tier — scratch file with block reuse for cold tiles |
 | ✅ | Per-tile undo ring with copy-on-write history |
-| ⬜ | Renderer reads from the tile store instead of one screen-sized texture |
+| ✅ | Renderer backed by the tile store, with undo/redo on device |
 
 **Measured**, all in CI on Linux and Windows in ~40 s, 245 checks:
 
@@ -58,6 +58,12 @@ layer cap entirely.
 The last row is the one that matters: RAM stayed pinned to its budget while
 every one of the 100 layers remained instantly readable. That is the layer cap
 gone.
+
+Pixels cross between GPU and engine **once per stroke**, never per frame. Undo
+and redo re-upload only the tiles that actually changed, so their cost tracks
+the size of the edit rather than the size of the document.
+
+*Awaiting device verification — see [TESTING.md](TESTING.md), items 14–22.*
 
 ---
 
