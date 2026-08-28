@@ -1,8 +1,12 @@
-# M0 keeps tests dependency-free on purpose: no FetchContent, so a network
-# hiccup can never be the reason CI goes red. A real framework (doctest)
-# arrives in M1 when the tile store gives us something worth testing properly.
+# Tests are deliberately dependency-free: no FetchContent, so a network hiccup
+# can never be the reason CI goes red. See check.h.
 
-add_executable(core_tests test_core_api.cpp)
-target_link_libraries(core_tests PRIVATE core)
+function(add_core_test name)
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE core)
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
 
-add_test(NAME core_tests COMMAND core_tests)
+add_core_test(test_core_api)
+add_core_test(test_tiles)

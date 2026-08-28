@@ -1,5 +1,7 @@
 add_library(core STATIC
     src/core_api.cpp
+    src/layer.cpp
+    src/tile_store.cpp
 )
 
 target_include_directories(core PUBLIC
