@@ -12,7 +12,8 @@ Layer::~Layer() {
 }
 
 Layer::Layer(Layer&& other) noexcept
-    : store_(other.store_), tiles_(std::move(other.tiles_)) {
+    : store_(other.store_), tiles_(std::move(other.tiles_)),
+      contentRevision_(other.contentRevision_) {
     other.tiles_.clear();
 }
 
@@ -21,6 +22,7 @@ Layer& Layer::operator=(Layer&& other) noexcept {
         releaseAll();
         store_ = other.store_;
         tiles_ = std::move(other.tiles_);
+        contentRevision_ = other.contentRevision_;
         other.tiles_.clear();
     }
     return *this;
@@ -61,6 +63,7 @@ const uint8_t* Layer::readTile(TileCoord coord) const {
 }
 
 uint8_t* Layer::writeTile(TileCoord coord) {
+    ++contentRevision_;
     const auto it = tiles_.find(coord);
 
     if (it == tiles_.end()) {
@@ -80,6 +83,7 @@ uint8_t* Layer::writeTile(TileCoord coord) {
 }
 
 void Layer::adoptTile(TileCoord coord, TileId id) {
+    ++contentRevision_;
     if (id == kInvalidTile) {
         dropTile(coord);
         return;
@@ -95,6 +99,7 @@ void Layer::adoptTile(TileCoord coord, TileId id) {
 }
 
 void Layer::dropTile(TileCoord coord) {
+    ++contentRevision_;
     const auto it = tiles_.find(coord);
     if (it == tiles_.end()) return;
     store_->release(it->second);
@@ -102,6 +107,7 @@ void Layer::dropTile(TileCoord coord) {
 }
 
 void Layer::clear() {
+    ++contentRevision_;
     releaseAll();
 }
 

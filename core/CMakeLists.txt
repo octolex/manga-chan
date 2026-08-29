@@ -2,6 +2,7 @@ add_library(core STATIC
     src/blend.cpp
     src/blend_api.cpp
     src/canvas_api.cpp
+    src/compositor.cpp
     src/core_api.cpp
     src/tile_codec.cpp
     src/layer.cpp

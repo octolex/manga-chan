@@ -39,6 +39,12 @@ public:
     /// separate individually on first write to each.
     Layer clone() const;
 
+    /// Bumped by every mutation. The compositor compares this against what
+    /// it last flattened to decide whether a cached layer stack is still
+    /// good — the alternative, re-flattening every frame, is exactly the cost
+    /// the cache exists to avoid.
+    uint64_t contentRevision() const { return contentRevision_; }
+
     bool hasTile(TileCoord coord) const;
     size_t tileCount() const { return tiles_.size(); }
     const TileMap& tiles() const { return tiles_; }
@@ -74,6 +80,7 @@ private:
 
     TileStore* store_;
     TileMap tiles_;
+    uint64_t contentRevision_ = 0;
 };
 
 } // namespace mc
