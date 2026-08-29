@@ -66,7 +66,7 @@ final class BlendShaderTests: XCTestCase {
     /// points, and unpremultiplying a half-alpha pixel divides by ~0.5, which
     /// amplifies any disagreement. A few levels is expected; a wrong formula
     /// misses by far more.
-    private let tolerance = 3
+    private let tolerance = 2
 
     func testEveryBlendModeMatchesTheCPUReference() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {

@@ -89,13 +89,25 @@ No Pencil dependency: none of this milestone touches input.
 | ✅ | Undo addressed by stable `LayerId`, safe across layer deletion |
 | ✅ | All 26 blend modes, CPU reference implementation |
 | ✅ | Simulator test harness in CI, with real Metal |
-| ⬜ | Blend-mode shaders via framebuffer fetch, verified against the CPU reference |
+| ✅ | Blend-mode shaders in Metal, verified against the CPU reference |
 | ⬜ | under/over caching, recomputed only when layer selection changes |
 | ⬜ | Layer panel in the app |
 | ⬜ | Tile buffers backed by GPU-visible memory, removing the 6.5 ms capture |
 | ⬜ | Golden-image tests in the iOS Simulator on CI |
 
 504 checks green on Linux and Windows, plus 4 on an iPad simulator.
+
+All 26 blend shaders are checked against the CPU implementation on every
+push: 26 modes x 64 colour pairs x 2 opacities, worst channel difference **1**
+of 2 allowed. That is rounding, not disagreement.
+
+One limitation found and recorded rather than discovered later: **the iOS
+Simulator does not support programmable blending**, rejecting it at pipeline
+creation. The shader therefore has two entry points sharing one composite
+function — the shipping path reads the destination from tile memory, the
+tested path takes it as a texture. What CI verifies is the arithmetic, which
+is where mistakes hide; what it cannot verify is one documented attribute
+that fails loudly rather than subtly.
 
 The simulator harness matters more than its four trivial tests suggest. Every
 bug that has reached the device lived in the Swift shell, invisible to the C++
