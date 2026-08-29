@@ -103,8 +103,11 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-08-28 | Non-linear history: undo, draw, undo, redo | Consistent across repeated scenarios |
 | 2026-08-28 | Redo branch invalidation | Correct |
 | 2026-08-28 | Capture cost, full-canvas stroke | 6.5 ms, once per stroke. Accepted |
+| 2026-08-29 | Block A: draws, panel opens, panel does not leak touches | Pass after 1 fix |
+| 2026-08-29 | Block B: add, select-routes-strokes, visibility, delete | Pass after 1 fix |
+| 2026-08-29 | Last-layer delete guard | Correctly refused |
 
-Two bugs found and fixed during this session, both invisible to CI because
+Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:
 
 1. **Strokes were never bracketed.** `beginStroke` was never called, so no
@@ -114,6 +117,12 @@ they lived in the Swift shell rather than the engine:
    touches to the view, so the tap started a stroke, which committed an undo
    action and cleared the redo stack. Undo appeared to work once and then
    stop; redo never worked.
+3. **The layers panel collapsed to its header.** A scroll view has no
+   intrinsic content size, so the panel had an upper bound and nothing pushing
+   against it. Rows laid out into zero height.
+4. **The layer detail section overlapped itself.** Buttons without explicit
+   heights let UIStackView compress them, and 26 inline blend modes made the
+   section taller than the screen. Delete was unreachable.
 
 The engine was correct throughout. Both bugs were in how the shell drove it,
 which is an argument for pushing more of this logic behind the C ABI where CI
