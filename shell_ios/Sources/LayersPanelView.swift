@@ -39,6 +39,10 @@ final class LayersPanelView: UIView {
 
     private var rows: [LayerRowView] = []
 
+    /// Where the expanded row's blend list was scrolled to, carried across a
+    /// rebuild so picking a mode does not jump the list back to the top.
+    private var blendScrollOffset: CGFloat?
+
     // Geometry from the spec, in points.
     private enum Metrics {
         static let width: CGFloat = 330
@@ -138,6 +142,11 @@ final class LayersPanelView: UIView {
     // MARK: - Population
 
     func reload(from engine: CanvasEngine) {
+        // Read the scroll position off the outgoing row before it is torn down.
+        for row in rows where row.blendScrollOffset != nil {
+            blendScrollOffset = row.blendScrollOffset
+        }
+
         rows.forEach { $0.removeFromSuperview() }
         rows.removeAll()
 
@@ -150,7 +159,8 @@ final class LayersPanelView: UIView {
                                    properties: properties,
                                    isActive: id == active,
                                    isExpanded: id == expandedLayer,
-                                   rowHeight: Metrics.rowHeight)
+                                   rowHeight: Metrics.rowHeight,
+                                   initialBlendScroll: blendScrollOffset)
             row.onSelect = { [weak self] in
                 guard let self else { return }
                 self.delegate?.layersPanel(self, didSelect: id)
@@ -158,6 +168,9 @@ final class LayersPanelView: UIView {
             row.onToggleExpanded = { [weak self] in
                 guard let self else { return }
                 self.expandedLayer = (self.expandedLayer == id) ? MC_INVALID_LAYER : id
+                // A freshly opened section should start at its current mode,
+                // not wherever a previous one happened to be scrolled.
+                self.blendScrollOffset = nil
                 self.reload(from: engine)
             }
             row.onUpdate = { [weak self] updated, needsReload in
@@ -205,12 +218,16 @@ private class LayerRowView: UIView {
     private let detail = UIStackView()
 
     init(layer: MCLayerId, properties: LayerProperties, isActive: Bool,
-         isExpanded: Bool, rowHeight: CGFloat) {
+         isExpanded: Bool, rowHeight: CGFloat, initialBlendScroll: CGFloat? = nil) {
         self.layerId = layer
         self.properties = properties
+        self.initialBlendScroll = initialBlendScroll
         super.init(frame: .zero)
         build(isActive: isActive, isExpanded: isExpanded, rowHeight: rowHeight)
     }
+
+    /// Nil unless this row's blend list is on screen.
+    var blendScrollOffset: CGFloat? { blendScrollView?.contentOffset.y }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
@@ -402,14 +419,17 @@ private class LayerRowView: UIView {
 
     private weak var blendScrollView: UIScrollView?
     private var selectedModeIndex = 0
+    private var initialBlendScroll: CGFloat?
 
     override func layoutSubviews() {
         super.layoutSubviews()
         guard let scroll = blendScrollView, !didScrollToSelectedMode,
               scroll.contentSize.height > scroll.bounds.height else { return }
         didScrollToSelectedMode = true
-        let target = min(CGFloat(selectedModeIndex) * 30,
-                         scroll.contentSize.height - scroll.bounds.height)
+        // Restore where the list was if we are being rebuilt; otherwise open
+        // on the current mode so the selection is visible without hunting.
+        let wanted = initialBlendScroll ?? CGFloat(selectedModeIndex) * 30
+        let target = min(wanted, scroll.contentSize.height - scroll.bounds.height)
         scroll.setContentOffset(CGPoint(x: 0, y: max(0, target)), animated: false)
     }
 
