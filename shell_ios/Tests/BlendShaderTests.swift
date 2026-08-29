@@ -231,7 +231,8 @@ final class BlendShaderTests: XCTestCase {
             return
         }
 
-        var uniforms = MSBlendUniforms(mode: mode, opacity: opacity)
+        var uniforms = MSBlendUniforms(mode: mode, opacity: opacity,
+                                       useClipMask: 0, _pad: 0)
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(source, index: 0)
         encoder.setFragmentTexture(backdrop, index: 1)

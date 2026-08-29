@@ -36,6 +36,8 @@ final class CanvasViewController: UIViewController {
     private var strokeBuilder: StrokeBuilder?
 
     private var inputStats = InputStats()
+    private let layersPanel = LayersPanelView()
+    private let layersButton = UIButton(type: .system)
 
     override func loadView() {
         view = metalView
@@ -67,7 +69,11 @@ final class CanvasViewController: UIViewController {
             }
             self.renderer = renderer
             hud.addStaticLine(MTLCreateSystemDefaultDevice()?.name ?? "unknown GPU")
-            hud.addStaticLine("2f tap undo · 3f redo · 4f clear")
+            hud.addStaticLine("2f undo · 3f redo · 4f clear layer")
+            renderer.onLayersChanged = { [weak self] in
+                guard let self else { return }
+                self.layersPanel.reload(from: renderer.canvas)
+            }
         } catch {
             let message = (error as? RendererError)?.description ?? String(describing: error)
             Diagnostics.log("RENDERER INIT FAILED: \(message)")
@@ -80,6 +86,8 @@ final class CanvasViewController: UIViewController {
         addTapGesture(touches: 2, action: #selector(handleUndo))
         addTapGesture(touches: 3, action: #selector(handleRedo))
         addTapGesture(touches: 4, action: #selector(handleClear))
+
+        setUpLayersPanel()
 
         // Squeeze (Pencil Pro) and double-tap (Pencil 2 and later). Both are
         // only wired to counters for now — the point is to confirm they arrive
@@ -132,7 +140,49 @@ final class CanvasViewController: UIViewController {
     }
 
     @objc private func handleClear() {
-        renderer?.clearCanvas()
+        renderer?.clearActiveLayer()
+    }
+
+    // MARK: - Layers panel
+
+    private func setUpLayersPanel() {
+        layersButton.setImage(UIImage(systemName: "square.3.layers.3d"), for: .normal)
+        layersButton.tintColor = .white
+        layersButton.backgroundColor = UIColor(white: 0.13, alpha: 0.9)
+        layersButton.layer.cornerRadius = 10
+        layersButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        layersButton.addTarget(self, action: #selector(toggleLayersPanel), for: .touchUpInside)
+
+        layersPanel.delegate = self
+        layersPanel.isHidden = true
+
+        [layersButton, layersPanel].forEach {
+            view.addSubview($0)
+            $0.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        NSLayoutConstraint.activate([
+            layersButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor,
+                                              constant: 12),
+            layersButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                                                   constant: -12),
+
+            layersPanel.topAnchor.constraint(equalTo: layersButton.bottomAnchor, constant: 10),
+            layersPanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                                                  constant: -12),
+            layersPanel.widthAnchor.constraint(equalToConstant: 330),
+            // Capped rather than pinned to the bottom: a long stack scrolls
+            // inside the panel instead of the panel swallowing the canvas.
+            layersPanel.heightAnchor.constraint(lessThanOrEqualTo: view.heightAnchor,
+                                                multiplier: 0.7),
+        ])
+    }
+
+    @objc private func toggleLayersPanel() {
+        layersPanel.isHidden.toggle()
+        if !layersPanel.isHidden, let renderer {
+            layersPanel.reload(from: renderer.canvas)
+        }
     }
 
     @objc private func handleHover(_ gesture: UIHoverGestureRecognizer) {
@@ -221,6 +271,13 @@ final class CanvasViewController: UIViewController {
         // Prefer the Pencil if both are down, so a resting hand never wins.
         let touch = touches.first(where: { $0.type == .pencil }) ?? touches.first
         guard let touch else { return }
+
+        // Chrome sits above the canvas, so a touch that lands on it is not a
+        // stroke — even for the Pencil, which would otherwise draw straight
+        // through the panel.
+        let point = touch.location(in: view)
+        if !layersPanel.isHidden, layersPanel.frame.contains(point) { return }
+        if layersButton.frame.contains(point) { return }
 
         // Several fingers already on the glass is a gesture, not drawing.
         if touch.type != .pencil, (event?.allTouches?.count ?? 1) > 1 {
@@ -352,6 +409,28 @@ final class CanvasViewController: UIViewController {
 
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
+}
+
+// MARK: - Layers panel
+
+extension CanvasViewController: LayersPanelDelegate {
+
+    func layersPanelDidRequestAdd(_ panel: LayersPanelView) {
+        renderer?.addLayer()
+    }
+
+    func layersPanel(_ panel: LayersPanelView, didSelect layer: MCLayerId) {
+        renderer?.selectLayer(layer)
+    }
+
+    func layersPanel(_ panel: LayersPanelView, didRequestDelete layer: MCLayerId) {
+        renderer?.removeLayer(layer)
+    }
+
+    func layersPanel(_ panel: LayersPanelView, didUpdate properties: LayerProperties,
+                     for layer: MCLayerId) {
+        renderer?.setProperties(properties, of: layer)
+    }
 }
 
 // MARK: - Pencil squeeze and double-tap

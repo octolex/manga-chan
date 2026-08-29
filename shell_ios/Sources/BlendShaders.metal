@@ -263,10 +263,19 @@ static float4 compositePremultiplied(int mode, float4 dst, float4 src, float opa
 fragment float4 blend_fragment(BlendRasterData in [[stage_in]],
                                float4 dst [[color(0)]],
                                texture2d<float> sourceTexture [[texture(0)]],
+                               texture2d<float> clipMask [[texture(2)]],
                                constant MSBlendUniforms& uniforms [[buffer(0)]])
 {
     constexpr sampler nearest(filter::nearest, address::clamp_to_edge);
     float4 src = sourceTexture.sample(nearest, in.texCoord);
+
+    // Clipping masks the layer by the alpha of its clip base — the bottom of
+    // its clip group, not the accumulated result beneath it. Scaling
+    // premultiplied colour and alpha together keeps the pixel premultiplied.
+    if (uniforms.useClipMask != 0) {
+        src *= clipMask.sample(nearest, in.texCoord).a;
+    }
+
     return compositePremultiplied(uniforms.mode, dst, src, uniforms.opacity);
 }
 

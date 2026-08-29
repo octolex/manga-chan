@@ -28,8 +28,10 @@ typedef struct {
 } MSStrokeVertex;
 
 typedef struct {
-    int32_t mode;      // matches mc::BlendMode in core/blend.h
-    float   opacity;   // layer opacity, 0...1
+    int32_t mode;         // matches mc::BlendMode in core/blend.h
+    float   opacity;      // layer opacity, 0...1
+    int32_t useClipMask;  // non-zero: multiply source alpha by the mask texture
+    int32_t _pad;
 } MSBlendUniforms;
 
 typedef enum {

@@ -125,6 +125,13 @@ final class HUDView: UIView {
             lines.append(String(format: "disk     %4llu KB", latest.spillBytes / 1024))
             lines.append(String(format: "history  %4llu steps, %llu tiles",
                                 latest.undoDepth, latest.historyTiles))
+            lines.append(String(format: "layers   %4d  (%d live)",
+                                latest.layerCount, latest.liveLayerCount))
+            // These must stay flat while a stroke is in progress. If they
+            // climb, something is invalidating the caches every frame and a
+            // deep document is paying full price for every one of them.
+            lines.append(String(format: "cache    %4llu under, %llu over rebuilds",
+                                latest.underRebuilds, latest.overRebuilds))
             // Only shown when it is non-zero, where it means edits are landing
             // with no undo history behind them.
             if latest.storesOutsideAction > 0 {

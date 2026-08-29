@@ -1,30 +1,23 @@
 //
 //  Renderer.swift
 //
-//  Three textures, and the relationship between them is the whole design:
+//  Owns the frame loop and the stroke in progress; LayerCompositor owns the
+//  layer stack's pixels.
 //
-//    canvas   bgra8  — committed strokes. Only ever written at stroke end.
-//    scratch  r8     — coverage of the stroke currently being drawn.
-//    drawable        — canvas, then scratch tinted and composited on top.
-//
-//  The in-progress stroke lives in `scratch` and is rebuilt from scratch (in
-//  both senses) every frame. Three things fall out of that for free:
+//  The stroke being drawn lives in a single-channel coverage texture that is
+//  rebuilt from its geometry every frame. Three things fall out of that:
 //
 //    · Overlapping ribbon quads accumulate with MAX, so a dense self-
-//      overlapping stroke has uniform coverage instead of darkening at every
-//      overlap — and a semi-transparent stroke does not darken where it
-//      crosses itself.
-//    · Predicted touches are drawn into scratch alongside the real ones, and
-//      because scratch is cleared each frame, a wrong prediction simply
-//      disappears. It can never reach the canvas, because only committed
-//      geometry is redrawn at commit time.
+//      overlapping stroke has uniform coverage rather than darkening at every
+//      overlap, and a semi-transparent stroke does not darken where it crosses
+//      itself.
+//    · Predicted touches are drawn alongside the real ones and vanish on the
+//      next frame's clear, so a wrong guess can never reach a layer.
 //    · Stroke opacity stays adjustable until the moment it is committed.
 //
-//  The engine handoff. When a stroke commits, the tiles it touched are read
-//  back from the canvas texture and handed to the C++ engine, which owns undo
-//  history, compression and paging. That crossing happens once per stroke, not
-//  once per frame — a readback in the frame loop would cost more than
-//  everything else here combined.
+//  At stroke end the coverage is flattened into the active layer's texture,
+//  and only the tiles it touched are read back to the engine. That crossing
+//  happens once per stroke, never per frame.
 //
 //  Threading: the display link runs on the main run loop and touches arrive on
 //  the main thread, so none of the state below needs locking.
@@ -57,6 +50,14 @@ struct FrameStats {
     var historyTiles: UInt64 = 0
     var storesOutsideAction: UInt64 = 0
     var lastCaptureMs: Double = 0
+
+    // Compositor. `underRebuilds`/`overRebuilds` must stay flat while a stroke
+    // is in progress; if they climb, the under/over optimisation has stopped
+    // working and a deep document is paying full price every frame.
+    var layerCount: Int = 0
+    var liveLayerCount: Int = 0
+    var underRebuilds: UInt64 = 0
+    var overRebuilds: UInt64 = 0
 }
 
 enum RendererError: Error, CustomStringConvertible {
@@ -65,6 +66,7 @@ enum RendererError: Error, CustomStringConvertible {
     case noShaderLibrary
     case missingFunction(String)
     case engineUnavailable
+    case programmableBlendingUnavailable
 
     var description: String {
         switch self {
@@ -73,6 +75,8 @@ enum RendererError: Error, CustomStringConvertible {
         case .noShaderLibrary: return "default.metallib missing — the .metal file did not compile into the bundle"
         case .missingFunction(let name): return "shader function '\(name)' not found in default.metallib"
         case .engineUnavailable: return "the C++ canvas engine failed to start"
+        case .programmableBlendingUnavailable:
+            return "programmable blending is unavailable — this build needs a real device, not the Simulator"
         }
     }
 }
@@ -82,16 +86,16 @@ final class Renderer: NSObject {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let coveragePipeline: MTLRenderPipelineState
-    private let compositePipeline: MTLRenderPipelineState
-    private let blitPipeline: MTLRenderPipelineState
     private let layer: CAMetalLayer
     private let engine: CanvasEngine
+    private let compositor: LayerCompositor
 
     private var displayLink: CAMetalDisplayLink?
 
-    private var canvasTexture: MTLTexture?
+    /// Coverage of the stroke in progress. Single channel: the ink colour is
+    /// applied when it is composited, which is what keeps opacity adjustable
+    /// until commit.
     private var scratchTexture: MTLTexture?
-    private var canvasNeedsClear = true
 
     private var strokeVertices: [MSStrokeVertex] = []
     private var predictionVertices: [MSStrokeVertex] = []
@@ -102,15 +106,12 @@ final class Renderer: NSObject {
     private var pendingTiles: [EngineTile] = []
     private var samplesThisFrame = 0
 
-    /// Staging buffer for one tile, reused so a stroke commit does not churn
-    /// the allocator once per tile.
-    private var tileScratch: [UInt8]
-
-    /// Ink colour, straight (not premultiplied); the composite shader
-    /// premultiplies.
+    /// Ink colour, straight (not premultiplied); the shader premultiplies.
     var inkColor = simd_float4(0.09, 0.09, 0.11, 1.0)
 
     var onStats: ((FrameStats) -> Void)?
+    /// Fires when the layer stack changes in a way the panel should reflect.
+    var onLayersChanged: (() -> Void)?
 
     private var stats = FrameStats()
     private var lastFrameTimestamp: CFTimeInterval = 0
@@ -118,7 +119,9 @@ final class Renderer: NSObject {
     private var smoothedGPUMs: Double = 0
     private var smoothedCPUMs: Double = 0
 
-    private static let scratchFormat: MTLPixelFormat = .r8Unorm
+    private static let coverageFormat: MTLPixelFormat = .r8Unorm
+
+    var canvas: CanvasEngine { engine }
 
     init(layer: CAMetalLayer) throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw RendererError.noDevice }
@@ -137,7 +140,6 @@ final class Renderer: NSObject {
         self.commandQueue = queue
         self.layer = layer
         self.engine = engine
-        self.tileScratch = [UInt8](repeating: 0, count: engine.tileByteCount)
 
         layer.device = device
         layer.pixelFormat = .bgra8Unorm
@@ -146,53 +148,38 @@ final class Renderer: NSObject {
         // latency, which is the wrong trade for a drawing app.
         layer.maximumDrawableCount = 2
 
-        // Coverage: MAX blending. Metal ignores the blend factors entirely for
-        // min/max operations, so the destination simply keeps whichever
-        // coverage is greater.
+        // Coverage accumulates with MAX. Metal ignores blend factors entirely
+        // for min/max, so the destination simply keeps the greater value.
         let coverage = MTLRenderPipelineDescriptor()
         coverage.label = "Stroke coverage"
         coverage.vertexFunction = try function("stroke_vertex")
         coverage.fragmentFunction = try function("stroke_coverage_fragment")
-        let coverageAttachment = coverage.colorAttachments[0]!
-        coverageAttachment.pixelFormat = Self.scratchFormat
-        coverageAttachment.isBlendingEnabled = true
-        coverageAttachment.rgbBlendOperation = .max
-        coverageAttachment.alphaBlendOperation = .max
+        let attachment = coverage.colorAttachments[0]!
+        attachment.pixelFormat = Self.coverageFormat
+        attachment.isBlendingEnabled = true
+        attachment.rgbBlendOperation = .max
+        attachment.alphaBlendOperation = .max
         self.coveragePipeline = try device.makeRenderPipelineState(descriptor: coverage)
 
-        // Composite: standard source-over with premultiplied source.
-        let composite = MTLRenderPipelineDescriptor()
-        composite.label = "Stroke composite"
-        composite.vertexFunction = try function("fullscreen_vertex")
-        composite.fragmentFunction = try function("composite_fragment")
-        let compositeAttachment = composite.colorAttachments[0]!
-        compositeAttachment.pixelFormat = layer.pixelFormat
-        compositeAttachment.isBlendingEnabled = true
-        compositeAttachment.rgbBlendOperation = .add
-        compositeAttachment.alphaBlendOperation = .add
-        compositeAttachment.sourceRGBBlendFactor = .one
-        compositeAttachment.sourceAlphaBlendFactor = .one
-        compositeAttachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-        compositeAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        self.compositePipeline = try device.makeRenderPipelineState(descriptor: composite)
-
-        let blit = MTLRenderPipelineDescriptor()
-        blit.label = "Canvas blit"
-        blit.vertexFunction = try function("fullscreen_vertex")
-        blit.fragmentFunction = try function("blit_fragment")
-        blit.colorAttachments[0].pixelFormat = layer.pixelFormat
-        self.blitPipeline = try device.makeRenderPipelineState(descriptor: blit)
+        do {
+            self.compositor = try LayerCompositor(device: device, library: library,
+                                                  pixelFormat: layer.pixelFormat,
+                                                  tileSize: engine.tileSize)
+        } catch {
+            // The Simulator rejects programmable blending at pipeline
+            // creation. Saying so plainly beats a generic shader error.
+            throw RendererError.programmableBlendingUnavailable
+        }
 
         super.init()
 
-        // A budget generous enough that nothing pages during normal drawing,
-        // but low enough that the tier machinery is actually exercised on
-        // device rather than only in tests.
+        // Generous enough that nothing pages during normal drawing, but low
+        // enough that the tier machinery is exercised on device rather than
+        // only in tests.
         engine.setBudgets(residentBytes: 96 * UInt64(engine.tileByteCount),
                           compressedBytes: 32 * 1024 * 1024)
 
         Diagnostics.log("Metal device: \(device.name)")
-        Diagnostics.log("  supportsFamily(.apple8): \(device.supportsFamily(.apple8))")
         Diagnostics.log("  supportsFamily(.apple9): \(device.supportsFamily(.apple9))")
         Diagnostics.log("  hasUnifiedMemory: \(device.hasUnifiedMemory)")
         Diagnostics.log("  recommendedMaxWorkingSetSize: \(device.recommendedMaxWorkingSetSize / (1024 * 1024)) MB")
@@ -200,7 +187,6 @@ final class Renderer: NSObject {
 
     // MARK: - Stroke input
 
-    /// Full committed geometry of the stroke in progress.
     func setStrokeGeometry(_ vertices: [MSStrokeVertex], sampleCount: Int) {
         strokeVertices = vertices
         strokeBufferDirty = true
@@ -208,18 +194,14 @@ final class Renderer: NSObject {
         samplesThisFrame += sampleCount
     }
 
-    /// Lookahead geometry. Drawn into scratch but never committed.
     func setPredictionGeometry(_ vertices: [MSStrokeVertex]) {
         predictionVertices = vertices
     }
 
-    /// Tile edge in pixels, so the input layer can work out which tiles a
-    /// stroke covers without duplicating the constant.
     var engineTileSize: Int { engine.tileSize }
 
-    /// Flattens the stroke into the canvas on the next frame, then hands the
-    /// tiles it touched to the engine.
-    /// - Parameter tiles: exactly the tiles the stroke covered.
+    /// Flattens the stroke into the active layer on the next frame, then hands
+    /// the tiles it touched to the engine.
     func endStroke(tiles: Set<EngineTile>) {
         guard strokeActive else { return }
         predictionVertices.removeAll(keepingCapacity: true)
@@ -227,13 +209,9 @@ final class Renderer: NSObject {
         pendingCommit = true
     }
 
-    /// Discards the stroke in progress without committing it to the canvas or
-    /// the undo history. Used when a gesture takes over, or when a touch
-    /// produced no geometry.
-    ///
-    /// Nothing needs repainting: the scratch texture is rebuilt from
-    /// `strokeVertices` every frame and only composited while a stroke is
-    /// active, so dropping the geometry is enough to make it vanish.
+    /// Discards the stroke without committing it. Nothing needs repainting:
+    /// the coverage texture is rebuilt from geometry each frame and only drawn
+    /// while a stroke is active.
     func abortStroke() {
         guard strokeActive || pendingCommit else { return }
         strokeVertices.removeAll(keepingCapacity: true)
@@ -245,26 +223,75 @@ final class Renderer: NSObject {
         pendingCommit = false
     }
 
+    // MARK: - Layers
+
+    func addLayer() {
+        let id = engine.addLayer(named: "Layer \(engine.layerCount + 1)")
+        compositor.markLayerStale(id)
+        onLayersChanged?()
+        Diagnostics.log("added layer \(id)")
+    }
+
+    func duplicateActiveLayer() {
+        let id = engine.duplicateLayer(engine.activeLayer)
+        compositor.markLayerStale(id)
+        onLayersChanged?()
+    }
+
+    func removeLayer(_ layer: MCLayerId) {
+        guard engine.removeLayer(layer) else { return }
+        compositor.forgetLayer(layer)
+        engine.invalidateCaches()
+        onLayersChanged?()
+    }
+
+    func selectLayer(_ layer: MCLayerId) {
+        engine.setActiveLayer(layer)
+        onLayersChanged?()
+    }
+
+    func moveLayer(_ layer: MCLayerId, to index: Int) {
+        guard engine.moveLayer(layer, to: index) else { return }
+        engine.invalidateCaches()
+        onLayersChanged?()
+    }
+
+    func setProperties(_ properties: LayerProperties, of layer: MCLayerId) {
+        engine.setProperties(properties, of: layer)
+        onLayersChanged?()
+    }
+
     // MARK: - History
 
+    @discardableResult
     func undo() -> Bool {
         guard let tiles = engine.undo() else { return false }
-        applyTiles(tiles)
-        Diagnostics.log("undo: \(tiles.count) tiles restored")
+        // Undo can touch any layer, so every texture is suspect. Re-uploading
+        // lazily on next use keeps this off the frame that has to stay
+        // responsive.
+        compositor.markAllLayersStale()
+        engine.invalidateCaches()
+        onLayersChanged?()
+        Diagnostics.log("undo: \(tiles.count) tiles")
         return true
     }
 
+    @discardableResult
     func redo() -> Bool {
         guard let tiles = engine.redo() else { return false }
-        applyTiles(tiles)
-        Diagnostics.log("redo: \(tiles.count) tiles restored")
+        compositor.markAllLayersStale()
+        engine.invalidateCaches()
+        onLayersChanged?()
+        Diagnostics.log("redo: \(tiles.count) tiles")
         return true
     }
 
-    func clearCanvas() {
-        let tiles = engine.clear()
-        applyTiles(tiles)
-        Diagnostics.log("canvas cleared (\(tiles.count) tiles, undoable)")
+    func clearActiveLayer() {
+        let tiles = engine.clearActiveLayer()
+        compositor.markLayerStale(engine.activeLayer)
+        engine.invalidateCaches()
+        onLayersChanged?()
+        Diagnostics.log("cleared active layer (\(tiles.count) tiles, undoable)")
     }
 
     // MARK: - Frame loop
@@ -279,9 +306,6 @@ final class Renderer: NSObject {
         let maxFPS = Float(max(30, maxFramesPerSecond))
         let link = CAMetalDisplayLink(metalLayer: layer)
         link.delegate = self
-        // Allowing the system to halve the rate when nothing is happening
-        // saves battery. M4 should tighten this to pin the rate while a stroke
-        // is in progress, where any drop is directly visible as lag.
         link.preferredFrameRateRange = CAFrameRateRange(minimum: maxFPS / 2,
                                                         maximum: maxFPS,
                                                         preferred: maxFPS)
@@ -295,7 +319,6 @@ final class Renderer: NSObject {
     func stop() {
         displayLink?.invalidate()
         displayLink = nil
-        Diagnostics.log("display link stopped")
     }
 
     func resize(to size: CGSize) {
@@ -309,129 +332,22 @@ final class Renderer: NSObject {
         let height = Int(layer.drawableSize.height)
         guard width > 0, height > 0 else { return }
 
-        if let existing = canvasTexture, existing.width == width, existing.height == height {
+        if let existing = scratchTexture, existing.width == width, existing.height == height {
             return
         }
 
-        func makeTexture(_ format: MTLPixelFormat,
-                         _ storage: MTLStorageMode,
-                         _ label: String) -> MTLTexture? {
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format,
-                                                                      width: width,
-                                                                      height: height,
-                                                                      mipmapped: false)
-            descriptor.usage = [.renderTarget, .shaderRead]
-            descriptor.storageMode = storage
-            let texture = device.makeTexture(descriptor: descriptor)
-            texture?.label = label
-            return texture
-        }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: Self.coverageFormat, width: width, height: height, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .private   // the CPU never reads coverage
+        scratchTexture = device.makeTexture(descriptor: descriptor)
+        scratchTexture?.label = "Stroke coverage"
 
-        // The canvas is shared rather than private because the CPU has to read
-        // it back at stroke end. On unified memory that costs nothing extra;
-        // the scratch texture stays private since it is never read by the CPU.
-        canvasTexture = makeTexture(layer.pixelFormat, .shared, "Canvas")
-        scratchTexture = makeTexture(Self.scratchFormat, .private, "Stroke scratch")
-        canvasNeedsClear = true
-
+        compositor.resize(width: width, height: height)
+        // The textures themselves are new, which no content signature can see.
+        engine.invalidateCaches()
         Diagnostics.log("textures \(width)×\(height)")
-
-        // A resize throws away the canvas texture, so repaint it from the
-        // engine — otherwise rotating the iPad would silently erase the work.
-        repopulateFromEngine()
     }
-
-    // MARK: - Engine handoff
-
-    /// Reads the tiles a finished stroke touched out of the canvas texture and
-    /// hands them to the engine, which takes it from there.
-    private func captureTiles(_ tiles: [EngineTile]) {
-        guard let canvas = canvasTexture, !tiles.isEmpty else { return }
-        let started = CACurrentMediaTime()
-        let size = engine.tileSize
-        let bytesPerRow = size * 4
-
-        for tile in tiles {
-            let originX = Int(tile.x) * size
-            let originY = Int(tile.y) * size
-            guard originX >= 0, originY >= 0,
-                  originX < canvas.width, originY < canvas.height else { continue }
-
-            let width = min(size, canvas.width - originX)
-            let height = min(size, canvas.height - originY)
-
-            tileScratch.withUnsafeMutableBytes { raw in
-                guard let base = raw.baseAddress else { return }
-                // Edge tiles are partial. Zeroing first means the unused
-                // remainder is defined rather than whatever the previous tile
-                // left behind.
-                if width < size || height < size {
-                    raw.initializeMemory(as: UInt8.self, repeating: 0)
-                }
-                canvas.getBytes(base,
-                                bytesPerRow: bytesPerRow,
-                                from: MTLRegionMake2D(originX, originY, width, height),
-                                mipmapLevel: 0)
-            }
-            tileScratch.withUnsafeBufferPointer { buffer in
-                guard let base = buffer.baseAddress else { return }
-                engine.storeTile(tile, bytes: base)
-            }
-        }
-        stats.lastCaptureMs = (CACurrentMediaTime() - started) * 1000.0
-    }
-
-    /// Pushes tiles from the engine back into the canvas texture.
-    private func applyTiles(_ tiles: [EngineTile]) {
-        guard let canvas = canvasTexture else { return }
-        let size = engine.tileSize
-        let bytesPerRow = size * 4
-
-        for tile in tiles {
-            let originX = Int(tile.x) * size
-            let originY = Int(tile.y) * size
-            guard originX >= 0, originY >= 0,
-                  originX < canvas.width, originY < canvas.height else { continue }
-
-            let width = min(size, canvas.width - originX)
-            let height = min(size, canvas.height - originY)
-
-            let loaded = tileScratch.withUnsafeMutableBufferPointer { buffer -> Bool in
-                guard let base = buffer.baseAddress else { return false }
-                return engine.loadTile(tile, into: base)
-            }
-            if !loaded {
-                // Never painted, so it belongs at paper white rather than
-                // whatever the texture happens to be showing.
-                for index in tileScratch.indices { tileScratch[index] = 255 }
-            }
-
-            tileScratch.withUnsafeBufferPointer { buffer in
-                guard let base = buffer.baseAddress else { return }
-                canvas.replace(region: MTLRegionMake2D(originX, originY, width, height),
-                               mipmapLevel: 0,
-                               withBytes: base,
-                               bytesPerRow: bytesPerRow)
-            }
-        }
-    }
-
-    /// Repaints the whole canvas texture from engine storage. Used after a
-    /// resize, which discards the texture.
-    private func repopulateFromEngine() {
-        guard let canvas = canvasTexture else { return }
-        let size = engine.tileSize
-        var tiles: [EngineTile] = []
-        for ty in 0...((canvas.height - 1) / size) {
-            for tx in 0...((canvas.width - 1) / size) {
-                tiles.append(EngineTile(x: Int32(tx), y: Int32(ty)))
-            }
-        }
-        applyTiles(tiles)
-        canvasNeedsClear = false
-    }
-
-    // MARK: - Rendering
 
     private func strokeVertexBuffer() -> MTLBuffer? {
         guard !strokeVertices.isEmpty else { return nil }
@@ -445,9 +361,10 @@ final class Renderer: NSObject {
         return strokeBuffer
     }
 
-    private func encodeScratch(in commandBuffer: MTLCommandBuffer,
-                               scratch: MTLTexture,
-                               includePrediction: Bool) {
+    private func encodeCoverage(in commandBuffer: MTLCommandBuffer,
+                                includePrediction: Bool) {
+        guard let scratch = scratchTexture else { return }
+
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = scratch
         pass.colorAttachments[0].loadAction = .clear
@@ -472,74 +389,43 @@ final class Renderer: NSObject {
                                        vertexCount: predictionVertices.count)
             }
         }
-
         encoder.endEncoding()
-    }
-
-    private func encodeComposite(in encoder: MTLRenderCommandEncoder, scratch: MTLTexture) {
-        var ink = inkColor
-        encoder.setRenderPipelineState(compositePipeline)
-        encoder.setFragmentTexture(scratch, index: 0)
-        encoder.setFragmentBytes(&ink, length: MemoryLayout<simd_float4>.stride, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 
     private func render(to drawable: CAMetalDrawable, targetTimestamp: CFTimeInterval) {
         let cpuStart = CACurrentMediaTime()
 
         ensureTextures()
-        guard let canvas = canvasTexture,
-              let scratch = scratchTexture,
-              let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
         commandBuffer.label = "Frame \(stats.frameIndex)"
 
         let vertexCount = strokeVertices.count + predictionVertices.count
-        let committingThisFrame = pendingCommit
+        let committing = pendingCommit
+        let activeLayer = engine.activeLayer
 
-        // Pass 1 — the stroke in progress. On the committing frame, prediction
-        // is excluded so guessed geometry can never reach the canvas.
+        // On the committing frame prediction is excluded, so a guess can never
+        // be flattened into a layer.
         if strokeActive {
-            encodeScratch(in: commandBuffer, scratch: scratch,
-                          includePrediction: !committingThisFrame)
+            encodeCoverage(in: commandBuffer, includePrediction: !committing)
         }
 
-        // Pass 2 — flatten the finished stroke into the canvas.
-        if committingThisFrame || canvasNeedsClear {
-            let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[0].texture = canvas
-            pass.colorAttachments[0].loadAction = canvasNeedsClear ? .clear : .load
-            pass.colorAttachments[0].storeAction = .store
-            pass.colorAttachments[0].clearColor = MTLClearColor(red: 1, green: 1, blue: 1, alpha: 1)
-
-            if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) {
-                encoder.label = "Commit stroke"
-                if committingThisFrame {
-                    encodeComposite(in: encoder, scratch: scratch)
-                }
-                encoder.endEncoding()
-            }
-            canvasNeedsClear = false
+        if committing, let coverage = scratchTexture {
+            compositor.syncLayer(activeLayer, engine: engine)
+            compositor.flattenStroke(into: activeLayer, coverage: coverage,
+                                     inkColor: inkColor, commandBuffer: commandBuffer)
         }
 
-        // Pass 3 — present: canvas, then the live stroke on top of it.
-        let present = MTLRenderPassDescriptor()
-        present.colorAttachments[0].texture = drawable.texture
-        present.colorAttachments[0].loadAction = .dontCare
-        present.colorAttachments[0].storeAction = .store
-
-        if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: present) {
-            encoder.label = "Present"
-            encoder.setRenderPipelineState(blitPipeline)
-            encoder.setFragmentTexture(canvas, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-
-            // On the committing frame the stroke is already in the canvas, so
-            // drawing it again here would double-composite its antialiased edge.
-            if strokeActive && !committingThisFrame {
-                encodeComposite(in: encoder, scratch: scratch)
-            }
-            encoder.endEncoding()
+        let plan = engine.refreshPlan()
+        if plan.underDirty {
+            compositor.rebuildUnderCache(plan.under, engine: engine, commandBuffer: commandBuffer)
         }
+        if plan.overDirty {
+            compositor.rebuildOverCache(plan.over, engine: engine, commandBuffer: commandBuffer)
+        }
+
+        compositor.present(into: drawable.texture, plan: plan, engine: engine,
+                           strokeCoverage: (strokeActive && !committing) ? scratchTexture : nil,
+                           inkColor: inkColor, commandBuffer: commandBuffer)
 
         commandBuffer.addCompletedHandler { [weak self] buffer in
             let gpuMs = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000.0
@@ -549,35 +435,37 @@ final class Renderer: NSObject {
         commandBuffer.present(drawable)
         commandBuffer.commit()
 
-        if committingThisFrame {
-            // The one place we stall on the GPU. Reading the canvas before the
-            // commit pass has actually run would capture the stroke as it was
-            // one frame ago. It happens once per stroke, not per frame.
+        if committing {
+            // The one place we stall on the GPU. Reading the layer before the
+            // flatten has actually run would capture it a frame stale. Once
+            // per stroke, not per frame.
+            let started = CACurrentMediaTime()
             commandBuffer.waitUntilCompleted()
-            // Bracketing matters: storeTile only records undo state between a
-            // begin and a commit. Without the begin, every stroke was written
-            // straight through with no history at all.
+
             engine.beginStroke("Stroke")
-            captureTiles(pendingTiles)
+            compositor.readBack(layer: activeLayer, tiles: pendingTiles, engine: engine)
             engine.commitStroke()
             engine.evict()
+            stats.lastCaptureMs = (CACurrentMediaTime() - started) * 1000.0
 
             strokeVertices.removeAll(keepingCapacity: true)
             predictionVertices.removeAll(keepingCapacity: true)
+            pendingTiles.removeAll(keepingCapacity: true)
             strokeBuffer = nil
             strokeBufferDirty = false
             strokeActive = false
             pendingCommit = false
-            pendingTiles.removeAll(keepingCapacity: true)
         }
 
         let cpuMs = (CACurrentMediaTime() - cpuStart) * 1000.0
-        recordFrame(cpuMs: cpuMs, targetTimestamp: targetTimestamp, vertexCount: vertexCount)
+        recordFrame(cpuMs: cpuMs, targetTimestamp: targetTimestamp,
+                    vertexCount: vertexCount, plan: plan)
     }
 
     // MARK: - Statistics
 
-    private func recordFrame(cpuMs: Double, targetTimestamp: CFTimeInterval, vertexCount: Int) {
+    private func recordFrame(cpuMs: Double, targetTimestamp: CFTimeInterval,
+                             vertexCount: Int, plan: CompositePlanSnapshot) {
         stats.frameIndex &+= 1
 
         if lastFrameTimestamp > 0 {
@@ -595,6 +483,8 @@ final class Renderer: NSObject {
         stats.gpuFrameMs = smoothedGPUMs
         stats.samplesThisFrame = samplesThisFrame
         stats.strokeVerticesThisFrame = vertexCount
+        stats.layerCount = plan.layerCount
+        stats.liveLayerCount = plan.live.count
 
         let engineStats = engine.stats
         stats.liveTiles = engineStats.liveTiles
@@ -607,6 +497,8 @@ final class Renderer: NSObject {
         stats.undoDepth = engineStats.undoDepth
         stats.historyTiles = engineStats.historyTiles
         stats.storesOutsideAction = engineStats.storesOutsideAction
+        stats.underRebuilds = engineStats.underCacheRebuilds
+        stats.overRebuilds = engineStats.overCacheRebuilds
 
         onStats?(stats)
         samplesThisFrame = 0
