@@ -87,13 +87,20 @@ No Pencil dependency: none of this milestone touches input.
 | ✅ | Layer stack: order, opacity, blend mode, visibility, clip-to-below |
 | ✅ | Layer duplication sharing tiles copy-on-write |
 | ✅ | Undo addressed by stable `LayerId`, safe across layer deletion |
-| ⬜ | Blend-mode shaders via framebuffer fetch |
+| ✅ | All 26 blend modes, CPU reference implementation |
+| ✅ | Simulator test harness in CI, with real Metal |
+| ⬜ | Blend-mode shaders via framebuffer fetch, verified against the CPU reference |
 | ⬜ | under/over caching, recomputed only when layer selection changes |
 | ⬜ | Layer panel in the app |
 | ⬜ | Tile buffers backed by GPU-visible memory, removing the 6.5 ms capture |
 | ⬜ | Golden-image tests in the iOS Simulator on CI |
 
-344 checks green on Linux and Windows.
+504 checks green on Linux and Windows, plus 4 on an iPad simulator.
+
+The simulator harness matters more than its four trivial tests suggest. Every
+bug that has reached the device lived in the Swift shell, invisible to the C++
+suite. CI can now reach Metal, which is what lets the blend shaders be checked
+against the CPU reference rather than eyeballed.
 
 ---
 
