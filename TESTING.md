@@ -37,6 +37,29 @@ Accumulated since the last install. One install should clear all of these.
 | 21 | Rotation | Draw, then rotate the iPad | Drawing survives, repainted from tiles |
 | 22 | Paging | Draw across the whole screen | `zip`/`disk` counts become non-zero |
 
+## Pending — M2, layers and compositing (finger is fine)
+
+The renderer was rewritten around the layer stack, so this batch is the
+highest-risk one so far. Item 23 first: if the canvas does not draw at all,
+nothing below it is worth trying.
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 23 | It still draws | Draw anything | A stroke appears. If not, stop and send session.log |
+| 24 | Panel opens | Tap the layers button, top right | Panel lists "Layer 1" and a pinned Background row |
+| 25 | Add a layer | Tap + | New layer appears above, selected and highlighted |
+| 26 | Layers are independent | Draw, add a layer, draw again, hide the top one | Only the second stroke disappears |
+| 27 | Selection routes strokes | Select the lower layer, draw | Ink lands on that layer, under the top one |
+| 28 | Opacity | Open a layer, drag the slider | That layer fades live |
+| 29 | Blend modes | Set a layer to Multiply over a coloured one | Darkens where they overlap |
+| 30 | Clipping mask | Draw shapes, add a layer above, tap Clipping mask, paint | Paint only appears over the layer below |
+| 31 | Blend button affordance | Press and hold it | Dims while held, caret shows it expands |
+| 32 | Delete | Open a layer, Delete layer | Gone. The last remaining layer refuses to delete |
+| 33 | Cache counters | Watch "cache" in the HUD while drawing a long stroke | **Must not climb.** If it does, the optimisation is off |
+| 34 | Live layer count | Watch "layers N (M live)" | M is 1 normally, more with clipping |
+| 35 | Undo across layers | Draw on two layers, undo repeatedly | Unwinds in order across both |
+| 36 | Panel does not leak touches | Draw a stroke starting on top of the panel | Nothing is drawn underneath it |
+
 ## Pending — testable with a finger
 
 | # | What | How | Expected |

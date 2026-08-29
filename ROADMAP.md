@@ -92,12 +92,28 @@ No Pencil dependency: none of this milestone touches input.
 | ✅ | Blend-mode shaders in Metal, verified against the CPU reference |
 | ✅ | under/over cache planning, clip-group aware |
 | ✅ | Layers and the composite plan across the C ABI |
-| ⬜ | Executing the plan in Metal |
-| ⬜ | Layer panel in the app |
-| ⬜ | Tile buffers backed by GPU-visible memory, removing the 6.5 ms capture |
-| ⬜ | Golden-image tests in the iOS Simulator on CI |
+| ✅ | Executing the plan in Metal |
+| ✅ | Layers panel in the app |
+| ✅ | Blend-mode shaders verified against the CPU reference in CI |
+| ↪️ | Tile buffers backed by GPU-visible memory — **re-scoped, see below** |
 
 991 checks green on Linux and Windows, plus 6 on an iPad simulator.
+
+### The GPU-memory item, re-scoped
+
+It was listed here as "remove the 6.5 ms capture by backing tile buffers with
+GPU-visible memory". That framing does not survive contact with the design.
+
+The cost is not the memory being unshared — layer textures already use shared
+storage, so the CPU reads them without a transfer. The cost is that a layer is
+one screen-sized texture while storage is 256x256 tiles, so committing a stroke
+copies between two different shapes. Removing the copy means rendering into
+per-tile textures instead, which is the same restructure that pan, zoom and a
+canvas larger than the screen need.
+
+So it belongs with that work, not here. It is once per stroke rather than per
+frame, and the user's own reaction to measuring it was that 6.5 ms for a
+full-canvas commit is already very low.
 
 **200 layers, 1 live per frame, 0 cache rebuilds over 100 painted frames.**
 That is the claim the whole milestone rests on: a deep document costs what a
