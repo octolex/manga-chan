@@ -63,6 +63,23 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build-sim
 
+      - name: Stage libraries where Xcode looks for them
+        run: |
+          # Xcode expands $(EFFECTIVE_PLATFORM_NAME) to -iphoneos or
+          # -iphonesimulator, so laying the two builds out this way lets one
+          # search path serve both SDKs. XcodeGen does not honour
+          # [sdk=...] conditional setting keys, which is what this replaces.
+          mkdir -p build-xc/Release-iphoneos build-xc/Release-iphonesimulator
+          cp build-ios/lib/libcore.a build-xc/Release-iphoneos/
+          cp build-sim/lib/libcore.a build-xc/Release-iphonesimulator/
+
+          # A library built for the wrong platform links but fails at runtime
+          # in confusing ways, so confirm each one names the platform expected.
+          echo "--- device ---"
+          vtool -show-build build-xc/Release-iphoneos/libcore.a 2>/dev/null | grep -m1 platform || true
+          echo "--- simulator ---"
+          vtool -show-build build-xc/Release-iphonesimulator/libcore.a 2>/dev/null | grep -m1 platform || true
+
       - name: Generate Xcode project
         working-directory: shell_ios
         run: xcodegen generate

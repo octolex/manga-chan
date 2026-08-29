@@ -42,8 +42,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/Sources/Bridging-Header.h
         HEADER_SEARCH_PATHS:
           - $(SRCROOT)/../core/include
-        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: $(SRCROOT)/../build-ios/lib
-        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: $(SRCROOT)/../build-sim/lib
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../build-xc/Release$(EFFECTIVE_PLATFORM_NAME)
         OTHER_LDFLAGS:
           - -lcore
           - -lc++
@@ -98,8 +97,7 @@ targets:
         HEADER_SEARCH_PATHS:
           - $(SRCROOT)/../core/include
           - $(SRCROOT)/Sources
-        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: $(SRCROOT)/../build-ios/lib
-        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: $(SRCROOT)/../build-sim/lib
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../build-xc/Release$(EFFECTIVE_PLATFORM_NAME)
         OTHER_LDFLAGS:
           - -lcore
           - -lc++
