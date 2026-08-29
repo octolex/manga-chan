@@ -73,15 +73,27 @@ memory it is free.
 
 ---
 
-## ⬜ M2 — Compositor
+## 🔨 M2 — Compositor
 
 `under_cache + active_layer + over_cache` at view resolution over the visible
 region only. This is the largest single source of Procreate's perceived
 speed — more than the brush engine. A 200-layer document then costs the same
 per painting frame as a 3-layer one.
 
-Full blend-mode set via framebuffer fetch. Golden-image tests in the iOS
-Simulator on CI.
+No Pencil dependency: none of this milestone touches input.
+
+| | |
+|---|---|
+| ✅ | Layer stack: order, opacity, blend mode, visibility, clip-to-below |
+| ✅ | Layer duplication sharing tiles copy-on-write |
+| ✅ | Undo addressed by stable `LayerId`, safe across layer deletion |
+| ⬜ | Blend-mode shaders via framebuffer fetch |
+| ⬜ | under/over caching, recomputed only when layer selection changes |
+| ⬜ | Layer panel in the app |
+| ⬜ | Tile buffers backed by GPU-visible memory, removing the 6.5 ms capture |
+| ⬜ | Golden-image tests in the iOS Simulator on CI |
+
+344 checks green on Linux and Windows.
 
 ---
 
