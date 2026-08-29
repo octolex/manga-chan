@@ -1,5 +1,6 @@
 #include "core/canvas_api.h"
 
+#include "core/compositor.h"
 #include "core/layer.h"
 #include "core/layer_stack.h"
 #include "core/tile.h"
@@ -16,6 +17,7 @@ struct MCCanvas {
     TileStore store;
     LayerStack layers;
     UndoStack undo;
+    CompositeCache composite;
 
     /// Tiles the shell needs to re-upload after the last history operation.
     std::vector<TileCoord> changed;
@@ -24,9 +26,7 @@ struct MCCanvas {
     uint64_t storesOutsideAction = 0;
 
     MCCanvas() : store(0), layers(store), undo(store, layers) {
-        // A drawing always has at least one layer. The C ABI is still
-        // single-layer; the stack is here so that history, which addresses
-        // layers by id, is already correct when layer controls arrive.
+        // A drawing always has somewhere to paint.
         layers.add("Layer 1");
     }
 
@@ -38,6 +38,13 @@ namespace {
 /// Every entry point takes a handle from the shell, so none of them can assume
 /// it is valid.
 inline bool ok(const MCCanvas* canvas) { return canvas != nullptr; }
+
+BlendMode toBlend(int32_t index) {
+    if (index < 0 || index >= static_cast<int32_t>(BlendMode::Count)) {
+        return BlendMode::Normal;
+    }
+    return static_cast<BlendMode>(index);
+}
 
 } // namespace
 
@@ -73,6 +80,107 @@ void mc_canvas_evict(MCCanvas* canvas) {
     canvas->store.evictToBudget();
 }
 
+// MARK: - Layers
+
+int32_t mc_canvas_layer_count(MCCanvas* canvas) {
+    return ok(canvas) ? static_cast<int32_t>(canvas->layers.count()) : 0;
+}
+
+MCLayerId mc_canvas_layer_at(MCCanvas* canvas, int32_t index) {
+    if (!ok(canvas) || index < 0) return MC_INVALID_LAYER;
+    return canvas->layers.at(static_cast<size_t>(index));
+}
+
+int32_t mc_canvas_layer_index(MCCanvas* canvas, MCLayerId layer) {
+    return ok(canvas) ? canvas->layers.indexOf(layer) : -1;
+}
+
+MCLayerId mc_canvas_active_layer(MCCanvas* canvas) {
+    return ok(canvas) ? canvas->layers.active() : MC_INVALID_LAYER;
+}
+
+int32_t mc_canvas_set_active_layer(MCCanvas* canvas, MCLayerId layer) {
+    return ok(canvas) && canvas->layers.setActive(layer) ? 1 : 0;
+}
+
+MCLayerId mc_canvas_add_layer(MCCanvas* canvas, const char* name) {
+    if (!ok(canvas)) return MC_INVALID_LAYER;
+    const std::string label = name != nullptr ? std::string(name) : std::string("Layer");
+    // Directly above the active layer, which is where someone adding a layer
+    // mid-stack expects it rather than at the very top.
+    const int active = canvas->layers.indexOf(canvas->layers.active());
+    const size_t index = active < 0 ? canvas->layers.count()
+                                    : static_cast<size_t>(active) + 1;
+    return canvas->layers.insert(label, index);
+}
+
+MCLayerId mc_canvas_duplicate_layer(MCCanvas* canvas, MCLayerId layer) {
+    return ok(canvas) ? canvas->layers.duplicate(layer) : MC_INVALID_LAYER;
+}
+
+int32_t mc_canvas_remove_layer(MCCanvas* canvas, MCLayerId layer) {
+    if (!ok(canvas)) return 0;
+    // A drawing always has somewhere to paint. Removing the last layer would
+    // leave no active layer and the next stroke with nowhere to go.
+    if (canvas->layers.count() <= 1) return 0;
+    return canvas->layers.remove(layer) ? 1 : 0;
+}
+
+int32_t mc_canvas_move_layer(MCCanvas* canvas, MCLayerId layer, int32_t toIndex) {
+    if (!ok(canvas) || toIndex < 0) return 0;
+    return canvas->layers.move(layer, static_cast<size_t>(toIndex)) ? 1 : 0;
+}
+
+int32_t mc_canvas_layer_info(MCCanvas* canvas, MCLayerId layer, MCLayerInfo* out) {
+    if (!ok(canvas) || out == nullptr) return 0;
+    const LayerInfo* info = canvas->layers.info(layer);
+    if (info == nullptr) return 0;
+
+    out->opacity = info->opacity;
+    out->blend = static_cast<int32_t>(info->blend);
+    out->visible = info->visible ? 1 : 0;
+    out->locked = info->locked ? 1 : 0;
+    out->clipToBelow = info->clipToBelow ? 1 : 0;
+    return 1;
+}
+
+int32_t mc_canvas_set_layer_info(MCCanvas* canvas, MCLayerId layer, const MCLayerInfo* incoming) {
+    if (!ok(canvas) || incoming == nullptr) return 0;
+    LayerInfo* info = canvas->layers.info(layer);
+    if (info == nullptr) return 0;
+
+    info->opacity = incoming->opacity < 0.0f ? 0.0f
+                  : (incoming->opacity > 1.0f ? 1.0f : incoming->opacity);
+    info->blend = toBlend(incoming->blend);
+    info->visible = incoming->visible != 0;
+    info->locked = incoming->locked != 0;
+    info->clipToBelow = incoming->clipToBelow != 0;
+    return 1;
+}
+
+int32_t mc_canvas_layer_name(MCCanvas* canvas, MCLayerId layer, char* buffer, int32_t capacity) {
+    if (!ok(canvas) || buffer == nullptr || capacity <= 0) return 0;
+    const LayerInfo* info = canvas->layers.info(layer);
+    if (info == nullptr) {
+        buffer[0] = '\0';
+        return 0;
+    }
+
+    const size_t room = static_cast<size_t>(capacity) - 1;
+    const size_t length = info->name.size() < room ? info->name.size() : room;
+    std::memcpy(buffer, info->name.data(), length);
+    buffer[length] = '\0';
+    return static_cast<int32_t>(length);
+}
+
+int32_t mc_canvas_set_layer_name(MCCanvas* canvas, MCLayerId layer, const char* name) {
+    if (!ok(canvas) || name == nullptr) return 0;
+    LayerInfo* info = canvas->layers.info(layer);
+    if (info == nullptr) return 0;
+    info->name = name;
+    return 1;
+}
+
 // MARK: - Editing
 
 void mc_canvas_begin_stroke(MCCanvas* canvas, const char* name) {
@@ -80,10 +188,12 @@ void mc_canvas_begin_stroke(MCCanvas* canvas, const char* name) {
     canvas->undo.beginAction(name != nullptr ? std::string(name) : std::string("Stroke"));
 }
 
-void mc_canvas_store_tile(MCCanvas* canvas, int32_t tx, int32_t ty, const uint8_t* rgba) {
+void mc_canvas_store_tile_in(MCCanvas* canvas, MCLayerId layer,
+                             int32_t tx, int32_t ty, const uint8_t* rgba) {
     if (!ok(canvas) || rgba == nullptr) return;
 
-    const TileCoord coord{tx, ty};
+    Layer* pixels = canvas->layers.pixels(layer);
+    if (pixels == nullptr) return;
 
     // Writing outside an action is almost always a caller bug, and a silent
     // one: the paint lands correctly and only undo misbehaves. Count it so it
@@ -92,17 +202,20 @@ void mc_canvas_store_tile(MCCanvas* canvas, int32_t tx, int32_t ty, const uint8_
         ++canvas->storesOutsideAction;
     }
 
+    const TileCoord coord{tx, ty};
     // Order matters: capture history before the tile is separated by writeTile,
     // or undo would record the pixels we are about to overwrite.
-    canvas->undo.willModify(canvas->layers.active(), coord);
+    canvas->undo.willModify(layer, coord);
 
-    Layer* layer = canvas->active();
-    if (layer == nullptr) return;
-
-    uint8_t* destination = layer->writeTile(coord);
+    uint8_t* destination = pixels->writeTile(coord);
     if (destination != nullptr) {
         std::memcpy(destination, rgba, kTileBytes);
     }
+}
+
+void mc_canvas_store_tile(MCCanvas* canvas, int32_t tx, int32_t ty, const uint8_t* rgba) {
+    if (!ok(canvas)) return;
+    mc_canvas_store_tile_in(canvas, canvas->layers.active(), tx, ty, rgba);
 }
 
 void mc_canvas_commit_stroke(MCCanvas* canvas) {
@@ -115,13 +228,14 @@ void mc_canvas_abort_stroke(MCCanvas* canvas) {
     canvas->undo.abortAction();
 }
 
-int32_t mc_canvas_load_tile(MCCanvas* canvas, int32_t tx, int32_t ty, uint8_t* rgba) {
+int32_t mc_canvas_load_tile_from(MCCanvas* canvas, MCLayerId layer,
+                                 int32_t tx, int32_t ty, uint8_t* rgba) {
     if (!ok(canvas) || rgba == nullptr) return 0;
 
-    const Layer* layer = canvas->active();
-    if (layer == nullptr) return 0;
+    const Layer* pixels = canvas->layers.pixels(layer);
+    if (pixels == nullptr) return 0;
 
-    const uint8_t* source = layer->readTile(TileCoord{tx, ty});
+    const uint8_t* source = pixels->readTile(TileCoord{tx, ty});
     if (source == nullptr) {
         // Never painted. Leaving the caller's buffer alone lets it skip the
         // upload entirely rather than pushing a tile of transparent pixels.
@@ -129,6 +243,11 @@ int32_t mc_canvas_load_tile(MCCanvas* canvas, int32_t tx, int32_t ty, uint8_t* r
     }
     std::memcpy(rgba, source, kTileBytes);
     return 1;
+}
+
+int32_t mc_canvas_load_tile(MCCanvas* canvas, int32_t tx, int32_t ty, uint8_t* rgba) {
+    if (!ok(canvas)) return 0;
+    return mc_canvas_load_tile_from(canvas, canvas->layers.active(), tx, ty, rgba);
 }
 
 void mc_canvas_clear(MCCanvas* canvas) {
@@ -153,6 +272,45 @@ void mc_canvas_clear(MCCanvas* canvas) {
     canvas->undo.commitAction();
 
     canvas->changed = std::move(coords);
+}
+
+// MARK: - Composite plan
+
+void mc_canvas_refresh_plan(MCCanvas* canvas, MCCompositePlan* out) {
+    if (out == nullptr) return;
+    std::memset(out, 0, sizeof(*out));
+    if (!ok(canvas)) return;
+
+    canvas->composite.refresh(canvas->layers);
+    const CompositePlan& plan = canvas->composite.plan();
+
+    out->underCount = static_cast<int32_t>(plan.under.size());
+    out->liveCount = static_cast<int32_t>(plan.live.size());
+    out->overCount = static_cast<int32_t>(plan.over.size());
+    out->underDirty = canvas->composite.underDirty() ? 1 : 0;
+    out->overDirty = canvas->composite.overDirty() ? 1 : 0;
+    out->activeLayer = plan.activeLayer;
+}
+
+MCLayerId mc_canvas_plan_layer(MCCanvas* canvas, int32_t section, int32_t index) {
+    if (!ok(canvas) || index < 0) return MC_INVALID_LAYER;
+    const CompositePlan& plan = canvas->composite.plan();
+
+    const std::vector<LayerId>* ids = nullptr;
+    switch (section) {
+    case MCCompositeSectionUnder: ids = &plan.under; break;
+    case MCCompositeSectionLive:  ids = &plan.live;  break;
+    case MCCompositeSectionOver:  ids = &plan.over;  break;
+    default: return MC_INVALID_LAYER;
+    }
+
+    if (static_cast<size_t>(index) >= ids->size()) return MC_INVALID_LAYER;
+    return (*ids)[static_cast<size_t>(index)];
+}
+
+void mc_canvas_invalidate_caches(MCCanvas* canvas) {
+    if (!ok(canvas)) return;
+    canvas->composite.invalidate();
 }
 
 // MARK: - History
@@ -211,4 +369,6 @@ void mc_canvas_stats(MCCanvas* canvas, MCCanvasStats* out) {
     out->redoDepth = canvas->undo.redoDepth();
     out->historyTiles = canvas->undo.retainedTileCount();
     out->storesOutsideAction = canvas->storesOutsideAction;
+    out->underCacheRebuilds = canvas->composite.underRebuildCount();
+    out->overCacheRebuilds = canvas->composite.overRebuildCount();
 }
