@@ -91,12 +91,13 @@ No Pencil dependency: none of this milestone touches input.
 | ✅ | Simulator test harness in CI, with real Metal |
 | ✅ | Blend-mode shaders in Metal, verified against the CPU reference |
 | ✅ | under/over cache planning, clip-group aware |
+| ✅ | Layers and the composite plan across the C ABI |
 | ⬜ | Executing the plan in Metal |
 | ⬜ | Layer panel in the app |
 | ⬜ | Tile buffers backed by GPU-visible memory, removing the 6.5 ms capture |
 | ⬜ | Golden-image tests in the iOS Simulator on CI |
 
-863 checks green on Linux and Windows, plus 6 on an iPad simulator.
+991 checks green on Linux and Windows, plus 6 on an iPad simulator.
 
 **200 layers, 1 live per frame, 0 cache rebuilds over 100 painted frames.**
 That is the claim the whole milestone rests on: a deep document costs what a
