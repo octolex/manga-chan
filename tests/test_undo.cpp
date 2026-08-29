@@ -285,8 +285,7 @@ void testClearReleasesTiles() {
 }
 
 void testHistoryForDeletedLayerIsInert() {
-    std::printf("history for a deleted layer is inert
-");
+    std::printf("history for a deleted layer is inert\n");
 
     // The reason edits name layers by id rather than by pointer. History
     // routinely outlives the layers it refers to: the user deletes a layer and
