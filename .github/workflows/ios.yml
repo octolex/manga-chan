@@ -126,7 +126,19 @@ jobs:
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }},arch=arm64" \
             -derivedDataPath build-tests \
             CODE_SIGNING_ALLOWED=NO \
+            | tee xcodebuild-test.log \
             | xcbeautify --renderer github-actions
+
+      - name: Test measurements
+        if: always()
+        run: |
+          # xcbeautify drops test stdout, and for the blend comparison
+          # those numbers are the point rather than chatter. A passing
+          # test says the GPU matched the CPU; it does not say whether it
+          # matched by one level or by the whole tolerance, which is the
+          # difference between comfortable and fragile.
+          grep -E 'blend shaders:|worst case:|rejects programmable' \
+            xcodebuild-test.log || echo '(no measurements printed)'
 
       - name: Build app (unsigned)
         run: |
