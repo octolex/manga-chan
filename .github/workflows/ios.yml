@@ -55,13 +55,23 @@ jobs:
 
       - name: Build engine core for the iOS Simulator
         run: |
+          # Both architectures, not just arm64. A simulator destination on
+          # an Apple silicon runner resolves to arm64 AND x86_64, and
+          # xcodebuild picked x86_64. Against an arm64-only library that
+          # surfaces as "undefined symbol" for every core function, which
+          # looks nothing like an architecture problem.
           cmake -B build-sim -G Ninja \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_SYSROOT=iphonesimulator \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build-sim
+
+          echo "Simulator library architectures:"
+          lipo -info build-sim/lib/libcore.a
+          lipo -info build-sim/lib/libcore.a | grep -q x86_64 \
+            || { echo "::error::simulator libcore.a lacks an x86_64 slice"; exit 1; }
 
       - name: Package core as an xcframework
         run: |
@@ -113,7 +123,7 @@ jobs:
           xcodebuild test \
             -project shell_ios/MangaChan.xcodeproj \
             -scheme MangaChan \
-            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }},arch=arm64" \
             -derivedDataPath build-tests \
             CODE_SIGNING_ALLOWED=NO \
             | xcbeautify --renderer github-actions
