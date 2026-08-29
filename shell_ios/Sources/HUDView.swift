@@ -112,7 +112,8 @@ final class HUDView: UIView {
             lines.append(String(format: "peak/fr  %6d", input.peakSamplesPerFrame))
             lines.append(String(format: "drawable %.0f×%.0f",
                                 latest.drawableSize.width, latest.drawableSize.height))
-            lines.append(String(format: "capture  %6.2f ms", latest.lastCaptureMs))
+            lines.append(String(format: "gpu wait %6.2f ms", latest.gpuWaitMs))
+            lines.append(String(format: "readback %6.2f ms", latest.lastCaptureMs))
 
             // Engine memory. Without Instruments this readout is the only way
             // to see the tier machinery working on real hardware.

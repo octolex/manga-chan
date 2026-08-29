@@ -50,6 +50,7 @@ struct FrameStats {
     var historyTiles: UInt64 = 0
     var storesOutsideAction: UInt64 = 0
     var lastCaptureMs: Double = 0
+    var gpuWaitMs: Double = 0
 
     // Compositor. `underRebuilds`/`overRebuilds` must stay flat while a stroke
     // is in progress; if they climb, the under/over optimisation has stopped
@@ -241,7 +242,6 @@ final class Renderer: NSObject {
     func removeLayer(_ layer: MCLayerId) {
         guard engine.removeLayer(layer) else { return }
         compositor.forgetLayer(layer)
-        engine.invalidateCaches()
         onLayersChanged?()
     }
 
@@ -252,7 +252,6 @@ final class Renderer: NSObject {
 
     func moveLayer(_ layer: MCLayerId, to index: Int) {
         guard engine.moveLayer(layer, to: index) else { return }
-        engine.invalidateCaches()
         onLayersChanged?()
     }
 
@@ -269,8 +268,11 @@ final class Renderer: NSObject {
         // Undo can touch any layer, so every texture is suspect. Re-uploading
         // lazily on next use keeps this off the frame that has to stay
         // responsive.
+        // No invalidateCaches here: the composite signature already covers
+        // content revisions, so it rebuilds a cache only if undo actually
+        // touched a layer inside it. Forcing both was costing two full
+        // re-flattens per undo.
         compositor.markAllLayersStale()
-        engine.invalidateCaches()
         onLayersChanged?()
         Diagnostics.log("undo: \(tiles.count) tiles")
         return true
@@ -280,7 +282,6 @@ final class Renderer: NSObject {
     func redo() -> Bool {
         guard let tiles = engine.redo() else { return false }
         compositor.markAllLayersStale()
-        engine.invalidateCaches()
         onLayersChanged?()
         Diagnostics.log("redo: \(tiles.count) tiles")
         return true
@@ -289,7 +290,6 @@ final class Renderer: NSObject {
     func clearActiveLayer() {
         let tiles = engine.clearActiveLayer()
         compositor.markLayerStale(engine.activeLayer)
-        engine.invalidateCaches()
         onLayersChanged?()
         Diagnostics.log("cleared active layer (\(tiles.count) tiles, undoable)")
     }
@@ -439,14 +439,20 @@ final class Renderer: NSObject {
             // The one place we stall on the GPU. Reading the layer before the
             // flatten has actually run would capture it a frame stale. Once
             // per stroke, not per frame.
-            let started = CACurrentMediaTime()
+            let waitStarted = CACurrentMediaTime()
             commandBuffer.waitUntilCompleted()
+            let readStarted = CACurrentMediaTime()
 
             engine.beginStroke("Stroke")
             compositor.readBack(layer: activeLayer, tiles: pendingTiles, engine: engine)
             engine.commitStroke()
             engine.evict()
-            stats.lastCaptureMs = (CACurrentMediaTime() - started) * 1000.0
+
+            // Kept apart because they have different cures. The wait is the
+            // GPU finishing the frame; the readback is the copy from a
+            // screen-shaped texture into tiles.
+            stats.gpuWaitMs = (readStarted - waitStarted) * 1000.0
+            stats.lastCaptureMs = (CACurrentMediaTime() - readStarted) * 1000.0
 
             strokeVertices.removeAll(keepingCapacity: true)
             predictionVertices.removeAll(keepingCapacity: true)

@@ -113,6 +113,15 @@ final class LayersPanelView: UIView {
             stack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
             stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
+
+        // A scroll view has no intrinsic content size, so without this the
+        // panel has an upper bound and nothing pushing against it, and Auto
+        // Layout settles on the header alone. Below the cap this makes the
+        // panel exactly as tall as its rows; above it the cap wins and the
+        // rows scroll.
+        let contentHeight = scrollView.heightAnchor.constraint(equalTo: stack.heightAnchor)
+        contentHeight.priority = .defaultHigh
+        contentHeight.isActive = true
     }
 
     @objc private func addTapped() {
