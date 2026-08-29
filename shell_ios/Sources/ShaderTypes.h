@@ -27,6 +27,11 @@ typedef struct {
     simd_float4 color;     // premultiplied RGBA
 } MSStrokeVertex;
 
+typedef struct {
+    int32_t mode;      // matches mc::BlendMode in core/blend.h
+    float   opacity;   // layer opacity, 0...1
+} MSBlendUniforms;
+
 typedef enum {
     MSBufferIndexVertices = 0,
     MSBufferIndexUniforms = 1

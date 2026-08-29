@@ -9,3 +9,4 @@
 #import "core/core_api.h"
 #import "ShaderTypes.h"
 #import "core/canvas_api.h"
+#import "core/blend_api.h"

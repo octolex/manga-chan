@@ -103,25 +103,17 @@ inline float saturation(RgbF c) {
 }
 
 RgbF setSaturation(RgbF c, float s) {
-    // Rank the channels, rescale the middle one proportionally, and pin the
-    // extremes to 0 and s.
-    float* channels[3] = {&c.r, &c.g, &c.b};
-    std::sort(channels, channels + 3,
-              [](const float* a, const float* b) { return *a < *b; });
-
-    float& lo = *channels[0];
-    float& mid = *channels[1];
-    float& hi = *channels[2];
-
-    if (hi > lo) {
-        mid = (mid - lo) * s / (hi - lo);
-        hi = s;
-    } else {
-        mid = 0.0f;
-        hi = 0.0f;
+    // The spec phrases this as ranking the channels and rescaling the middle
+    // one, but the vector form is identical and far harder to get wrong: the
+    // minimum maps to 0, the maximum to s, and the middle keeps its
+    // proportion. The shader uses the same expression.
+    const float mn = std::min({c.r, c.g, c.b});
+    const float mx = std::max({c.r, c.g, c.b});
+    if (mx <= mn) {
+        return RgbF{0.0f, 0.0f, 0.0f};
     }
-    lo = 0.0f;
-    return c;
+    const float scale = s / (mx - mn);
+    return RgbF{(c.r - mn) * scale, (c.g - mn) * scale, (c.b - mn) * scale};
 }
 
 // MARK: - Pixel conversion

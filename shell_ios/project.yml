@@ -89,6 +89,10 @@ targets:
     platform: iOS
     sources:
       - path: Tests
+      # Compiled into the test bundle's own metallib so the shaders can be
+      # rendered and compared against the CPU reference.
+      - path: Sources/BlendShaders.metal
+      - path: Sources/ShaderTypes.h
     dependencies:
       - target: MangaChan
       # Linked directly as well as through the host app: a hosted test bundle
