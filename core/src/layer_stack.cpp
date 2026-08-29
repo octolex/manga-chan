@@ -5,25 +5,6 @@
 
 namespace mc {
 
-const char* blendModeName(BlendMode mode) {
-    switch (mode) {
-    case BlendMode::Normal:     return "Normal";
-    case BlendMode::Multiply:   return "Multiply";
-    case BlendMode::Screen:     return "Screen";
-    case BlendMode::Overlay:    return "Overlay";
-    case BlendMode::Darken:     return "Darken";
-    case BlendMode::Lighten:    return "Lighten";
-    case BlendMode::ColorDodge: return "Color Dodge";
-    case BlendMode::ColorBurn:  return "Color Burn";
-    case BlendMode::HardLight:  return "Hard Light";
-    case BlendMode::SoftLight:  return "Soft Light";
-    case BlendMode::Difference: return "Difference";
-    case BlendMode::Exclusion:  return "Exclusion";
-    case BlendMode::Count:      break;
-    }
-    return "Unknown";
-}
-
 LayerStack::LayerStack(TileStore& store) : store_(&store) {}
 
 LayerStack::~LayerStack() = default;

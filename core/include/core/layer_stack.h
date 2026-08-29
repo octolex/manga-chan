@@ -13,6 +13,7 @@
 //  the compositor walks and the reverse of how a layers panel displays them.
 //
 
+#include "core/blend.h"
 #include "core/layer.h"
 #include "core/tile_store.h"
 
@@ -25,24 +26,6 @@ namespace mc {
 
 using LayerId = uint32_t;
 inline constexpr LayerId kInvalidLayer = 0;
-
-enum class BlendMode : uint8_t {
-    Normal = 0,
-    Multiply,
-    Screen,
-    Overlay,
-    Darken,
-    Lighten,
-    ColorDodge,
-    ColorBurn,
-    HardLight,
-    SoftLight,
-    Difference,
-    Exclusion,
-    Count
-};
-
-const char* blendModeName(BlendMode mode);
 
 struct LayerInfo {
     std::string name;
