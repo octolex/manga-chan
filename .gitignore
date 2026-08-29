@@ -18,3 +18,6 @@ xcuserdata/
 .vscode/
 .idea/
 CMakeUserPresets.json
+
+# Third-party specifications: fetched, not committed. See Documentation/README.md
+Documentation/apple/
