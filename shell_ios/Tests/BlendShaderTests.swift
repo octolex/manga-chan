@@ -4,16 +4,28 @@
 //  Renders every blend mode in Metal and compares it, pixel by pixel, against
 //  the CPU implementation in core/blend.cpp.
 //
-//  This is the test the whole simulator harness exists for. A shader that
-//  blends subtly wrong compiles, runs at full speed, and produces output that
-//  looks approximately right — on a device where we cannot attach a frame
-//  debugger to find out otherwise. The CPU version is unit-tested against
+//  A shader that blends subtly wrong compiles, runs at full speed, and produces
+//  output that looks approximately right — on a device where we cannot attach a
+//  frame debugger to find out otherwise. The CPU version is unit-tested against
 //  known values; this pins the GPU to it.
 //
-//  Layout: the backdrop varies down the rows, the source across the columns,
-//  so one draw covers every pairing. The source is uniform within a column,
-//  which means the vertex shader's V flip cannot misalign the comparison —
-//  a detail worth keeping if this grid is ever extended.
+//  WHAT THIS DOES NOT COVER, and why.
+//
+//  The shipping shader reads the destination through programmable blending —
+//  `[[color(0)]]` as a fragment input. The iOS Simulator rejects that at
+//  pipeline creation: "reading from a rendertarget is not supported". So these
+//  tests drive `blend_fragment_reference`, which is the same arithmetic with
+//  the backdrop arriving as an ordinary texture instead.
+//
+//  That split is deliberate rather than a compromise. What it verifies is the
+//  part where mistakes hide: 26 formulas, several hundred lines, with
+//  singularities at the extremes of every light and component mode. What it
+//  leaves untested is one attribute on one argument, whose behaviour is
+//  specified in writing and which fails loudly rather than subtly if wrong.
+//  Device testing covers that half.
+//
+//  Layout: the backdrop varies down the rows, the source across the columns, so
+//  one draw covers every pairing.
 //
 
 import XCTest
@@ -53,7 +65,7 @@ final class BlendShaderTests: XCTestCase {
     /// GPU and CPU both work in float and quantise to 8 bits at different
     /// points, and unpremultiplying a half-alpha pixel divides by ~0.5, which
     /// amplifies any disagreement. A few levels is expected; a wrong formula
-    /// misses by far more than this.
+    /// misses by far more.
     private let tolerance = 3
 
     func testEveryBlendModeMatchesTheCPUReference() throws {
@@ -62,24 +74,33 @@ final class BlendShaderTests: XCTestCase {
         }
         let queue = try XCTUnwrap(device.makeCommandQueue())
         let library = try device.makeDefaultLibrary(bundle: Bundle(for: type(of: self)))
-
         let pipeline = try makePipeline(device: device, library: library)
 
         let width = sources.count
         let height = backdrops.count
 
+        // Source varies across columns, backdrop down rows.
+        var sourceBytes: [UInt8] = []
+        var backdropBytes: [UInt8] = []
+        for y in 0..<height {
+            for x in 0..<width {
+                sourceBytes.append(contentsOf: sources[x].bytes)
+                backdropBytes.append(contentsOf: backdrops[y].bytes)
+            }
+        }
+
         let sourceTexture = try makeTexture(device: device, width: width, height: height,
                                             usage: [.shaderRead], label: "source")
-        // Uniform down each column, so the V flip in the vertex shader cannot
-        // shift which source a row is compared against.
-        var sourceBytes = [UInt8]()
-        for _ in 0..<height {
-            for x in 0..<width { sourceBytes.append(contentsOf: sources[x].bytes) }
-        }
+        let backdropTexture = try makeTexture(device: device, width: width, height: height,
+                                              usage: [.shaderRead], label: "backdrop")
+        let outputTexture = try makeTexture(device: device, width: width, height: height,
+                                            usage: [.renderTarget, .shaderRead], label: "output")
         upload(sourceBytes, to: sourceTexture, width: width, height: height)
+        upload(backdropBytes, to: backdropTexture, width: width, height: height)
 
         let modeCount = Int(mc_blend_mode_count())
-        XCTAssertEqual(modeCount, 26, "blend mode count changed; the shader table needs updating too")
+        XCTAssertEqual(modeCount, 26,
+                       "blend mode count changed; the shader's index table needs updating too")
 
         var worstDifference = 0
         var worstDescription = ""
@@ -88,26 +109,15 @@ final class BlendShaderTests: XCTestCase {
             for mode in 0..<modeCount {
                 let name = String(cString: mc_blend_mode_name(Int32(mode)))
 
-                // The backdrop is the attachment: the shader reads it back out
-                // of tile memory, which is what programmable blending means.
-                let target = try makeTexture(device: device, width: width, height: height,
-                                             usage: [.renderTarget, .shaderRead],
-                                             label: "target-\(name)")
-                var backdropBytes = [UInt8]()
-                for y in 0..<height {
-                    for _ in 0..<width { backdropBytes.append(contentsOf: backdrops[y].bytes) }
-                }
-                upload(backdropBytes, to: target, width: width, height: height)
-
-                render(device: device, queue: queue, pipeline: pipeline,
-                       target: target, source: sourceTexture,
+                render(queue: queue, pipeline: pipeline, output: outputTexture,
+                       source: sourceTexture, backdrop: backdropTexture,
                        mode: Int32(mode), opacity: opacity)
 
                 var actual = [UInt8](repeating: 0, count: width * height * 4)
-                target.getBytes(&actual,
-                                bytesPerRow: width * 4,
-                                from: MTLRegionMake2D(0, 0, width, height),
-                                mipmapLevel: 0)
+                outputTexture.getBytes(&actual,
+                                       bytesPerRow: width * 4,
+                                       from: MTLRegionMake2D(0, 0, width, height),
+                                       mipmapLevel: 0)
 
                 for y in 0..<height {
                     for x in 0..<width {
@@ -129,7 +139,7 @@ final class BlendShaderTests: XCTestCase {
                             }
                             XCTAssertLessThanOrEqual(
                                 difference, tolerance,
-                                "\(name) at opacity \(opacity), backdrop[\(y)] over source[\(x)], "
+                                "\(name) at opacity \(opacity), source[\(x)] over backdrop[\(y)], "
                                 + "channel \(channel): GPU produced \(got), CPU expects \(want)")
                         }
                     }
@@ -137,36 +147,59 @@ final class BlendShaderTests: XCTestCase {
             }
         }
 
-        print("blend shaders: \(modeCount) modes × \(backdrops.count * sources.count) pairs "
-              + "× 2 opacities, worst channel difference \(worstDifference)")
+        print("blend shaders: \(modeCount) modes x \(width * height) pairs x 2 opacities, "
+              + "worst channel difference \(worstDifference) of \(tolerance) allowed")
         if !worstDescription.isEmpty {
             print("  worst case: \(worstDescription)")
         }
+    }
+
+    /// Documents the simulator limitation rather than leaving it folklore. If
+    /// this ever starts passing, the reference split above can be revisited.
+    func testProgrammableBlendingIsUnavailableOnTheSimulator() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device available")
+        }
+        let library = try device.makeDefaultLibrary(bundle: Bundle(for: type(of: self)))
+
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = try XCTUnwrap(library.makeFunction(name: "blend_vertex"))
+        descriptor.fragmentFunction = try XCTUnwrap(library.makeFunction(name: "blend_fragment"))
+        descriptor.colorAttachments[0].pixelFormat = .rgba8Unorm
+
+        #if targetEnvironment(simulator)
+        XCTAssertThrowsError(try device.makeRenderPipelineState(descriptor: descriptor),
+                             "the simulator gained programmable blending — revisit the test split") { error in
+            print("simulator rejects programmable blending as expected: \(error.localizedDescription)")
+        }
+        #else
+        XCTAssertNoThrow(try device.makeRenderPipelineState(descriptor: descriptor),
+                         "programmable blending should be available on device")
+        #endif
     }
 
     // MARK: - Metal helpers
 
     private func makePipeline(device: MTLDevice, library: MTLLibrary) throws -> MTLRenderPipelineState {
         let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.label = "Blend under test"
+        descriptor.label = "Blend reference"
         descriptor.vertexFunction = try XCTUnwrap(library.makeFunction(name: "blend_vertex"))
-        descriptor.fragmentFunction = try XCTUnwrap(library.makeFunction(name: "blend_fragment"))
+        descriptor.fragmentFunction = try XCTUnwrap(library.makeFunction(name: "blend_fragment_reference"))
         descriptor.colorAttachments[0].pixelFormat = .rgba8Unorm
-        // Fixed-function blending stays OFF. The shader reads the destination
-        // itself and returns the finished result; enabling both would blend
-        // the blend.
+        // Fixed-function blending stays OFF. The shader returns the finished
+        // result; enabling both would blend the blend.
         descriptor.colorAttachments[0].isBlendingEnabled = false
         return try device.makeRenderPipelineState(descriptor: descriptor)
     }
 
     private func makeTexture(device: MTLDevice, width: Int, height: Int,
                              usage: MTLTextureUsage, label: String) throws -> MTLTexture {
+        // rgba8Unorm rather than the canvas's bgra8Unorm purely so byte order
+        // matches Rgba8 in core, removing a channel swap from the comparison.
+        // Blend maths does not care about channel order.
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
         descriptor.usage = usage
-        // rgba8Unorm rather than the canvas's bgra8Unorm purely so the byte
-        // order matches Rgba8 in core, removing a channel-swap from the
-        // comparison. Blend maths does not care about channel order.
         descriptor.storageMode = .shared
         let texture = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
         texture.label = label
@@ -183,15 +216,13 @@ final class BlendShaderTests: XCTestCase {
         }
     }
 
-    private func render(device: MTLDevice, queue: MTLCommandQueue,
-                        pipeline: MTLRenderPipelineState,
-                        target: MTLTexture, source: MTLTexture,
+    private func render(queue: MTLCommandQueue, pipeline: MTLRenderPipelineState,
+                        output: MTLTexture, source: MTLTexture, backdrop: MTLTexture,
                         mode: Int32, opacity: Float) {
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = target
-        // .load, not .clear: the backdrop has to survive into the shader,
-        // which is the entire mechanism being tested.
-        pass.colorAttachments[0].loadAction = .load
+        pass.colorAttachments[0].texture = output
+        // Every pixel is written, so there is nothing worth preserving.
+        pass.colorAttachments[0].loadAction = .dontCare
         pass.colorAttachments[0].storeAction = .store
 
         guard let buffer = queue.makeCommandBuffer(),
@@ -203,6 +234,7 @@ final class BlendShaderTests: XCTestCase {
         var uniforms = MSBlendUniforms(mode: mode, opacity: opacity)
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(source, index: 0)
+        encoder.setFragmentTexture(backdrop, index: 1)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<MSBlendUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()

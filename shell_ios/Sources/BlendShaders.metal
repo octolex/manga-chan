@@ -226,20 +226,14 @@ vertex BlendRasterData blend_vertex(uint vertexID [[vertex_id]])
     return out;
 }
 
-/// `dst` is the current contents of colour attachment 0, read from tile
-/// memory. Its type must match the return type — MSL Specification, p153.
-fragment float4 blend_fragment(BlendRasterData in [[stage_in]],
-                               float4 dst [[color(0)]],
-                               texture2d<float> sourceTexture [[texture(0)]],
-                               constant MSBlendUniforms& uniforms [[buffer(0)]])
+/// The composite itself, shared by both entry points below so that what the
+/// test verifies and what the device runs cannot diverge.
+static float4 compositePremultiplied(int mode, float4 dst, float4 src, float opacity)
 {
-    constexpr sampler nearest(filter::nearest, address::clamp_to_edge);
-    float4 src = sourceTexture.sample(nearest, in.texCoord);
-
     // Attachments and textures both hold premultiplied colour; the blend
     // functions are defined on straight colour.
     float ab = dst.a;
-    float as = src.a * saturate(uniforms.opacity);
+    float as = src.a * saturate(opacity);
     float3 cb = ab > 0.0f ? dst.rgb / ab : float3(0.0f);
     float3 cs = src.a > 0.0f ? src.rgb / src.a : float3(0.0f);
 
@@ -247,7 +241,7 @@ fragment float4 blend_fragment(BlendRasterData in [[stage_in]],
         return dst;   // nothing to add
     }
 
-    float3 blended = blendFunction(uniforms.mode, cb, cs);
+    float3 blended = blendFunction(mode, cb, cs);
 
     // W3C source-over with a blend function: source over bare canvas, source
     // over backdrop where the blend applies, and backdrop showing through.
@@ -257,4 +251,40 @@ fragment float4 blend_fragment(BlendRasterData in [[stage_in]],
               + (1.0f - as) * ab * cb;
 
     return float4(co, ao);   // already premultiplied
+}
+
+/// The shipping path. `dst` is the current contents of colour attachment 0,
+/// read straight from tile memory — programmable blending. Its type must match
+/// the return type: MSL Specification, p153.
+///
+/// This entry point CANNOT be used on the iOS Simulator, which rejects it at
+/// pipeline creation with "reading from a rendertarget is not supported".
+/// See docs/metal-verified.md.
+fragment float4 blend_fragment(BlendRasterData in [[stage_in]],
+                               float4 dst [[color(0)]],
+                               texture2d<float> sourceTexture [[texture(0)]],
+                               constant MSBlendUniforms& uniforms [[buffer(0)]])
+{
+    constexpr sampler nearest(filter::nearest, address::clamp_to_edge);
+    float4 src = sourceTexture.sample(nearest, in.texCoord);
+    return compositePremultiplied(uniforms.mode, dst, src, uniforms.opacity);
+}
+
+/// Identical maths, but the backdrop arrives as an ordinary texture instead of
+/// being read back from the attachment.
+///
+/// This exists so the 26 blend formulas — several hundred lines of arithmetic
+/// with singularities at the extremes — can be verified in CI on the
+/// simulator. The shipping path differs from it in exactly one respect: where
+/// `dst` comes from. That difference is one attribute, documented in the MSL
+/// specification, and is the part device testing has to cover.
+fragment float4 blend_fragment_reference(BlendRasterData in [[stage_in]],
+                                         texture2d<float> sourceTexture [[texture(0)]],
+                                         texture2d<float> backdropTexture [[texture(1)]],
+                                         constant MSBlendUniforms& uniforms [[buffer(0)]])
+{
+    constexpr sampler nearest(filter::nearest, address::clamp_to_edge);
+    float4 src = sourceTexture.sample(nearest, in.texCoord);
+    float4 dst = backdropTexture.sample(nearest, in.texCoord);
+    return compositePremultiplied(uniforms.mode, dst, src, uniforms.opacity);
 }
