@@ -160,9 +160,10 @@ final class LayersPanelView: UIView {
                 self.expandedLayer = (self.expandedLayer == id) ? MC_INVALID_LAYER : id
                 self.reload(from: engine)
             }
-            row.onUpdate = { [weak self] updated in
+            row.onUpdate = { [weak self] updated, needsReload in
                 guard let self else { return }
                 self.delegate?.layersPanel(self, didUpdate: updated, for: id)
+                if needsReload { self.reload(from: engine) }
             }
             row.onDelete = { [weak self] in
                 guard let self else { return }
@@ -188,7 +189,10 @@ private class LayerRowView: UIView {
 
     var onSelect: (() -> Void)?
     var onToggleExpanded: (() -> Void)?
-    var onUpdate: ((LayerProperties) -> Void)?
+    /// The flag says whether the panel needs rebuilding afterwards.
+    /// Continuous controls pass false: rebuilding mid-drag destroys the
+    /// control being dragged, which ends the gesture after a single value.
+    var onUpdate: ((LayerProperties, Bool) -> Void)?
     var onDelete: (() -> Void)?
 
     private var properties: LayerProperties
@@ -434,23 +438,25 @@ private class LayerRowView: UIView {
 
     @objc private func visibilityTapped() {
         properties.visible.toggle()
-        onUpdate?(properties)
+        onUpdate?(properties, true)
     }
 
     @objc private func clipTapped() {
         properties.clipToBelow.toggle()
-        onUpdate?(properties)
+        onUpdate?(properties, true)
     }
 
     @objc private func opacityChanged(_ slider: UISlider) {
         properties.opacity = slider.value
+        // Updated in place rather than by rebuilding: the slider has to
+        // survive its own drag.
         percentLabel?.text = "\(Int(slider.value * 100))%"
-        onUpdate?(properties)
+        onUpdate?(properties, false)
     }
 
     @objc private func modeTapped(_ button: UIButton) {
         properties.blend = Int32(button.tag)
-        onUpdate?(properties)
+        onUpdate?(properties, true)
     }
 }
 

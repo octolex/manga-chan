@@ -256,8 +256,10 @@ final class Renderer: NSObject {
     }
 
     func setProperties(_ properties: LayerProperties, of layer: MCLayerId) {
+        // Deliberately does not fire onLayersChanged. The panel initiated this
+        // and has already updated itself; rebuilding it here would tear down
+        // whichever control the user is still touching.
         engine.setProperties(properties, of: layer)
-        onLayersChanged?()
     }
 
     // MARK: - History
