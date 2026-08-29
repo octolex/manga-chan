@@ -3,6 +3,7 @@ add_library(core STATIC
     src/core_api.cpp
     src/tile_codec.cpp
     src/layer.cpp
+    src/layer_stack.cpp
     src/tile_spill.cpp
     src/tile_store.cpp
     src/undo.cpp

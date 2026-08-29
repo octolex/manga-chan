@@ -156,8 +156,16 @@ final class CanvasViewController: UIViewController {
             // mid weight rather than a stroke that tapers to nothing.
             pressure = 0.5
         }
+        var roll: Float = -1
+        if #available(iOS 17.5, *), touch.type == .pencil {
+            roll = Float(touch.rollAngle)
+        }
+
         return StrokePoint(location: touch.location(in: view),
                            pressure: pressure,
+                           tilt: Float(touch.altitudeAngle),
+                           azimuth: Float(touch.azimuthAngle(in: view)),
+                           roll: roll,
                            timestamp: touch.timestamp)
     }
 

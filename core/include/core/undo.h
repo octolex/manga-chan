@@ -24,13 +24,15 @@
 //  Calling willModify after writeTile would record the already-modified tile
 //  and undo would restore the wrong pixels.
 //
-//  Layer lifetime: edits hold raw Layer pointers, so a layer must outlive any
-//  history referring to it. Deleting a layer has to clear or rewrite the
-//  affected history. This becomes a stable layer id when the document model
-//  lands; the pointer is a deliberate placeholder, not an oversight.
+//  Edits address layers by stable LayerId, never by pointer or index. The
+//  history routinely outlives the layers it refers to — the user deletes a
+//  layer and then presses undo — and an entry holding a raw pointer would be a
+//  use-after-free waiting to happen. An entry naming a layer that no longer
+//  exists simply becomes inert.
 //
 
 #include "core/layer.h"
+#include "core/layer_stack.h"
 #include "core/tile.h"
 #include "core/tile_store.h"
 
@@ -47,7 +49,7 @@ public:
     /// `maxActions` bounds the history. Older actions are dropped and their
     /// tile references released, which is what keeps memory bounded during a
     /// long drawing session.
-    explicit UndoStack(TileStore& store, size_t maxActions = 250);
+    UndoStack(TileStore& store, LayerStack& layers, size_t maxActions = 250);
     ~UndoStack();
 
     UndoStack(const UndoStack&) = delete;
@@ -60,7 +62,7 @@ public:
     /// Records the current state of one tile. Call before writing to it.
     /// Repeated calls for the same tile within one action are ignored, so the
     /// history holds the state from before the action began.
-    void willModify(Layer& layer, TileCoord coord);
+    void willModify(LayerId layer, TileCoord coord);
 
     /// Pushes the action onto the undo stack. An action that touched no tiles
     /// is discarded rather than cluttering the history with a no-op.
@@ -103,7 +105,7 @@ public:
 
 private:
     struct TileEdit {
-        Layer* layer = nullptr;
+        LayerId layer = kInvalidLayer;
         TileCoord coord;
         /// The tile as it was before the action. kInvalidTile means the tile
         /// did not exist, so undoing removes it rather than restoring pixels.
@@ -116,14 +118,14 @@ private:
     };
 
     struct EditKey {
-        Layer* layer;
+        LayerId layer;
         TileCoord coord;
         friend bool operator==(const EditKey&, const EditKey&) = default;
     };
 
     struct EditKeyHash {
         size_t operator()(const EditKey& key) const noexcept {
-            const size_t a = std::hash<const void*>{}(key.layer);
+            const size_t a = std::hash<LayerId>{}(key.layer);
             const size_t b = TileCoordHash{}(key.coord);
             return a ^ (b + 0x9e3779b97f4a7c15ULL + (a << 6) + (a >> 2));
         }
@@ -136,6 +138,7 @@ private:
     void releaseAction(Action& action);
 
     TileStore* store_;
+    LayerStack* layers_;
     size_t maxActions_;
 
     bool recording_ = false;

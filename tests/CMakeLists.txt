@@ -10,6 +10,7 @@ endfunction()
 
 add_core_test(test_core_api)
 add_core_test(test_tiles)
+add_core_test(test_layer_stack)
 add_core_test(test_residency)
 add_core_test(test_undo)
 add_core_test(test_spill)

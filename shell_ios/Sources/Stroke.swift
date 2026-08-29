@@ -27,9 +27,27 @@ import CoreGraphics
 import Foundation
 import simd
 
+/// One input sample, carrying every channel the hardware can report.
+///
+/// Only `pressure` is consumed today. The rest are plumbed through now
+/// because the brush engine at M3 maps all of them onto dab size, rotation
+/// and jitter — widening this struct later would mean touching every stage of
+/// the stroke pipeline at once. Carrying a few unused floats costs nothing.
 struct StrokePoint {
     var location: CGPoint      // view coordinates, in points
     var pressure: Float        // 0...1
+
+    /// Angle from the screen plane, in radians. π/2 is upright, 0 is flat.
+    var tilt: Float = .pi / 2
+
+    /// Direction the barrel points, in radians.
+    var azimuth: Float = 0
+
+    /// Barrel rotation, in radians. Negative means the hardware cannot
+    /// report it — a Pencil Pro can, earlier models cannot, and a brush that
+    /// keys off roll needs to know the difference rather than reading zero.
+    var roll: Float = -1
+
     var timestamp: TimeInterval
 }
 

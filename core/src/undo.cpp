@@ -7,8 +7,8 @@ namespace {
 const std::string kNoName;
 } // namespace
 
-UndoStack::UndoStack(TileStore& store, size_t maxActions)
-    : store_(&store), maxActions_(maxActions == 0 ? 1 : maxActions) {}
+UndoStack::UndoStack(TileStore& store, LayerStack& layers, size_t maxActions)
+    : store_(&store), layers_(&layers), maxActions_(maxActions == 0 ? 1 : maxActions) {}
 
 UndoStack::~UndoStack() {
     clear();
@@ -29,20 +29,23 @@ void UndoStack::beginAction(std::string name) {
     recording_ = true;
 }
 
-void UndoStack::willModify(Layer& layer, TileCoord coord) {
+void UndoStack::willModify(LayerId layer, TileCoord coord) {
     if (!recording_) return;
+
+    Layer* pixels = layers_->pixels(layer);
+    if (pixels == nullptr) return;
 
     // Only the first change to a tile within an action matters — the history
     // needs the state from before the action, not before each brush dab.
-    const EditKey key{&layer, coord};
+    const EditKey key{layer, coord};
     if (!pendingKeys_.insert(key).second) {
         return;
     }
 
     TileEdit edit;
-    edit.layer = &layer;
+    edit.layer = layer;
     edit.coord = coord;
-    edit.before = layer.tileId(coord);
+    edit.before = pixels->tileId(coord);
 
     if (edit.before != kInvalidTile) {
         // This reference is what makes the next writeTile copy-on-write
@@ -99,7 +102,15 @@ const std::string& UndoStack::redoName() const {
 }
 
 void UndoStack::applyAndSwap(TileEdit& edit) {
-    const TileId current = edit.layer->tileId(edit.coord);
+    Layer* pixels = layers_->pixels(edit.layer);
+    if (pixels == nullptr) {
+        // The layer was deleted after this entry was recorded. There is
+        // nothing to restore into, so the entry is inert — which is exactly
+        // why edits name layers by id rather than by pointer.
+        return;
+    }
+
+    const TileId current = pixels->tileId(edit.coord);
 
     // Retain before handing the tile over. adoptTile and dropTile both release
     // the layer's reference, and if that were the only one the tile would be
@@ -109,9 +120,9 @@ void UndoStack::applyAndSwap(TileEdit& edit) {
     }
 
     if (edit.before == kInvalidTile) {
-        edit.layer->dropTile(edit.coord);
+        pixels->dropTile(edit.coord);
     } else {
-        edit.layer->adoptTile(edit.coord, edit.before);
+        pixels->adoptTile(edit.coord, edit.before);
         // adoptTile took its own reference; release the history's.
         store_->release(edit.before);
     }

@@ -1,6 +1,7 @@
 #include "check.h"
 
 #include "core/layer.h"
+#include "core/layer_stack.h"
 #include "core/tile_store.h"
 #include "core/undo.h"
 
@@ -19,13 +20,15 @@ void testUndoRedoRoundTrip() {
     std::printf("undo/redo round trip\n");
 
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers);
 
     layer.setPixel(10, 10, kRed);
 
     undo.beginAction("Stroke");
-    undo.willModify(layer, TileCoord{0, 0});
+    undo.willModify(id, TileCoord{0, 0});
     layer.setPixel(10, 10, kBlue);
     undo.commitAction();
 
@@ -49,15 +52,17 @@ void testWillModifyForcesCopyOnWrite() {
     // is what makes the next write separate the tile instead of overwriting
     // the pixels the history is holding.
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers);
 
     layer.setPixel(10, 10, kRed);
     const TileId original = layer.tileId(TileCoord{0, 0});
     CHECK_EQ(store.refCount(original), 1);
 
     undo.beginAction("Stroke");
-    undo.willModify(layer, TileCoord{0, 0});
+    undo.willModify(id, TileCoord{0, 0});
     CHECK_EQ(store.refCount(original), 2);   // history now holds one
 
     layer.setPixel(10, 10, kBlue);
@@ -78,13 +83,15 @@ void testUndoOfTileCreation() {
     // as a tile full of transparent pixels — otherwise undo would silently
     // grow memory.
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers);
 
     CHECK_EQ(layer.tileCount(), 0);
 
     undo.beginAction("First stroke");
-    undo.willModify(layer, TileCoord{0, 0});
+    undo.willModify(id, TileCoord{0, 0});
     layer.setPixel(10, 10, kRed);
     undo.commitAction();
     CHECK_EQ(layer.tileCount(), 1);
@@ -108,18 +115,20 @@ void testMultipleActionsUnwindInOrder() {
     std::printf("multiple actions unwind in order\n");
 
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers);
 
     layer.setPixel(10, 10, kRed);
 
     undo.beginAction("Second");
-    undo.willModify(layer, TileCoord{0, 0});
+    undo.willModify(id, TileCoord{0, 0});
     layer.setPixel(10, 10, kBlue);
     undo.commitAction();
 
     undo.beginAction("Third");
-    undo.willModify(layer, TileCoord{0, 0});
+    undo.willModify(id, TileCoord{0, 0});
     layer.setPixel(10, 10, kGreen);
     undo.commitAction();
 
@@ -144,14 +153,16 @@ void testRepeatedWillModifyRecordsOnce() {
     // A stroke calls this for every dab. Recording each one would make undo
     // step back one dab at a time instead of one stroke at a time.
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers);
 
     layer.setPixel(10, 10, kRed);
 
     undo.beginAction("Stroke");
     for (int i = 0; i < 50; ++i) {
-        undo.willModify(layer, TileCoord{0, 0});
+        undo.willModify(id, TileCoord{0, 0});
         layer.setPixel(10, 10, Rgba8{static_cast<uint8_t>(i), 0, 0, 255});
     }
     undo.commitAction();
@@ -166,8 +177,10 @@ void testEmptyActionIsDiscarded() {
 
     // Otherwise the user presses undo and nothing visible happens.
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers);
 
     undo.beginAction("Nothing happened");
     undo.commitAction();
@@ -179,13 +192,15 @@ void testNewActionClearsRedo() {
     std::printf("new action clears redo\n");
 
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers);
 
     layer.setPixel(10, 10, kRed);
 
     undo.beginAction("Blue");
-    undo.willModify(layer, TileCoord{0, 0});
+    undo.willModify(id, TileCoord{0, 0});
     layer.setPixel(10, 10, kBlue);
     undo.commitAction();
 
@@ -193,7 +208,7 @@ void testNewActionClearsRedo() {
     CHECK(undo.canRedo());
 
     undo.beginAction("Green");
-    undo.willModify(layer, TileCoord{0, 0});
+    undo.willModify(id, TileCoord{0, 0});
     layer.setPixel(10, 10, kGreen);
     undo.commitAction();
 
@@ -205,14 +220,16 @@ void testAbortReleasesEverything() {
     std::printf("abort releases everything\n");
 
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers);
 
     layer.setPixel(10, 10, kRed);
     const TileId original = layer.tileId(TileCoord{0, 0});
 
     undo.beginAction("Cancelled stroke");
-    undo.willModify(layer, TileCoord{0, 0});
+    undo.willModify(id, TileCoord{0, 0});
     CHECK_EQ(store.refCount(original), 2);
 
     undo.abortAction();
@@ -225,12 +242,14 @@ void testHistoryIsBounded() {
 
     // Without a cap, a long session grows the history until the app is killed.
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store, 10);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers, 10);
 
     for (int i = 0; i < 40; ++i) {
         undo.beginAction("Stroke");
-        undo.willModify(layer, TileCoord{i, 0});
+        undo.willModify(id, TileCoord{i, 0});
         layer.setPixel(i * kTileSize, 0, kRed);
         undo.commitAction();
     }
@@ -245,21 +264,62 @@ void testClearReleasesTiles() {
     std::printf("clear releases tiles\n");
 
     TileStore store;
-    UndoStack undo(store);
-    {
-        Layer layer(store);
-        layer.setPixel(10, 10, kRed);
+    LayerStack layers(store);
+    UndoStack undo(store, layers);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
 
-        undo.beginAction("Stroke");
-        undo.willModify(layer, TileCoord{0, 0});
-        layer.setPixel(10, 10, kBlue);
-        undo.commitAction();
+    layer.setPixel(10, 10, kRed);
 
-        CHECK_EQ(store.liveTileCount(), 2); // history tile + layer tile
-        undo.clear();
-        CHECK_EQ(store.liveTileCount(), 1); // only the layer's
-    }
+    undo.beginAction("Stroke");
+    undo.willModify(id, TileCoord{0, 0});
+    layer.setPixel(10, 10, kBlue);
+    undo.commitAction();
+
+    CHECK_EQ(store.liveTileCount(), 2); // history tile + layer tile
+    undo.clear();
+    CHECK_EQ(store.liveTileCount(), 1); // only the layer's
+
+    layers.remove(id);
     CHECK_EQ(store.liveTileCount(), 0);
+}
+
+void testHistoryForDeletedLayerIsInert() {
+    std::printf("history for a deleted layer is inert
+");
+
+    // The reason edits name layers by id rather than by pointer. History
+    // routinely outlives the layers it refers to: the user deletes a layer and
+    // then presses undo. With a pointer this was a use-after-free waiting for
+    // exactly that sequence.
+    TileStore store;
+    LayerStack layers(store);
+    UndoStack undo(store, layers);
+
+    const LayerId doomed = layers.add("Doomed");
+    const LayerId keeper = layers.add("Keeper");
+
+    layers.pixels(doomed)->setPixel(10, 10, kRed);
+    layers.pixels(keeper)->setPixel(10, 10, kRed);
+
+    undo.beginAction("Stroke across both");
+    undo.willModify(doomed, TileCoord{0, 0});
+    undo.willModify(keeper, TileCoord{0, 0});
+    layers.pixels(doomed)->setPixel(10, 10, kBlue);
+    layers.pixels(keeper)->setPixel(10, 10, kBlue);
+    undo.commitAction();
+
+    CHECK(layers.remove(doomed));
+    CHECK_EQ(layers.count(), 1);
+
+    // Undo must still work, applying only to the layer that survives.
+    CHECK(undo.undo());
+    CHECK(layers.pixels(keeper)->pixel(10, 10) == kRed);
+    CHECK(layers.pixels(doomed) == nullptr);
+
+    // And redo must not resurrect anything or corrupt the survivor.
+    CHECK(undo.redo());
+    CHECK(layers.pixels(keeper)->pixel(10, 10) == kBlue);
 }
 
 void testDeepHistoryMemoryProfile() {
@@ -268,8 +328,10 @@ void testDeepHistoryMemoryProfile() {
     // A realistic session: a 4096x4096 page, 100 strokes, each touching two
     // tiles. Snapshotting whole layers would cost 100 x 64 MB.
     TileStore store;
-    Layer layer(store);
-    UndoStack undo(store, 250);
+    LayerStack layers(store);
+    const LayerId id = layers.add("Layer 1");
+    Layer& layer = *layers.pixels(id);
+    UndoStack undo(store, layers, 250);
 
     std::vector<uint8_t> art(kTileBytes);
     for (size_t i = 0; i < kTileBytes; i += 4) {
@@ -286,8 +348,8 @@ void testDeepHistoryMemoryProfile() {
         undo.beginAction("Stroke");
         const TileCoord a{i % 16, (i / 16) % 16};
         const TileCoord b{(i + 1) % 16, (i / 16) % 16};
-        undo.willModify(layer, a);
-        undo.willModify(layer, b);
+        undo.willModify(id, a);
+        undo.willModify(id, b);
         layer.setPixel(a.x * kTileSize + 5, a.y * kTileSize + 5, kRed);
         layer.setPixel(b.x * kTileSize + 5, b.y * kTileSize + 5, kRed);
         undo.commitAction();
@@ -334,6 +396,7 @@ int main() {
     testAbortReleasesEverything();
     testHistoryIsBounded();
     testClearReleasesTiles();
+    testHistoryForDeletedLayerIsInert();
     testDeepHistoryMemoryProfile();
     return check::report("undo");
 }

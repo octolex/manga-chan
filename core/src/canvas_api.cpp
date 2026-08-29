@@ -1,6 +1,7 @@
 #include "core/canvas_api.h"
 
 #include "core/layer.h"
+#include "core/layer_stack.h"
 #include "core/tile.h"
 #include "core/tile_store.h"
 #include "core/undo.h"
@@ -13,7 +14,7 @@ using namespace mc;
 
 struct MCCanvas {
     TileStore store;
-    Layer layer;
+    LayerStack layers;
     UndoStack undo;
 
     /// Tiles the shell needs to re-upload after the last history operation.
@@ -22,7 +23,14 @@ struct MCCanvas {
     /// Counts edits made with no action open. See MCCanvasStats.
     uint64_t storesOutsideAction = 0;
 
-    MCCanvas() : store(0), layer(store), undo(store) {}
+    MCCanvas() : store(0), layers(store), undo(store, layers) {
+        // A drawing always has at least one layer. The C ABI is still
+        // single-layer; the stack is here so that history, which addresses
+        // layers by id, is already correct when layer controls arrive.
+        layers.add("Layer 1");
+    }
+
+    Layer* active() { return layers.pixels(layers.active()); }
 };
 
 namespace {
@@ -86,9 +94,12 @@ void mc_canvas_store_tile(MCCanvas* canvas, int32_t tx, int32_t ty, const uint8_
 
     // Order matters: capture history before the tile is separated by writeTile,
     // or undo would record the pixels we are about to overwrite.
-    canvas->undo.willModify(canvas->layer, coord);
+    canvas->undo.willModify(canvas->layers.active(), coord);
 
-    uint8_t* destination = canvas->layer.writeTile(coord);
+    Layer* layer = canvas->active();
+    if (layer == nullptr) return;
+
+    uint8_t* destination = layer->writeTile(coord);
     if (destination != nullptr) {
         std::memcpy(destination, rgba, kTileBytes);
     }
@@ -107,7 +118,10 @@ void mc_canvas_abort_stroke(MCCanvas* canvas) {
 int32_t mc_canvas_load_tile(MCCanvas* canvas, int32_t tx, int32_t ty, uint8_t* rgba) {
     if (!ok(canvas) || rgba == nullptr) return 0;
 
-    const uint8_t* source = canvas->layer.readTile(TileCoord{tx, ty});
+    const Layer* layer = canvas->active();
+    if (layer == nullptr) return 0;
+
+    const uint8_t* source = layer->readTile(TileCoord{tx, ty});
     if (source == nullptr) {
         // Never painted. Leaving the caller's buffer alone lets it skip the
         // upload entirely rather than pushing a tile of transparent pixels.
@@ -120,18 +134,21 @@ int32_t mc_canvas_load_tile(MCCanvas* canvas, int32_t tx, int32_t ty, uint8_t* r
 void mc_canvas_clear(MCCanvas* canvas) {
     if (!ok(canvas)) return;
 
+    Layer* layer = canvas->active();
+    if (layer == nullptr) return;
+
     // Clearing is undoable like anything else. Collect the coordinates first,
     // because dropping tiles mutates the map being iterated.
     std::vector<TileCoord> coords;
-    coords.reserve(canvas->layer.tileCount());
-    for (const auto& [coord, id] : canvas->layer.tiles()) {
+    coords.reserve(layer->tileCount());
+    for (const auto& [coord, id] : layer->tiles()) {
         coords.push_back(coord);
     }
 
     canvas->undo.beginAction("Clear");
     for (const TileCoord& coord : coords) {
-        canvas->undo.willModify(canvas->layer, coord);
-        canvas->layer.dropTile(coord);
+        canvas->undo.willModify(canvas->layers.active(), coord);
+        layer->dropTile(coord);
     }
     canvas->undo.commitAction();
 
