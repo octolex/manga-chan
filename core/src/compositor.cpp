@@ -61,9 +61,45 @@ CompositePlan planComposite(const LayerStack& layers) {
         ++end;
     }
 
-    for (size_t i = 0; i < start; ++i)          plan.under.push_back(layers.at(i));
-    for (size_t i = start; i <= end; ++i)       plan.live.push_back(layers.at(i));
-    for (size_t i = end + 1; i < count; ++i)    plan.over.push_back(layers.at(i));
+    // Where the cacheable suffix begins.
+    //
+    // The under cache is always exact: compositing is sequential from the
+    // bottom, so whatever accumulates below the live group IS the backdrop,
+    // whatever blend modes produced it.
+    //
+    // The over cache is not. Flattening the layers above into one texture and
+    // compositing it on top is only equivalent for source-over, which is
+    // associative — a run of Normal layers at any opacity can be pre-flattened
+    // onto transparent and then composited over the result below. A non-Normal
+    // blend is not associative that way: Multiply above the layer being
+    // painted depends on the actual backdrop, including the wet stroke, so
+    // caching it would freeze it against stale pixels.
+    //
+    // So the over cache is the maximal all-Normal suffix, and anything below
+    // that in the over region has to stay live.
+    size_t overStart = count;
+    while (overStart > end + 1) {
+        const LayerInfo* info = layers.info(layers.at(overStart - 1));
+        if (info == nullptr) break;
+        // Invisible layers contribute nothing, so they never block caching.
+        // A clipped layer is fine here because its base is scanned too.
+        const bool cacheable = !info->visible || info->blend == BlendMode::Normal;
+        if (!cacheable) break;
+        --overStart;
+    }
+
+    // The cache must not begin with a clipped layer: it would be clipping to
+    // the live result, which by definition is not in the cache.
+    while (overStart < count) {
+        const LayerInfo* info = layers.info(layers.at(overStart));
+        if (info == nullptr || !info->clipToBelow) break;
+        ++overStart;
+    }
+
+    for (size_t i = 0; i < start; ++i)              plan.under.push_back(layers.at(i));
+    for (size_t i = start; i <= end; ++i)           plan.live.push_back(layers.at(i));
+    for (size_t i = end + 1; i < overStart; ++i)    plan.live.push_back(layers.at(i));
+    for (size_t i = overStart; i < count; ++i)      plan.over.push_back(layers.at(i));
 
     return plan;
 }

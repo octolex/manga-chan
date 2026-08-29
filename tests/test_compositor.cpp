@@ -342,6 +342,120 @@ void testDeepStackCostsNothingExtra() {
                 plan.live.size());
 }
 
+
+void testNonNormalBlendAboveCannotBeCached() {
+    std::printf("a non-normal blend above stays live\n");
+
+    // Flattening the layers above into one texture and compositing it on top
+    // is only equivalent for source-over, which is associative. Multiply is
+    // not: its result depends on the real backdrop, including the stroke being
+    // painted right now. Caching it would freeze it against stale pixels.
+    TileStore store;
+    LayerStack layers(store);
+    const LayerId active = layers.add("Ink");
+    const LayerId shadow = layers.add("Shadow");
+    const LayerId top = layers.add("Top");
+
+    layers.info(shadow)->blend = BlendMode::Multiply;
+    layers.setActive(active);
+
+    const CompositePlan plan = planComposite(layers);
+    CHECK_EQ(plan.live.size(), 2);
+    CHECK_EQ(plan.live[0], active);
+    CHECK_EQ(plan.live[1], shadow);   // forced live by its blend mode
+    CHECK_EQ(plan.over.size(), 1);
+    CHECK_EQ(plan.over[0], top);      // Normal, so still cacheable
+}
+
+void testNormalLayersAboveAreStillCached() {
+    std::printf("normal layers above are still cached\n");
+
+    // Source-over is associative, so any run of Normal layers folds into one
+    // texture regardless of their opacity.
+    TileStore store;
+    LayerStack layers(store);
+    const LayerId active = layers.add("Ink");
+    const LayerId a = layers.add("A");
+    const LayerId b = layers.add("B");
+    layers.info(a)->opacity = 0.3f;
+    layers.setActive(active);
+
+    const CompositePlan plan = planComposite(layers);
+    CHECK_EQ(plan.live.size(), 1);
+    CHECK_EQ(plan.over.size(), 2);
+    CHECK_EQ(plan.over[0], a);
+    CHECK_EQ(plan.over[1], b);
+}
+
+void testInvisibleLayerDoesNotBlockCaching() {
+    std::printf("an invisible layer does not block caching\n");
+
+    // It contributes nothing, so its blend mode is irrelevant. Treating it as
+    // a barrier would make hiding a layer slower than showing it.
+    TileStore store;
+    LayerStack layers(store);
+    const LayerId active = layers.add("Ink");
+    const LayerId hidden = layers.add("Hidden multiply");
+    const LayerId top = layers.add("Top");
+
+    layers.info(hidden)->blend = BlendMode::Multiply;
+    layers.info(hidden)->visible = false;
+    layers.setActive(active);
+
+    const CompositePlan plan = planComposite(layers);
+    CHECK_EQ(plan.live.size(), 1);
+    CHECK_EQ(plan.over.size(), 2);
+    CHECK_EQ(plan.over[0], hidden);
+    CHECK_EQ(plan.over[1], top);
+}
+
+void testOverCacheNeverBeginsWithAClippedLayer() {
+    std::printf("the over cache never begins with a clipped layer\n");
+
+    // Such a layer clips to the live result, which by definition is not in the
+    // cache, so it has to stay live.
+    TileStore store;
+    LayerStack layers(store);
+    const LayerId active = layers.add("Ink");
+    const LayerId barrier = layers.add("Multiply");
+    const LayerId clipped = layers.add("Clipped");
+    const LayerId top = layers.add("Top");
+
+    layers.info(barrier)->blend = BlendMode::Multiply;
+    layers.info(clipped)->clipToBelow = true;
+    layers.setActive(active);
+
+    const CompositePlan plan = planComposite(layers);
+    // barrier is live for its blend mode; clipped clips to barrier, which is
+    // live, so it cannot be cached either.
+    CHECK_EQ(plan.live.size(), 3);
+    CHECK_EQ(plan.live[1], barrier);
+    CHECK_EQ(plan.live[2], clipped);
+    CHECK_EQ(plan.over.size(), 1);
+    CHECK_EQ(plan.over[0], top);
+}
+
+void testBlendModeChangeAboveRepartitions() {
+    std::printf("changing a blend mode above repartitions the split\n");
+
+    TileStore store;
+    LayerStack layers(store);
+    const LayerId active = layers.add("Ink");
+    const LayerId above = layers.add("Above");
+    layers.setActive(active);
+
+    CompositeCache cache;
+    cache.refresh(layers);
+    CHECK_EQ(cache.plan().over.size(), 1);
+
+    // Switching it to Multiply moves it out of the cache and into the live set.
+    layers.info(above)->blend = BlendMode::Multiply;
+    cache.refresh(layers);
+    CHECK_EQ(cache.plan().over.size(), 0);
+    CHECK_EQ(cache.plan().live.size(), 2);
+    CHECK(cache.overDirty());
+}
+
 } // namespace
 
 int main() {
@@ -357,6 +471,11 @@ int main() {
     testChangingSelectionRebuildsBothCaches();
     testReorderingInvalidates();
     testExplicitInvalidation();
+    testNonNormalBlendAboveCannotBeCached();
+    testNormalLayersAboveAreStillCached();
+    testInvisibleLayerDoesNotBlockCaching();
+    testOverCacheNeverBeginsWithAClippedLayer();
+    testBlendModeChangeAboveRepartitions();
     testDeepStackCostsNothingExtra();
     return check::report("compositor");
 }
