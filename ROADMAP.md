@@ -90,12 +90,17 @@ No Pencil dependency: none of this milestone touches input.
 | ✅ | All 26 blend modes, CPU reference implementation |
 | ✅ | Simulator test harness in CI, with real Metal |
 | ✅ | Blend-mode shaders in Metal, verified against the CPU reference |
-| ⬜ | under/over caching, recomputed only when layer selection changes |
+| ✅ | under/over cache planning, clip-group aware |
+| ⬜ | Executing the plan in Metal |
 | ⬜ | Layer panel in the app |
 | ⬜ | Tile buffers backed by GPU-visible memory, removing the 6.5 ms capture |
 | ⬜ | Golden-image tests in the iOS Simulator on CI |
 
-504 checks green on Linux and Windows, plus 4 on an iPad simulator.
+863 checks green on Linux and Windows, plus 6 on an iPad simulator.
+
+**200 layers, 1 live per frame, 0 cache rebuilds over 100 painted frames.**
+That is the claim the whole milestone rests on: a deep document costs what a
+shallow one costs while the pen is down.
 
 All 26 blend shaders are checked against the CPU implementation on every
 push: 26 modes x 64 colour pairs x 2 opacities, worst channel difference **1**
