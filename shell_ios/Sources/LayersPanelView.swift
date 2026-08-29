@@ -327,6 +327,7 @@ private class LayerRowView: UIView {
         opacityRow.addArrangedSubview(opacityLabel)
         opacityRow.addArrangedSubview(slider)
         opacityRow.addArrangedSubview(percent)
+        opacityRow.heightAnchor.constraint(equalToConstant: 32).isActive = true
         detail.addArrangedSubview(opacityRow)
 
         // Clip-to-below earns its place in the row rather than a submenu:
@@ -338,8 +339,12 @@ private class LayerRowView: UIView {
         clip.contentHorizontalAlignment = .leading
         clip.setTitleColor(.white, for: .normal)
         clip.addTarget(self, action: #selector(clipTapped), for: .touchUpInside)
+        clip.heightAnchor.constraint(equalToConstant: 34).isActive = true
         detail.addArrangedSubview(clip)
 
+        // 26 modes stacked inline would make this section taller than the
+        // screen, pushing Delete out of reach. Its own scroll view keeps the
+        // section a fixed, predictable height.
         let modes = UIStackView()
         modes.axis = .vertical
         modes.spacing = 0
@@ -349,7 +354,7 @@ private class LayerRowView: UIView {
             button.setTitle(name, for: .normal)
             button.titleLabel?.font = .systemFont(ofSize: 14)
             button.contentHorizontalAlignment = .leading
-            button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
             let selected = Int(properties.blend) == mode
             button.setTitleColor(selected ? .white : UIColor(white: 1, alpha: 0.7), for: .normal)
             button.backgroundColor = selected
@@ -357,9 +362,29 @@ private class LayerRowView: UIView {
             button.layer.cornerRadius = 4
             button.tag = mode
             button.addTarget(self, action: #selector(modeTapped(_:)), for: .touchUpInside)
+            // Explicit height, or the stack compresses these when space runs
+            // short and the rows overlap each other instead of scrolling.
+            button.heightAnchor.constraint(equalToConstant: 30).isActive = true
             modes.addArrangedSubview(button)
         }
-        detail.addArrangedSubview(modes)
+
+        let modeScroll = UIScrollView()
+        modeScroll.addSubview(modes)
+        modes.translatesAutoresizingMaskIntoConstraints = false
+        modeScroll.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            modes.topAnchor.constraint(equalTo: modeScroll.topAnchor),
+            modes.bottomAnchor.constraint(equalTo: modeScroll.bottomAnchor),
+            modes.leadingAnchor.constraint(equalTo: modeScroll.leadingAnchor),
+            modes.trailingAnchor.constraint(equalTo: modeScroll.trailingAnchor),
+            modes.widthAnchor.constraint(equalTo: modeScroll.widthAnchor),
+            modeScroll.heightAnchor.constraint(equalToConstant: 210),
+        ])
+        // Open on the current mode rather than at the top, so the selection is
+        // visible without hunting for it.
+        selectedModeIndex = Int(properties.blend)
+        blendScrollView = modeScroll
+        detail.addArrangedSubview(modeScroll)
 
         let delete = UIButton(type: .system)
         delete.setTitle("Delete layer", for: .normal)
@@ -367,8 +392,24 @@ private class LayerRowView: UIView {
         delete.contentHorizontalAlignment = .leading
         delete.setTitleColor(UIColor(red: 1, green: 0.45, blue: 0.45, alpha: 1), for: .normal)
         delete.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+        delete.heightAnchor.constraint(equalToConstant: 34).isActive = true
         detail.addArrangedSubview(delete)
     }
+
+    private weak var blendScrollView: UIScrollView?
+    private var selectedModeIndex = 0
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let scroll = blendScrollView, !didScrollToSelectedMode,
+              scroll.contentSize.height > scroll.bounds.height else { return }
+        didScrollToSelectedMode = true
+        let target = min(CGFloat(selectedModeIndex) * 30,
+                         scroll.contentSize.height - scroll.bounds.height)
+        scroll.setContentOffset(CGPoint(x: 0, y: max(0, target)), animated: false)
+    }
+
+    private var didScrollToSelectedMode = false
 
     private weak var percentLabel: UILabel?
 
