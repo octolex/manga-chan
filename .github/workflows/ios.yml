@@ -1,8 +1,17 @@
 name: iOS build
 
-# Produces an UNSIGNED .ipa as a workflow artifact. Signing happens later on
-# Windows, in Sideloadly, using your free Apple ID — which is why this workflow
-# needs no certificates, no provisioning profiles and no repository secrets.
+# Two jobs in one: verify the app on a simulator, then produce an UNSIGNED
+# .ipa as a workflow artifact.
+#
+# Signing happens later on Windows, in Sideloadly, using a free Apple ID —
+# which is why this workflow needs no certificates, no provisioning profiles
+# and no repository secrets.
+#
+# The simulator step is the important half. Every bug that has cost real time
+# on this project lived in the Swift shell, where the C++ test suite could not
+# see it. GitHub's macOS runners are Apple silicon, so the simulator runs real
+# Metal, and shaders can be checked against the CPU reference in core/blend.cpp
+# without anyone owning a Mac.
 
 on:
   push:
@@ -13,7 +22,7 @@ on:
 
 jobs:
   build:
-    name: Build unsigned .ipa
+    name: Test and build unsigned .ipa
     runs-on: macos-15
 
     steps:
@@ -25,10 +34,10 @@ jobs:
           cmake --version | head -n 1
           sw_vers
 
-      - name: Install XcodeGen and Ninja
-        run: brew install xcodegen ninja
+      - name: Install XcodeGen, Ninja and xcbeautify
+        run: brew install xcodegen ninja xcbeautify
 
-      - name: Build engine core for iOS (arm64)
+      - name: Build engine core for iOS device (arm64)
         run: |
           cmake -B build-ios -G Ninja \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -44,9 +53,59 @@ jobs:
           lipo -info build-ios/lib/libcore.a | grep -q arm64 \
             || { echo "::error::libcore.a is not arm64"; exit 1; }
 
+      - name: Build engine core for the iOS Simulator
+        run: |
+          cmake -B build-sim -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-sim
+
       - name: Generate Xcode project
         working-directory: shell_ios
         run: xcodegen generate
+
+      - name: Pick a simulator
+        id: sim
+        run: |
+          # Resolved by id rather than by name: device names differ between
+          # Xcode images, and a stale name fails with an unhelpful
+          # "destination not found".
+          xcrun simctl list devices available --json > devices.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          with open("devices.json") as f:
+              data = json.load(f)["devices"]
+          best = None
+          for runtime, devices in data.items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  if not device.get("isAvailable"):
+                      continue
+                  # Prefer an iPad; it is the platform we actually target.
+                  rank = 0 if "iPad" in device["name"] else 1
+                  if best is None or rank < best[0]:
+                      best = (rank, device["udid"], device["name"])
+          if best is None:
+              raise SystemExit("no available iOS simulator")
+          print("udid=" + best[1])
+          print("name=" + best[2])
+          PY
+          echo "Selected simulator: $(grep '^name=' "$GITHUB_OUTPUT" | tail -1)"
+
+      - name: Run tests on the iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project shell_ios/MangaChan.xcodeproj \
+            -scheme MangaChan \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build-tests \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
 
       - name: Build app (unsigned)
         run: |

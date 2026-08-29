@@ -42,8 +42,8 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/Sources/Bridging-Header.h
         HEADER_SEARCH_PATHS:
           - $(SRCROOT)/../core/include
-        LIBRARY_SEARCH_PATHS:
-          - $(SRCROOT)/../build-ios/lib
+        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: $(SRCROOT)/../build-ios/lib
+        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: $(SRCROOT)/../build-sim/lib
         OTHER_LDFLAGS:
           - -lcore
           - -lc++
@@ -83,6 +83,27 @@ targets:
         UIStatusBarHidden: true
         UIRequiresFullScreen: false
 
+  MangaChanTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: MangaChan
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.octolex.mangachan.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/Sources/Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/../core/include
+          - $(SRCROOT)/Sources
+        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: $(SRCROOT)/../build-ios/lib
+        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: $(SRCROOT)/../build-sim/lib
+        OTHER_LDFLAGS:
+          - -lcore
+          - -lc++
+
 # XcodeGen does not create schemes unless asked, and `xcodebuild -scheme`
 # fails without one. Declared explicitly so CI cannot break on this.
 schemes:
@@ -90,6 +111,11 @@ schemes:
     build:
       targets:
         MangaChan: all
+        MangaChanTests: [test]
+    test:
+      config: Debug
+      targets:
+        - MangaChanTests
     run:
       config: Debug
     archive:
