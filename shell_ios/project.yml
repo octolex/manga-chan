@@ -30,6 +30,10 @@ targets:
     sources:
       - path: Sources
 
+    dependencies:
+      - framework: ../build-xc/core.xcframework
+        embed: false
+
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.octolex.mangachan
@@ -42,9 +46,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/Sources/Bridging-Header.h
         HEADER_SEARCH_PATHS:
           - $(SRCROOT)/../core/include
-        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../build-xc/Release$(EFFECTIVE_PLATFORM_NAME)
         OTHER_LDFLAGS:
-          - -lcore
           - -lc++
 
         # Metal: keep fast-math off. A brush engine needs predictable float
@@ -89,6 +91,11 @@ targets:
       - path: Tests
     dependencies:
       - target: MangaChan
+      # Linked directly as well as through the host app: a hosted test bundle
+      # can usually resolve host symbols via BUNDLE_LOADER, but relying on
+      # that produced undefined symbols for every core function.
+      - framework: ../build-xc/core.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.octolex.mangachan.tests
@@ -97,9 +104,7 @@ targets:
         HEADER_SEARCH_PATHS:
           - $(SRCROOT)/../core/include
           - $(SRCROOT)/Sources
-        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../build-xc/Release$(EFFECTIVE_PLATFORM_NAME)
         OTHER_LDFLAGS:
-          - -lcore
           - -lc++
 
 # XcodeGen does not create schemes unless asked, and `xcodebuild -scheme`
