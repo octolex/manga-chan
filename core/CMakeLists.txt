@@ -1,5 +1,6 @@
 add_library(core STATIC
     src/blend.cpp
+    src/brush.cpp
     src/blend_api.cpp
     src/canvas_api.cpp
     src/compositor.cpp
@@ -7,6 +8,7 @@ add_library(core STATIC
     src/tile_codec.cpp
     src/layer.cpp
     src/layer_stack.cpp
+    src/stroke.cpp
     src/tile_spill.cpp
     src/tile_store.cpp
     src/undo.cpp
