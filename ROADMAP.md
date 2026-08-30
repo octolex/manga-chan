@@ -150,15 +150,53 @@ against the CPU reference rather than eyeballed.
 
 ---
 
-## ⬜ M3 — Brush engine
+## 🔨 M3 — Brush engine
 
-Dab stamping, not ribbons. Arc-length resampling already exists from M0.
-Scratch-buffer accumulation already exists from M0. What is missing is
-textured dabs, per-tile culling, and the brush parameter model.
+Dab stamping, not ribbons. Round stroke caps arrive here, because a dab is a
+disc.
 
-Round stroke caps arrive here.
+| | |
+|---|---|
+| ✅ | Brush parameter model: shape, ink, dynamics, jitter, taper, path |
+| ✅ | Stroke path in the engine: smoothing, Catmull-Rom, arc-length dab emission |
+| ✅ | Dynamics: pressure, tilt and velocity onto size and flow |
+| ✅ | Exact per-dab tile capture, replacing per-sample bounding boxes |
+| ✅ | Brush and dabs across the C ABI, zero-copy into a Metal buffer |
+| ✅ | Instanced dab stamping in Metal, procedural shape |
+| ✅ | Maximum and Buildup accumulation as two blend states over one shader |
+| ⬜ | Textured dabs and grain |
+| ⬜ | Colour picker — blocking several kinds of test, not just a feature |
+| ⬜ | Brush editor UI, and a starter set of manga brushes |
+| ⬜ | Per-tile dab culling once the canvas is larger than the screen |
 
----
+**Stroke geometry moved out of Swift and into the engine.** Every bug that has
+reached the device so far lived in the shell, invisible to the C++ suite, and
+stroke geometry is pure arithmetic over plain numbers — there was no reason
+for it to sit anywhere untestable. The Swift side now converts points to
+pixels, forwards samples, and hands the dab array to a Metal buffer.
+
+That move immediately paid for itself. **Curve smoothness used to be an
+eyeball test on the device**; it is now four assertions. A quarter circle
+described by nine samples — what a fast flick actually delivers — must produce
+no turn sharper than 0.05 rad and no dab further than 2 px off the true arc.
+The faceting bug from M0 could not survive that, and neither could a
+regression in it.
+
+**19,631 checks** in the stroke suite alone, on Linux and Windows, in ~40 s.
+
+### Decisions worth revisiting
+
+- **Spacing is a fraction of dab diameter**, not an absolute distance, so a
+  brush keeps its character when resized. Absolute spacing is the classic
+  mistake: it turns a smooth small brush into a dotted line when scaled up.
+- **Jitter is seeded and deterministic.** Undo re-runs a stroke, so jitter that
+  differed between runs would make undo lossy.
+- **Dynamics are named fields rather than a source/target matrix.** A matrix is
+  more expressive on paper but evaluates a loop of mostly-disabled entries per
+  dab and is harder to lay out in a UI, not easier.
+- **The dab shape is procedural.** A textured dab slots into the same place
+  later; a procedural disc has no sampling error at any size, which makes it
+  the right thing to pin the engine against while the geometry is being proven.
 
 ## ⬜ M4 — Input and latency
 

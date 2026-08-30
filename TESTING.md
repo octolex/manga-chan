@@ -23,16 +23,23 @@ Accumulated since the last install. One install should clear all of these.
 | 8 | `dbl-tap` counter | Double-tap the barrel | Increments |
 | 9 | `peak/fr` | Draw a fast stroke | Climbs toward ~4 |
 
-## Pending — drawing quality (finger is fine)
+## Pending — M3, the brush engine (finger is fine)
 
-Never checked on device since the resampling fix landed. Cheap to fold into
-any install.
+The stroke pipeline was replaced wholesale: dabs instead of ribbon quads, and
+the geometry now comes from the engine rather than from Swift. Item 39 first —
+if nothing draws, nothing below it is worth trying.
 
 | # | What | How | Expected |
 |---|---|---|---|
-| 10 | Curve smoothness | Fast loops and spirals | No faceting, no visible rectangles |
-| 11 | Self-crossing | Cross a stroke over itself | Crossing is **not** darker than the rest |
-| 13 | Prediction artefacts | Sharp direction reversals at speed | No stray spur left behind at the turn |
+| 39 | It still draws | Draw anything | A stroke appears. If not, stop and send session.log |
+| 40 | Round caps | Start and stop a stroke cleanly | Ends are **round**, not square |
+| 41 | Curve smoothness | Fast loops and spirals | No faceting, no visible segments |
+| 42 | Self-crossing | Cross a stroke over itself | Crossing is **not** darker than the rest |
+| 43 | Even weight | A long slow stroke | No beading, no dotted or scalloped edge |
+| 44 | Dab cost | Watch `dabs` in the HUD while drawing | Climbs with stroke length; `gpu` stays under budget |
+| 45 | Prediction artefacts | Sharp direction reversals at speed | No stray spur left behind at the turn |
+| 46 | Tile capture | Draw a long diagonal, watch `tiles` and `readback` | Both proportional to the stroke, not to the canvas |
+| 47 | Undo still exact | Draw, undo, redo | The stroke returns **identical** — jitter is seeded |
 
 ## Pending — UI regressions to confirm
 
