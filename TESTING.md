@@ -107,9 +107,12 @@ they lived in the Swift shell rather than the engine:
 5. **The panel rebuilt itself mid-drag.** Every property change fired
    `onLayersChanged`, which destroyed the very slider the user was dragging.
    Opacity moved one step and then stopped.
-6. **Rebuilding lost scroll position.** The panel has two scroll views — the
-   row list and the 26-mode blend list — and a rebuild dropped both back to
-   the top. Fixed one, missed the other, which is why it was reported twice.
+6. **Rebuilding lost scroll position.** Restoring an offset from the parent
+   view reads a `contentSize` of zero: Auto Layout computes it during the
+   scroll view's *own* layout pass, which runs afterwards. The panel survived
+   this by accident — it is laid out repeatedly, so its retry eventually
+   landed — while a row inside a stack view got one pass and no second chance.
+   Both now restore from inside the scroll view.
 
 The engine was correct throughout. Every one of these lived in how the shell
 drove it — layout and view lifecycle, not logic — which is the argument for

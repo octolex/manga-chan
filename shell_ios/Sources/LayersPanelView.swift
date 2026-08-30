@@ -15,6 +15,28 @@
 
 import UIKit
 
+/// A scroll view that can be told where to sit before it knows how tall its
+/// content is.
+///
+/// Auto Layout computes `contentSize` during this view's own layout pass, which
+/// runs *after* its parent's. Restoring the offset from the enclosing row was
+/// therefore reading a `contentSize` of zero and doing nothing — and a row deep
+/// in a stack view may get exactly one layout pass, so there was no second
+/// chance. Applying it here means the size is already real.
+private final class RestorableScrollView: UIScrollView {
+
+    /// Cleared once applied, so the list stays where the user leaves it.
+    var pendingOffset: CGFloat?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let wanted = pendingOffset, contentSize.height > bounds.height else { return }
+        pendingOffset = nil
+        let limit = contentSize.height - bounds.height
+        contentOffset = CGPoint(x: 0, y: max(0, min(wanted, limit)))
+    }
+}
+
 protocol LayersPanelDelegate: AnyObject {
     func layersPanelDidRequestAdd(_ panel: LayersPanelView)
     func layersPanel(_ panel: LayersPanelView, didSelect layer: MCLayerId)
@@ -30,7 +52,7 @@ final class LayersPanelView: UIView {
     private let header = UIView()
     private let titleLabel = UILabel()
     private let addButton = UIButton(type: .system)
-    private let scrollView = UIScrollView()
+    private let scrollView = RestorableScrollView()
     private let stack = UIStackView()
 
     /// Which layer has its detail section open. Only one at a time: two open
@@ -42,11 +64,6 @@ final class LayersPanelView: UIView {
     /// Where the expanded row's blend list was scrolled to, carried across a
     /// rebuild so picking a mode does not jump the list back to the top.
     private var blendScrollOffset: CGFloat?
-
-    /// Where the panel itself was scrolled to. The blend list is not the only
-    /// scroll view in here: with several layers open the panel scrolls too, and
-    /// a rebuild used to drop the whole thing back to the top.
-    private var panelScrollOffset: CGFloat?
 
     // Geometry from the spec, in points.
     private enum Metrics {
@@ -144,21 +161,10 @@ final class LayersPanelView: UIView {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {}
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {}
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        // Applied here rather than at the end of reload: the stack has no
-        // height yet at that point, so the offset would clamp to zero.
-        guard let wanted = panelScrollOffset else { return }
-        let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height)
-        guard maxOffset > 0 || wanted == 0 else { return }
-        panelScrollOffset = nil
-        scrollView.setContentOffset(CGPoint(x: 0, y: min(wanted, maxOffset)), animated: false)
-    }
-
     // MARK: - Population
 
     func reload(from engine: CanvasEngine) {
-        panelScrollOffset = scrollView.contentOffset.y
+        scrollView.pendingOffset = scrollView.contentOffset.y
 
         // Read the scroll position off the outgoing row before it is torn down.
         for row in rows where row.blendScrollOffset != nil {
@@ -407,7 +413,7 @@ private class LayerRowView: UIView {
             modes.addArrangedSubview(button)
         }
 
-        let modeScroll = UIScrollView()
+        let modeScroll = RestorableScrollView()
         modeScroll.addSubview(modes)
         modes.translatesAutoresizingMaskIntoConstraints = false
         modeScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -419,9 +425,10 @@ private class LayerRowView: UIView {
             modes.widthAnchor.constraint(equalTo: modeScroll.widthAnchor),
             modeScroll.heightAnchor.constraint(equalToConstant: 210),
         ])
-        // Open on the current mode rather than at the top, so the selection is
-        // visible without hunting for it.
         selectedModeIndex = Int(properties.blend)
+        // Restore where the list was if we are being rebuilt; otherwise open on
+        // the current mode, so the selection is visible without hunting for it.
+        modeScroll.pendingOffset = initialBlendScroll ?? CGFloat(selectedModeIndex) * 30
         blendScrollView = modeScroll
         detail.addArrangedSubview(modeScroll)
 
@@ -435,23 +442,9 @@ private class LayerRowView: UIView {
         detail.addArrangedSubview(delete)
     }
 
-    private weak var blendScrollView: UIScrollView?
+    private weak var blendScrollView: RestorableScrollView?
     private var selectedModeIndex = 0
     private var initialBlendScroll: CGFloat?
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard let scroll = blendScrollView, !didScrollToSelectedMode,
-              scroll.contentSize.height > scroll.bounds.height else { return }
-        didScrollToSelectedMode = true
-        // Restore where the list was if we are being rebuilt; otherwise open
-        // on the current mode so the selection is visible without hunting.
-        let wanted = initialBlendScroll ?? CGFloat(selectedModeIndex) * 30
-        let target = min(wanted, scroll.contentSize.height - scroll.bounds.height)
-        scroll.setContentOffset(CGPoint(x: 0, y: max(0, target)), animated: false)
-    }
-
-    private var didScrollToSelectedMode = false
 
     private weak var percentLabel: UILabel?
 
