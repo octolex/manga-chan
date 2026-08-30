@@ -1,6 +1,7 @@
 add_library(core STATIC
     src/blend.cpp
     src/brush.cpp
+    src/brush_api.cpp
     src/blend_api.cpp
     src/canvas_api.cpp
     src/compositor.cpp

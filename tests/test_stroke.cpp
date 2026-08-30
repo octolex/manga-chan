@@ -377,8 +377,7 @@ void testAngleFollowsDirection() {
 }
 
 void testATapStillLeavesAMark() {
-    std::printf("a single sample still puts ink down
-");
+    std::printf("a single sample still puts ink down\n");
 
     Brush brush = inkPen();
     StrokePath path(brush);
