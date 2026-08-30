@@ -23,51 +23,23 @@ Accumulated since the last install. One install should clear all of these.
 | 8 | `dbl-tap` counter | Double-tap the barrel | Increments |
 | 9 | `peak/fr` | Draw a fast stroke | Climbs toward ~4 |
 
-## Pending — engine integration (finger is fine)
+## Pending — drawing quality (finger is fine)
 
-| # | What | How | Expected |
-|---|---|---|---|
-| 14 | Undo | Two-finger tap after a stroke | Last stroke disappears |
-| 15 | Redo | Three-finger tap after undoing | Stroke comes back |
-| 16 | Deep undo | Draw 10 strokes, undo all 10 | Unwinds one stroke at a time, in order |
-| 17 | Clear is undoable | Four-finger tap, then two-finger tap | Drawing comes back |
-| 18 | Tile accounting | Watch `tiles` while drawing | Climbs as you cover more canvas |
-| 19 | History cost | Watch `history` after 10 strokes | Shows steps and retained tiles |
-| 20 | Capture cost | Watch `capture` at stroke end | Should be a couple of ms, not tens |
-| 21 | Rotation | Draw, then rotate the iPad | Drawing survives, repainted from tiles |
-| 22 | Paging | Draw across the whole screen | `zip`/`disk` counts become non-zero |
-
-## Pending — M2, layers and compositing (finger is fine)
-
-The renderer was rewritten around the layer stack, so this batch is the
-highest-risk one so far. Item 23 first: if the canvas does not draw at all,
-nothing below it is worth trying.
-
-| # | What | How | Expected |
-|---|---|---|---|
-| 23 | It still draws | Draw anything | A stroke appears. If not, stop and send session.log |
-| 24 | Panel opens | Tap the layers button, top right | Panel lists "Layer 1" and a pinned Background row |
-| 25 | Add a layer | Tap + | New layer appears above, selected and highlighted |
-| 26 | Layers are independent | Draw, add a layer, draw again, hide the top one | Only the second stroke disappears |
-| 27 | Selection routes strokes | Select the lower layer, draw | Ink lands on that layer, under the top one |
-| 28 | Opacity | Open a layer, drag the slider | That layer fades live |
-| 29 | Blend modes | Set a layer to Multiply over a coloured one | Darkens where they overlap |
-| 30 | Clipping mask | Draw shapes, add a layer above, tap Clipping mask, paint | Paint only appears over the layer below |
-| 31 | Blend button affordance | Press and hold it | Dims while held, caret shows it expands |
-| 32 | Delete | Open a layer, Delete layer | Gone. The last remaining layer refuses to delete |
-| 33 | Cache counters | Watch "cache" in the HUD while drawing a long stroke | **Must not climb.** If it does, the optimisation is off |
-| 34 | Live layer count | Watch "layers N (M live)" | M is 1 normally, more with clipping |
-| 35 | Undo across layers | Draw on two layers, undo repeatedly | Unwinds in order across both |
-| 36 | Panel does not leak touches | Draw a stroke starting on top of the panel | Nothing is drawn underneath it |
-
-## Pending — testable with a finger
+Never checked on device since the resampling fix landed. Cheap to fold into
+any install.
 
 | # | What | How | Expected |
 |---|---|---|---|
 | 10 | Curve smoothness | Fast loops and spirals | No faceting, no visible rectangles |
 | 11 | Self-crossing | Cross a stroke over itself | Crossing is **not** darker than the rest |
-| 12 | Clear | Two-finger tap | Canvas goes white |
 | 13 | Prediction artefacts | Sharp direction reversals at speed | No stray spur left behind at the turn |
+
+## Pending — UI regressions to confirm
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 37 | Panel scroll survives a rebuild | Scroll the layer list down, pick a blend mode | The **layer list** stays where it was |
+| 38 | Blend list scroll survives a rebuild | Scroll the 26-mode list down, pick a mode | The **mode list** stays where it was |
 
 ## Known and deliberate
 
@@ -75,9 +47,11 @@ Not bugs; do not report these until the milestone that addresses them.
 
 - **Square stroke ends.** Round caps arrive with dab stamping at M3.
 - **No texture.** There is no brush engine yet — strokes are smooth geometry.
-- **Canvas is screen-sized and lost on rotate.** The real tiled canvas is M1;
-  the renderer has not been connected to it yet.
-- **No undo.** M1.
+- **Only black.** There is no colour picker yet. It arrives with the brush
+  engine at M3, and until then it limits what any blend-mode test can show.
+- **Canvas is screen-sized.** Pan, zoom and a canvas larger than the screen
+  come with the per-tile render restructure — see the re-scoped item in
+  ROADMAP.md.
 
 ## Verified
 
@@ -106,6 +80,13 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-08-29 | Block A: draws, panel opens, panel does not leak touches | Pass after 1 fix |
 | 2026-08-29 | Block B: add, select-routes-strokes, visibility, delete | Pass after 1 fix |
 | 2026-08-29 | Last-layer delete guard | Correctly refused |
+| 2026-08-30 | Block C: opacity slider survives its own drag | Pass after 1 fix |
+| 2026-08-30 | Block C: blend modes, clipping mask, blend button affordance | Pass |
+| 2026-08-30 | Cache rebuilds bump once per selection change, never while painting | Pass |
+| 2026-08-30 | Frame cost unchanged from 5 to 10 layers | Pass |
+| 2026-08-30 | Live layer count: 1 normally, 2 with a clipped layer | Pass, 10 layers (2 live) |
+| 2026-08-30 | Undo and redo across layers, targeting the owning layer | Pass |
+| 2026-08-30 | Undo across a deleted layer, repeated undo/redo | Pass, no crash |
 
 Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:
@@ -123,7 +104,15 @@ they lived in the Swift shell rather than the engine:
 4. **The layer detail section overlapped itself.** Buttons without explicit
    heights let UIStackView compress them, and 26 inline blend modes made the
    section taller than the screen. Delete was unreachable.
+5. **The panel rebuilt itself mid-drag.** Every property change fired
+   `onLayersChanged`, which destroyed the very slider the user was dragging.
+   Opacity moved one step and then stopped.
+6. **Rebuilding lost scroll position.** The panel has two scroll views — the
+   row list and the 26-mode blend list — and a rebuild dropped both back to
+   the top. Fixed one, missed the other, which is why it was reported twice.
 
-The engine was correct throughout. Both bugs were in how the shell drove it,
-which is an argument for pushing more of this logic behind the C ABI where CI
-can reach it.
+The engine was correct throughout. Every one of these lived in how the shell
+drove it — layout and view lifecycle, not logic — which is the argument for
+pushing more behind the C ABI where CI can reach it. Note the shape they share:
+none are arithmetic, all are UIKit rebuilding or sizing something at the wrong
+moment.

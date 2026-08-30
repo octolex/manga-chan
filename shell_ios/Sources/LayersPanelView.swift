@@ -43,6 +43,11 @@ final class LayersPanelView: UIView {
     /// rebuild so picking a mode does not jump the list back to the top.
     private var blendScrollOffset: CGFloat?
 
+    /// Where the panel itself was scrolled to. The blend list is not the only
+    /// scroll view in here: with several layers open the panel scrolls too, and
+    /// a rebuild used to drop the whole thing back to the top.
+    private var panelScrollOffset: CGFloat?
+
     // Geometry from the spec, in points.
     private enum Metrics {
         static let width: CGFloat = 330
@@ -139,9 +144,22 @@ final class LayersPanelView: UIView {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {}
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {}
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Applied here rather than at the end of reload: the stack has no
+        // height yet at that point, so the offset would clamp to zero.
+        guard let wanted = panelScrollOffset else { return }
+        let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+        guard maxOffset > 0 || wanted == 0 else { return }
+        panelScrollOffset = nil
+        scrollView.setContentOffset(CGPoint(x: 0, y: min(wanted, maxOffset)), animated: false)
+    }
+
     // MARK: - Population
 
     func reload(from engine: CanvasEngine) {
+        panelScrollOffset = scrollView.contentOffset.y
+
         // Read the scroll position off the outgoing row before it is torn down.
         for row in rows where row.blendScrollOffset != nil {
             blendScrollOffset = row.blendScrollOffset

@@ -73,7 +73,7 @@ memory it is free.
 
 ---
 
-## 🔨 M2 — Compositor
+## ✅ M2 — Compositor
 
 `under_cache + active_layer + over_cache` at view resolution over the visible
 region only. This is the largest single source of Procreate's perceived
@@ -118,6 +118,18 @@ full-canvas commit is already very low.
 **200 layers, 1 live per frame, 0 cache rebuilds over 100 painted frames.**
 That is the claim the whole milestone rests on: a deep document costs what a
 shallow one costs while the pen is down.
+
+**Verified on device, 2026-08-30.** Cache rebuilds tick up once when the
+selection moves — correct, since that changes which layers sit above and
+below — and then stay frozen for every stroke afterwards. Painting cannot
+dirty either cache, because the active layer is not part of either signature.
+Frame cost was unchanged going from five layers to ten. Live layer count read
+1 normally and 2 with a layer clipped to the active one, which is the clip
+group refusing to be pre-flattened, exactly as designed.
+
+Undo and redo were confirmed to target the layer that *owns* the edit rather
+than whichever is selected, including undoing across a layer that was then
+deleted — the case the stable `LayerId` design exists for.
 
 All 26 blend shaders are checked against the CPU implementation on every
 push: 26 modes x 64 colour pairs x 2 opacities, worst channel difference **1**
