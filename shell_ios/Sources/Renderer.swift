@@ -36,7 +36,8 @@ struct FrameStats {
     var frameIndex: UInt64 = 0
     var drawableSize: CGSize = .zero
     var samplesThisFrame: Int = 0
-    var strokeVerticesThisFrame: Int = 0
+    /// Dabs stamped this frame, prediction included.
+    var dabsThisFrame: Int = 0
 
     // Engine-side memory, mirrored into the HUD because we have no Instruments.
     var liveTiles: UInt64 = 0
@@ -86,7 +87,14 @@ final class Renderer: NSObject {
 
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
-    private let coveragePipeline: MTLRenderPipelineState
+    /// Two pipelines over one shader, differing only in blend state.
+    ///
+    /// Maximum keeps the greater coverage, so a stroke never darkens where it
+    /// crosses itself — what an inking pen wants. Buildup alpha-composites, so
+    /// slow dense passes go darker than fast ones — what an airbrush wants.
+    /// The choice belongs to the brush, so both are built up front.
+    private let dabMaximumPipeline: MTLRenderPipelineState
+    private let dabBuildupPipeline: MTLRenderPipelineState
     private let layer: CAMetalLayer
     private let engine: CanvasEngine
     private let compositor: LayerCompositor
@@ -98,10 +106,10 @@ final class Renderer: NSObject {
     /// until commit.
     private var scratchTexture: MTLTexture?
 
-    private var strokeVertices: [MSStrokeVertex] = []
-    private var predictionVertices: [MSStrokeVertex] = []
+    private var stroke: BrushStroke?
+    private var prediction: BrushStroke?
     private var strokeBuffer: MTLBuffer?
-    private var strokeBufferDirty = false
+    private var strokeBufferCapacity = 0
     private var strokeActive = false
     private var pendingCommit = false
     private var pendingTiles: [EngineTile] = []
@@ -149,18 +157,25 @@ final class Renderer: NSObject {
         // latency, which is the wrong trade for a drawing app.
         layer.maximumDrawableCount = 2
 
-        // Coverage accumulates with MAX. Metal ignores blend factors entirely
-        // for min/max, so the destination simply keeps the greater value.
-        let coverage = MTLRenderPipelineDescriptor()
-        coverage.label = "Stroke coverage"
-        coverage.vertexFunction = try function("stroke_vertex")
-        coverage.fragmentFunction = try function("stroke_coverage_fragment")
-        let attachment = coverage.colorAttachments[0]!
-        attachment.pixelFormat = Self.coverageFormat
-        attachment.isBlendingEnabled = true
-        attachment.rgbBlendOperation = .max
-        attachment.alphaBlendOperation = .max
-        self.coveragePipeline = try device.makeRenderPipelineState(descriptor: coverage)
+        let dabs = MTLRenderPipelineDescriptor()
+        dabs.label = "Dab coverage (max)"
+        dabs.vertexFunction = try function("dab_vertex")
+        dabs.fragmentFunction = try function("dab_coverage_fragment")
+        let dabAttachment = dabs.colorAttachments[0]!
+        dabAttachment.pixelFormat = Self.coverageFormat
+        dabAttachment.isBlendingEnabled = true
+        dabAttachment.rgbBlendOperation = .max
+        dabAttachment.alphaBlendOperation = .max
+        self.dabMaximumPipeline = try device.makeRenderPipelineState(descriptor: dabs)
+
+        dabs.label = "Dab coverage (buildup)"
+        dabAttachment.rgbBlendOperation = .add
+        dabAttachment.alphaBlendOperation = .add
+        dabAttachment.sourceRGBBlendFactor = .one
+        dabAttachment.sourceAlphaBlendFactor = .one
+        dabAttachment.destinationRGBBlendFactor = .oneMinusSourceColor
+        dabAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        self.dabBuildupPipeline = try device.makeRenderPipelineState(descriptor: dabs)
 
         do {
             self.compositor = try LayerCompositor(device: device, library: library,
@@ -188,15 +203,18 @@ final class Renderer: NSObject {
 
     // MARK: - Stroke input
 
-    func setStrokeGeometry(_ vertices: [MSStrokeVertex], sampleCount: Int) {
-        strokeVertices = vertices
-        strokeBufferDirty = true
-        strokeActive = true
+    /// The brush the next stroke will use. A value, so changing it mid-stroke
+    /// cannot alter a stroke already in progress.
+    var brush: MCBrush = mc_brush_ink_pen()
+
+    func setStroke(_ stroke: BrushStroke?, sampleCount: Int) {
+        self.stroke = stroke
+        strokeActive = stroke != nil
         samplesThisFrame += sampleCount
     }
 
-    func setPredictionGeometry(_ vertices: [MSStrokeVertex]) {
-        predictionVertices = vertices
+    func setPrediction(_ prediction: BrushStroke?) {
+        self.prediction = prediction
     }
 
     var engineTileSize: Int { engine.tileSize }
@@ -205,7 +223,7 @@ final class Renderer: NSObject {
     /// the tiles it touched to the engine.
     func endStroke(tiles: Set<EngineTile>) {
         guard strokeActive else { return }
-        predictionVertices.removeAll(keepingCapacity: true)
+        prediction = nil
         pendingTiles = Array(tiles)
         pendingCommit = true
     }
@@ -215,11 +233,9 @@ final class Renderer: NSObject {
     /// while a stroke is active.
     func abortStroke() {
         guard strokeActive || pendingCommit else { return }
-        strokeVertices.removeAll(keepingCapacity: true)
-        predictionVertices.removeAll(keepingCapacity: true)
+        stroke = nil
+        prediction = nil
         pendingTiles.removeAll(keepingCapacity: true)
-        strokeBuffer = nil
-        strokeBufferDirty = false
         strokeActive = false
         pendingCommit = false
     }
@@ -351,21 +367,40 @@ final class Renderer: NSObject {
         Diagnostics.log("textures \(width)×\(height)")
     }
 
-    private func strokeVertexBuffer() -> MTLBuffer? {
-        guard !strokeVertices.isEmpty else { return nil }
-        if strokeBufferDirty || strokeBuffer == nil {
-            let length = MemoryLayout<MSStrokeVertex>.stride * strokeVertices.count
-            strokeBuffer = device.makeBuffer(bytes: strokeVertices, length: length,
+    /// Uploads the dab array, growing the buffer geometrically.
+    ///
+    /// The engine appends dabs and never revises them, so the buffer only ever
+    /// grows within a stroke. Reallocating on every touch event would be the
+    /// obvious way to write this and would allocate hundreds of times per
+    /// stroke; doubling means a handful of allocations for the longest stroke
+    /// an artist can draw.
+    private func dabBuffer(for stroke: BrushStroke) -> MTLBuffer? {
+        let count = stroke.dabCount
+        guard count > 0, let dabs = stroke.dabs else { return nil }
+
+        let stride = MemoryLayout<MSDab>.stride
+        if strokeBuffer == nil || strokeBufferCapacity < count {
+            var capacity = max(1024, strokeBufferCapacity)
+            while capacity < count { capacity *= 2 }
+            strokeBuffer = device.makeBuffer(length: stride * capacity,
                                              options: .storageModeShared)
-            strokeBuffer?.label = "Stroke vertices"
-            strokeBufferDirty = false
+            strokeBuffer?.label = "Dabs"
+            strokeBufferCapacity = capacity
         }
-        return strokeBuffer
+        guard let buffer = strokeBuffer else { return nil }
+
+        // Copied wholesale rather than only the new tail. The tail is what
+        // changes, but a stroke is at most a few hundred KB and the copy is
+        // one memcpy against a per-frame GPU cost measured in milliseconds —
+        // tracking a dirty range here would buy nothing measurable and would
+        // be one more thing to get wrong.
+        buffer.contents().copyMemory(from: dabs, byteCount: stride * count)
+        return buffer
     }
 
     private func encodeCoverage(in commandBuffer: MTLCommandBuffer,
                                 includePrediction: Bool) {
-        guard let scratch = scratchTexture else { return }
+        guard let scratch = scratchTexture, let stroke else { return }
 
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = scratch
@@ -374,22 +409,37 @@ final class Renderer: NSObject {
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
-        encoder.label = "Stroke coverage"
-        encoder.setRenderPipelineState(coveragePipeline)
+        encoder.label = "Dab coverage"
+        encoder.setRenderPipelineState(
+            brush.accumulation == MC_ACCUMULATION_BUILDUP.rawValue
+                ? dabBuildupPipeline : dabMaximumPipeline)
 
-        if let buffer = strokeVertexBuffer() {
-            encoder.setVertexBuffer(buffer, offset: 0, index: Int(MSBufferIndexVertices.rawValue))
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: strokeVertices.count)
+        var uniforms = MSDabUniforms(
+            viewportSize: simd_float2(Float(scratch.width), Float(scratch.height)))
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
+                               index: Int(MSBufferIndexUniforms.rawValue))
+
+        func draw(_ buffer: MTLBuffer?, count: Int) {
+            guard let buffer, count > 0 else { return }
+            encoder.setVertexBuffer(buffer, offset: 0,
+                                    index: Int(MSBufferIndexVertices.rawValue))
+            // Six vertices per dab, one instance per dab.
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6,
+                                   instanceCount: count)
         }
 
-        if includePrediction, !predictionVertices.isEmpty {
-            let length = MemoryLayout<MSStrokeVertex>.stride * predictionVertices.count
-            if let buffer = device.makeBuffer(bytes: predictionVertices, length: length,
-                                              options: .storageModeShared) {
-                encoder.setVertexBuffer(buffer, offset: 0, index: Int(MSBufferIndexVertices.rawValue))
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0,
-                                       vertexCount: predictionVertices.count)
-            }
+        draw(dabBuffer(for: stroke), count: stroke.dabCount)
+
+        // The prediction gets its own buffer rather than reusing the stroke's.
+        // Both draws are only *encoded* here and execute later, so writing the
+        // prediction over the stroke's bytes would corrupt geometry the GPU
+        // has not read yet.
+        if includePrediction, let prediction, let dabs = prediction.dabs {
+            let length = MemoryLayout<MSDab>.stride * prediction.dabCount
+            let buffer = device.makeBuffer(bytes: dabs, length: length,
+                                           options: .storageModeShared)
+            buffer?.label = "Predicted dabs"
+            draw(buffer, count: prediction.dabCount)
         }
         encoder.endEncoding()
     }
@@ -401,7 +451,7 @@ final class Renderer: NSObject {
         guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
         commandBuffer.label = "Frame \(stats.frameIndex)"
 
-        let vertexCount = strokeVertices.count + predictionVertices.count
+        let dabCount = (stroke?.dabCount ?? 0) + (prediction?.dabCount ?? 0)
         let committing = pendingCommit
         let activeLayer = engine.activeLayer
 
@@ -456,24 +506,22 @@ final class Renderer: NSObject {
             stats.gpuWaitMs = (readStarted - waitStarted) * 1000.0
             stats.lastCaptureMs = (CACurrentMediaTime() - readStarted) * 1000.0
 
-            strokeVertices.removeAll(keepingCapacity: true)
-            predictionVertices.removeAll(keepingCapacity: true)
+            stroke = nil
+            prediction = nil
             pendingTiles.removeAll(keepingCapacity: true)
-            strokeBuffer = nil
-            strokeBufferDirty = false
             strokeActive = false
             pendingCommit = false
         }
 
         let cpuMs = (CACurrentMediaTime() - cpuStart) * 1000.0
         recordFrame(cpuMs: cpuMs, targetTimestamp: targetTimestamp,
-                    vertexCount: vertexCount, plan: plan)
+                    dabCount: dabCount, plan: plan)
     }
 
     // MARK: - Statistics
 
     private func recordFrame(cpuMs: Double, targetTimestamp: CFTimeInterval,
-                             vertexCount: Int, plan: CompositePlanSnapshot) {
+                             dabCount: Int, plan: CompositePlanSnapshot) {
         stats.frameIndex &+= 1
 
         if lastFrameTimestamp > 0 {
@@ -490,7 +538,7 @@ final class Renderer: NSObject {
         stats.cpuFrameMs = smoothedCPUMs
         stats.gpuFrameMs = smoothedGPUMs
         stats.samplesThisFrame = samplesThisFrame
-        stats.strokeVerticesThisFrame = vertexCount
+        stats.dabsThisFrame = dabCount
         stats.layerCount = plan.layerCount
         stats.liveLayerCount = plan.live.count
 

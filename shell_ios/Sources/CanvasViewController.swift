@@ -33,7 +33,12 @@ final class CanvasViewController: UIViewController {
     private var activeTouch: UITouch?
 
     /// Accumulates the stroke in progress. Nil when nothing is being drawn.
-    private var strokeBuilder: StrokeBuilder?
+    private var stroke: BrushStroke?
+
+    /// Seeds the jitter for the next stroke. Incremented rather than taken
+    /// from the clock so a session replays identically, and so that two
+    /// strokes in a row never land on the same random sequence.
+    private var strokeSeed: UInt64 = 1
 
     private var inputStats = InputStats()
     private let layersPanel = LayersPanelView()
@@ -285,38 +290,44 @@ final class CanvasViewController: UIViewController {
         }
 
         activeTouch = touch
-        let builder = StrokeBuilder(viewSize: view.bounds.size,
-                                    color: renderer?.inkColor ?? .init(0, 0, 0, 1),
-                                    pixelScale: view.window?.screen.nativeScale ?? UIScreen.main.nativeScale,
-                                    tileSizeInPixels: renderer?.engineTileSize ?? 256)
-        builder.append([strokePoint(from: touch)])
-        strokeBuilder = builder
+        strokeSeed &+= 1
+        let path = BrushStroke(brush: renderer?.brush ?? mc_brush_ink_pen(),
+                               pixelScale: pixelScale,
+                               seed: strokeSeed)
+        path.append([strokePoint(from: touch)])
+        stroke = path
+    }
+
+    /// Points to pixels. Touches arrive in view points; the engine and the dab
+    /// shader both work in canvas pixels.
+    private var pixelScale: CGFloat {
+        view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesMoved(touches, with: event)
         guard let active = activeTouch, touches.contains(active),
-              let builder = strokeBuilder else { return }
+              let stroke else { return }
 
         // coalescedTouches carries every sample the digitiser captured since
         // the last event, not just the newest one. Using active.location alone
         // would discard most of a fast stroke.
         let coalesced = event?.coalescedTouches(for: active) ?? [active]
-        builder.append(coalesced.map(strokePoint(from:)))
-        renderer?.setStrokeGeometry(builder.vertices, sampleCount: coalesced.count)
+        stroke.append(coalesced.map(strokePoint(from:)))
+        renderer?.setStroke(stroke, sampleCount: coalesced.count)
         recordInput(from: active, samplesThisEvent: coalesced.count)
 
         // Predictions extend from the newest real sample. They are drawn but
         // never committed — see the note in Renderer.
         let predicted = event?.predictedTouches(for: active) ?? []
-        if let seed = builder.lastRawPoint, !predicted.isEmpty {
-            let lookahead = [seed] + predicted.map(strokePoint(from:))
-            renderer?.setPredictionGeometry(
-                StrokeGeometry.simpleRibbon(points: lookahead,
-                                            viewSize: view.bounds.size,
-                                            color: renderer?.inkColor ?? .init(0, 0, 0, 1)))
+        if let seed = stroke.lastPoint, !predicted.isEmpty {
+            renderer?.setPrediction(
+                BrushStroke.prediction(brush: renderer?.brush ?? mc_brush_ink_pen(),
+                                       pixelScale: pixelScale,
+                                       from: seed,
+                                       through: predicted.map(strokePoint(from:))))
         } else {
-            renderer?.setPredictionGeometry([])
+            renderer?.setPrediction(nil)
         }
     }
 
@@ -336,35 +347,36 @@ final class CanvasViewController: UIViewController {
 
     private func cancelStroke() {
         activeTouch = nil
-        strokeBuilder = nil
+        stroke = nil
         renderer?.abortStroke()
     }
 
     private func finishStroke(_ touch: UITouch, event: UIEvent?) {
         defer {
             activeTouch = nil
-            strokeBuilder = nil
+            stroke = nil
         }
-        guard let builder = strokeBuilder else { return }
+        guard let stroke else { return }
 
         let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
-        builder.append(coalesced.map(strokePoint(from:)))
+        stroke.append(coalesced.map(strokePoint(from:)))
         // Flush the trailing segments that were still waiting on a lookahead
-        // sample which will now never arrive.
-        builder.finish()
+        // sample which will now never arrive, and apply the end taper.
+        stroke.finish()
 
-        // A tap produces no geometry. Committing it anyway would record an
-        // undo step for nothing and discard the redo branch.
-        guard !builder.vertices.isEmpty, !builder.touchedTiles.isEmpty else {
+        let tiles = stroke.touchedTiles
+        // A stroke that put nothing down must not be committed: it would
+        // record an undo step for nothing and discard the redo branch.
+        guard !stroke.isEmpty, !tiles.isEmpty else {
             renderer?.abortStroke()
             return
         }
 
-        renderer?.setStrokeGeometry(builder.vertices, sampleCount: coalesced.count)
+        renderer?.setStroke(stroke, sampleCount: coalesced.count)
         // Dropping the prediction here matters: leaving it up would commit a
         // stub of line extending past where the stroke actually stopped.
-        renderer?.setPredictionGeometry([])
-        renderer?.endStroke(tiles: builder.touchedTiles)
+        renderer?.setPrediction(nil)
+        renderer?.endStroke(tiles: tiles)
     }
 
     // MARK: - Lifecycle

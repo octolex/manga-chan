@@ -17,15 +17,24 @@ typedef struct {
     simd_float4 color;     // premultiplied RGBA
 } MSVertex;
 
-// No explicit padding field: simd_float4 forces 16-byte alignment, so both the
-// C and MSL compilers independently place `color` at offset 16 and size the
-// struct at 32 bytes. Spelling the padding out would only add an awkward
-// initialiser parameter on the Swift side.
+// One stamp of the brush shape. Must stay byte-identical to MCDab in
+// core/brush_api.h and to mc::Dab, because the engine's dab array is handed
+// straight to a Metal buffer with no copy or conversion. brush_api.cpp holds
+// static assertions pinning the C and C++ sides together; this comment is the
+// third corner of that triangle.
 typedef struct {
-    simd_float2 position;  // clip space, -1...1
-    float       edge;      // -1...+1 across the ribbon width; used for edge antialiasing
-    simd_float4 color;     // premultiplied RGBA
-} MSStrokeVertex;
+    float x;
+    float y;
+    float radius;
+    float angle;
+    float flow;
+    float roundness;
+    float hardness;
+} MSDab;
+
+typedef struct {
+    simd_float2 viewportSize;  // drawable size in pixels
+} MSDabUniforms;
 
 typedef struct {
     int32_t mode;         // matches mc::BlendMode in core/blend.h

@@ -108,7 +108,7 @@ final class HUDView: UIView {
             // sampling this should sit near 4 while drawing; a persistent 1
             // means coalesced touches are not being consumed.
             lines.append(String(format: "samples  %6d", latest.samplesThisFrame))
-            lines.append(String(format: "verts    %6d", latest.strokeVerticesThisFrame))
+            lines.append(String(format: "dabs     %6d", latest.dabsThisFrame))
             lines.append(String(format: "peak/fr  %6d", input.peakSamplesPerFrame))
             lines.append(String(format: "drawable %.0f×%.0f",
                                 latest.drawableSize.width, latest.drawableSize.height))
