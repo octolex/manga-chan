@@ -95,6 +95,7 @@ final class Renderer: NSObject {
     /// The choice belongs to the brush, so both are built up front.
     private let dabMaximumPipeline: MTLRenderPipelineState
     private let dabBuildupPipeline: MTLRenderPipelineState
+    private let predictionPipeline: MTLRenderPipelineState
     private let layer: CAMetalLayer
     private let engine: CanvasEngine
     private let compositor: LayerCompositor
@@ -111,6 +112,18 @@ final class Renderer: NSObject {
     private var strokeBuffer: MTLBuffer?
     private var strokeBufferCapacity = 0
     private var strokeActive = false
+
+    /// Dabs already stamped into the coverage texture.
+    ///
+    /// Coverage accumulates across frames rather than being rebuilt from the
+    /// whole stroke each time. Redrawing every dab per frame makes the frame
+    /// cost grow with stroke length, which is exactly backwards: a long stroke
+    /// is when the artist can least afford a dropped frame. Both accumulation
+    /// modes are safe to build up incrementally — max is idempotent, and
+    /// alpha-over is correct as long as each dab is drawn exactly once, which
+    /// is what this counter guarantees.
+    private var stampedDabs = 0
+    private var coverageNeedsClear = true
     private var pendingCommit = false
     private var pendingTiles: [EngineTile] = []
     private var samplesThisFrame = 0
@@ -177,6 +190,23 @@ final class Renderer: NSObject {
         dabAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         self.dabBuildupPipeline = try device.makeRenderPipelineState(descriptor: dabs)
 
+        // Predicted dabs go straight onto the drawable in ink colour, so this
+        // one composites rather than accumulating coverage.
+        let predicted = MTLRenderPipelineDescriptor()
+        predicted.label = "Predicted dabs"
+        predicted.vertexFunction = try function("dab_vertex")
+        predicted.fragmentFunction = try function("dab_ink_fragment")
+        let predictedAttachment = predicted.colorAttachments[0]!
+        predictedAttachment.pixelFormat = layer.pixelFormat
+        predictedAttachment.isBlendingEnabled = true
+        predictedAttachment.rgbBlendOperation = .add
+        predictedAttachment.alphaBlendOperation = .add
+        predictedAttachment.sourceRGBBlendFactor = .one
+        predictedAttachment.sourceAlphaBlendFactor = .one
+        predictedAttachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        predictedAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        self.predictionPipeline = try device.makeRenderPipelineState(descriptor: predicted)
+
         do {
             self.compositor = try LayerCompositor(device: device, library: library,
                                                   pixelFormat: layer.pixelFormat,
@@ -208,6 +238,10 @@ final class Renderer: NSObject {
     var brush: MCBrush = mc_brush_ink_pen()
 
     func setStroke(_ stroke: BrushStroke?, sampleCount: Int) {
+        if stroke !== self.stroke {
+            stampedDabs = 0
+            coverageNeedsClear = true
+        }
         self.stroke = stroke
         strokeActive = stroke != nil
         samplesThisFrame += sampleCount
@@ -360,6 +394,10 @@ final class Renderer: NSObject {
         descriptor.storageMode = .private   // the CPU never reads coverage
         scratchTexture = device.makeTexture(descriptor: descriptor)
         scratchTexture?.label = "Stroke coverage"
+        // A new texture holds none of the stroke in progress, so whatever has
+        // been stamped so far has to be stamped again.
+        stampedDabs = 0
+        coverageNeedsClear = true
 
         compositor.resize(width: width, height: height)
         // The textures themselves are new, which no content signature can see.
@@ -398,13 +436,18 @@ final class Renderer: NSObject {
         return buffer
     }
 
-    private func encodeCoverage(in commandBuffer: MTLCommandBuffer,
-                                includePrediction: Bool) {
+    private func encodeCoverage(in commandBuffer: MTLCommandBuffer) {
         guard let scratch = scratchTexture, let stroke else { return }
+
+        let count = stroke.dabCount
+        // Nothing new and nothing to clear: the texture already holds the
+        // right image, so the whole pass can be skipped. A stroke held still
+        // costs no GPU time at all.
+        guard coverageNeedsClear || count > stampedDabs else { return }
 
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = scratch
-        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].loadAction = coverageNeedsClear ? .clear : .load
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
 
@@ -419,27 +462,55 @@ final class Renderer: NSObject {
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
                                index: Int(MSBufferIndexUniforms.rawValue))
 
-        func draw(_ buffer: MTLBuffer?, count: Int) {
-            guard let buffer, count > 0 else { return }
+        let first = coverageNeedsClear ? 0 : stampedDabs
+        if count > first, let buffer = dabBuffer(for: stroke) {
             encoder.setVertexBuffer(buffer, offset: 0,
                                     index: Int(MSBufferIndexVertices.rawValue))
-            // Six vertices per dab, one instance per dab.
+            // Six vertices per dab, one instance per dab, starting from the
+            // first dab this frame has not already stamped.
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6,
-                                   instanceCount: count)
+                                   instanceCount: count - first, baseInstance: first)
         }
+        encoder.endEncoding()
 
-        draw(dabBuffer(for: stroke), count: stroke.dabCount)
+        stampedDabs = count
+        coverageNeedsClear = false
+    }
 
-        // The prediction gets its own buffer rather than reusing the stroke's.
-        // Both draws are only *encoded* here and execute later, so writing the
-        // prediction over the stroke's bytes would corrupt geometry the GPU
-        // has not read yet.
-        if includePrediction, let prediction, let dabs = prediction.dabs {
-            let length = MemoryLayout<MSDab>.stride * prediction.dabCount
-            let buffer = device.makeBuffer(bytes: dabs, length: length,
-                                           options: .storageModeShared)
-            buffer?.label = "Predicted dabs"
-            draw(buffer, count: prediction.dabCount)
+    /// Draws the predicted tail straight onto the drawable, after compositing.
+    ///
+    /// Not into the coverage texture, because coverage is now accumulated and a
+    /// guess must not survive into the next frame — it would be baked into the
+    /// stroke and then committed. Painting it over the finished frame instead
+    /// costs one small pass and disappears on its own.
+    private func encodePrediction(onto target: MTLTexture,
+                                  in commandBuffer: MTLCommandBuffer) {
+        guard let prediction, let dabs = prediction.dabs, prediction.dabCount > 0 else { return }
+
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        pass.colorAttachments[0].loadAction = .load
+        pass.colorAttachments[0].storeAction = .store
+
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        encoder.label = "Predicted dabs"
+        encoder.setRenderPipelineState(predictionPipeline)
+
+        var uniforms = MSDabUniforms(
+            viewportSize: simd_float2(Float(target.width), Float(target.height)))
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
+                               index: Int(MSBufferIndexUniforms.rawValue))
+
+        let length = MemoryLayout<MSDab>.stride * prediction.dabCount
+        if let buffer = device.makeBuffer(bytes: dabs, length: length,
+                                          options: .storageModeShared) {
+            buffer.label = "Predicted dabs"
+            encoder.setVertexBuffer(buffer, offset: 0,
+                                    index: Int(MSBufferIndexVertices.rawValue))
+            var ink = inkColor
+            encoder.setFragmentBytes(&ink, length: MemoryLayout<simd_float4>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6,
+                                   instanceCount: prediction.dabCount)
         }
         encoder.endEncoding()
     }
@@ -455,10 +526,8 @@ final class Renderer: NSObject {
         let committing = pendingCommit
         let activeLayer = engine.activeLayer
 
-        // On the committing frame prediction is excluded, so a guess can never
-        // be flattened into a layer.
         if strokeActive {
-            encodeCoverage(in: commandBuffer, includePrediction: !committing)
+            encodeCoverage(in: commandBuffer)
         }
 
         if committing, let coverage = scratchTexture {
@@ -478,6 +547,12 @@ final class Renderer: NSObject {
         compositor.present(into: drawable.texture, plan: plan, engine: engine,
                            strokeCoverage: (strokeActive && !committing) ? scratchTexture : nil,
                            inkColor: inkColor, commandBuffer: commandBuffer)
+
+        // Excluded on the committing frame, so a guess can never be flattened
+        // into a layer.
+        if strokeActive && !committing {
+            encodePrediction(onto: drawable.texture, in: commandBuffer)
+        }
 
         commandBuffer.addCompletedHandler { [weak self] buffer in
             let gpuMs = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000.0

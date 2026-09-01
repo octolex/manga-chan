@@ -94,6 +94,23 @@ fragment float4 dab_coverage_fragment(DabRasterData in [[stage_in]])
     return float4(coverage * in.flow, 0.0, 0.0, 0.0);
 }
 
+/// Predicted dabs, painted straight onto the finished frame in ink colour.
+///
+/// A prediction must not survive into the next frame — coverage is accumulated
+/// now, so a guess stamped there would be baked into the stroke and committed.
+/// Painting over the composited frame instead means it disappears on its own.
+fragment float4 dab_ink_fragment(DabRasterData in [[stage_in]],
+                                 constant float4 &inkColor [[buffer(0)]])
+{
+    float d = length(in.local);
+    float w = max(fwidth(d), 1e-4);
+    float inner = min(in.hardness, 1.0 - w);
+    float coverage = (1.0 - smoothstep(inner, 1.0, d)) * in.flow;
+
+    float alpha = inkColor.a * coverage;
+    return float4(inkColor.rgb * alpha, alpha); // premultiplied
+}
+
 // MARK: - Fullscreen passes
 
 struct BlitRasterData {
