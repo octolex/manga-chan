@@ -169,6 +169,17 @@ disc.
 | ⬜ | Brush editor UI, and a starter set of manga brushes |
 | ⬜ | Per-tile dab culling once the canvas is larger than the screen |
 
+**Verified on device, 2026-09-01.** Round caps, curve smoothness at speed,
+even weight along a long stroke, and undo returning a stroke identically — the
+last confirming that seeded jitter does what it was designed for. Every Apple
+Pencil Pro channel is live: pressure, tilt, azimuth, roll, hover, squeeze and
+double-tap. Pressure drives width end to end, and `peak/fr` reads 4, which is
+240 Hz sampling landing in a 60 Hz frame exactly as expected.
+
+One hardware fact worth recording: **tilt tops out near 86°, not 90°**, and
+loses both precision and refresh rate as the pencil approaches perpendicular.
+A tilt response must not assume the full range is reachable.
+
 **Stroke geometry moved out of Swift and into the engine.** Every bug that has
 reached the device so far lived in the shell, invisible to the C++ suite, and
 stroke geometry is pure arithmetic over plain numbers — there was no reason
@@ -197,6 +208,10 @@ regression in it.
 - **The dab shape is procedural.** A textured dab slots into the same place
   later; a procedural disc has no sampling error at any size, which makes it
   the right thing to pin the engine against while the geometry is being proven.
+- **The response curve is an exponent, not a spline.** It covers ease-in,
+  linear and ease-out in four bytes with no allocation, and every call site
+  survives the swap. But a brush editor that exposes a curve control needs the
+  spline, so this has to change before that ships rather than after.
 
 ## ⬜ M4 — Input and latency
 

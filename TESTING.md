@@ -7,39 +7,12 @@ installs are batched.
 **The rule:** if it needs the GPU, the Pencil, or the display, it goes on this
 list. Everything else gets a unit test and never touches the iPad.
 
-## Pending — needs a Pencil Pro
-
-Accumulated since the last install. One install should clear all of these.
+## Pending — unverified fix
 
 | # | What | How | Expected |
 |---|---|---|---|
-| 1 | Pressure → width | Draw pressing hard, then light | Line visibly thickens and thins |
-| 2 | `pressure` readout | Watch HUD while pressing | 0.000 → ~1.000 |
-| 3 | `tilt` readout | Hold upright, then angle it | ~90° upright, falls as you tilt |
-| 4 | `azimuth` readout | Swing the pencil around a fixed point | Sweeps 0–360° |
-| 5 | `roll` readout | Twist the barrel | **A number**, not `—`, and it changes |
-| 6 | `hover` readout | Hold just above the glass | A number appears, `—` when far |
-| 7 | `squeeze` counter | Squeeze the barrel | Increments |
-| 8 | `dbl-tap` counter | Double-tap the barrel | Increments |
-| 9 | `peak/fr` | Draw a fast stroke | Climbs toward ~4 |
-
-## Pending — M3, the brush engine (finger is fine)
-
-The stroke pipeline was replaced wholesale: dabs instead of ribbon quads, and
-the geometry now comes from the engine rather than from Swift. Item 39 first —
-if nothing draws, nothing below it is worth trying.
-
-| # | What | How | Expected |
-|---|---|---|---|
-| 39 | It still draws | Draw anything | A stroke appears. If not, stop and send session.log |
-| 40 | Round caps | Start and stop a stroke cleanly | Ends are **round**, not square |
-| 41 | Curve smoothness | Fast loops and spirals | No faceting, no visible segments |
-| 42 | Self-crossing | Cross a stroke over itself | Crossing is **not** darker than the rest |
-| 43 | Even weight | A long slow stroke | No beading, no dotted or scalloped edge |
-| 44 | Dab cost | Watch `dabs` in the HUD while drawing | Climbs with stroke length; `gpu` stays under budget |
-| 45 | Prediction artefacts | Sharp direction reversals at speed | No stray spur left behind at the turn |
-| 46 | Tile capture | Draw a long diagonal, watch `tiles` and `readback` | Both proportional to the stroke, not to the canvas |
-| 47 | Undo still exact | Draw, undo, redo | The stroke returns **identical** — jitter is seeded |
+| 48 | Coverage accumulates | Draw one very long continuous stroke, watch `gpu` | **Flat**, not climbing with stroke length. Held still, it should fall |
+| 49 | Prediction still shows | Draw fast, watch the leading tip | Ink keeps up with the pencil; no stub left behind when you stop |
 
 ## Pending — UI regressions to confirm
 
@@ -54,8 +27,13 @@ Not bugs; do not report these until the milestone that addresses them.
 
 - **Square stroke ends.** Round caps arrive with dab stamping at M3.
 - **No texture.** There is no brush engine yet — strokes are smooth geometry.
-- **Only black.** There is no colour picker yet. It arrives with the brush
-  engine at M3, and until then it limits what any blend-mode test can show.
+- **Only black, and no brush settings.** No colour picker and no brush editor,
+  so opacity, size and smoothing cannot be changed on the device. This is now
+  the main limit on what device testing can answer at all.
+- **Tilt tops out near 86°, not 90°.** Measured on the Pencil Pro: the
+  altitude reading loses precision and refresh rate as the pencil approaches
+  perpendicular. Hardware behaviour, not our arithmetic — so a tilt response
+  must not assume the full 0–90° range is reachable in practice.
 - **Canvas is screen-sized.** Pan, zoom and a canvas larger than the screen
   come with the per-tile render restructure — see the re-scoped item in
   ROADMAP.md.
@@ -94,6 +72,14 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-08-30 | Live layer count: 1 normally, 2 with a clipped layer | Pass, 10 layers (2 live) |
 | 2026-08-30 | Undo and redo across layers, targeting the owning layer | Pass |
 | 2026-08-30 | Undo across a deleted layer, repeated undo/redo | Pass, no crash |
+| 2026-09-01 | Dab stamping: draws, round caps, curve smoothness at speed | Pass |
+| 2026-09-01 | Even weight along a long stroke, no beading | Pass |
+| 2026-09-01 | Undo and redo of a dab stroke, identical on return | Pass — seeded jitter holds |
+| 2026-09-01 | Tile capture and readback track stroke length, not canvas size | Pass |
+| 2026-09-01 | Pencil Pro: pressure, azimuth, roll, hover, squeeze, double-tap | Pass, all channels live |
+| 2026-09-01 | Pressure drives width end to end | Pass |
+| 2026-09-01 | `peak/fr` reads 4 | Pass — 240 Hz sampling into a 60 Hz frame |
+| 2026-09-01 | Self-crossing does not darken (max vs buildup) | Pass, in CI on the simulator |
 
 Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:
