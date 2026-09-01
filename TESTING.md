@@ -7,12 +7,20 @@ installs are batched.
 **The rule:** if it needs the GPU, the Pencil, or the display, it goes on this
 list. Everything else gets a unit test and never touches the iPad.
 
-## Pending — unverified fix
+## Pending — colour and brush controls
 
 | # | What | How | Expected |
 |---|---|---|---|
-| 48 | Coverage accumulates | Draw one very long continuous stroke, watch `gpu` | **Flat**, not climbing with stroke length. Held still, it should fall |
-| 49 | Prediction still shows | Draw fast, watch the leading tip | Ink keeps up with the pencil; no stub left behind when you stop |
+| 50 | Panel opens | Tap the brush button, under the layers button | Colour square, sliders, accumulation switch |
+| 51 | Colour | Drag in the square, then the hue strip, then draw | Ink matches the swatch; both drags track continuously |
+| 52 | Size | Drag Size, draw | Stroke weight follows. 1 px stays a visible line |
+| 53 | Opacity | Set ~30%, draw a stroke that crosses itself | Translucent, and the crossing is **not** darker |
+| 54 | Buildup | Switch to Buildup, Flow ~30%, cross a stroke | The crossing **is** darker. Switch back and it stops |
+| 55 | Hardness | Take it to 0%, draw | Soft airbrushed edge rather than a hard rim |
+| 56 | Stabilization | 0% then ~60%, draw the same shaky line | Visibly steadier, at the cost of lag behind the pencil |
+| 57 | Spacing | Raise toward 50%, draw slowly | Dabs separate into a chain — confirms spacing is real |
+| 58 | Panel does not leak touches | Draw a stroke starting on the panel | Nothing appears underneath it |
+| 59 | Sliders survive their drag | Drag each one edge to edge without lifting | Tracks the whole way, value updates live |
 
 ## Pending — UI regressions to confirm
 
@@ -27,9 +35,8 @@ Not bugs; do not report these until the milestone that addresses them.
 
 - **Square stroke ends.** Round caps arrive with dab stamping at M3.
 - **No texture.** There is no brush engine yet — strokes are smooth geometry.
-- **Only black, and no brush settings.** No colour picker and no brush editor,
-  so opacity, size and smoothing cannot be changed on the device. This is now
-  the main limit on what device testing can answer at all.
+- **No brush library.** Settings can be changed but not saved, named, or
+  switched between. One brush at a time until the brush editor proper.
 - **Tilt tops out near 86°, not 90°.** Measured on the Pencil Pro: the
   altitude reading loses precision and refresh rate as the pencil approaches
   perpendicular. Hardware behaviour, not our arithmetic — so a tilt response
@@ -80,6 +87,8 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-01 | Pressure drives width end to end | Pass |
 | 2026-09-01 | `peak/fr` reads 4 | Pass — 240 Hz sampling into a 60 Hz frame |
 | 2026-09-01 | Self-crossing does not darken (max vs buildup) | Pass, in CI on the simulator |
+| 2026-09-01 | Coverage accumulates rather than redrawing; `gpu` flat over a long stroke | Pass |
+| 2026-09-01 | Prediction survives the move onto the composited frame | Pass |
 
 Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:
