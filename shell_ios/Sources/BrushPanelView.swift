@@ -210,13 +210,13 @@ final class BrushPanelView: UIView {
 
     private func accumulationControl() -> UIView {
         let control = UISegmentedControl(items: ["Maximum", "Buildup"])
-        control.selectedSegmentIndex = brush.accumulation == MC_ACCUMULATION_BUILDUP.rawValue ? 1 : 0
+        control.selectedSegmentIndex = brush.accumulation == Int32(MC_ACCUMULATION_BUILDUP.rawValue) ? 1 : 0
         control.selectedSegmentTintColor = UIColor(red: 0.16, green: 0.42, blue: 0.85, alpha: 1)
         control.heightAnchor.constraint(equalToConstant: 32).isActive = true
         control.addAction(UIAction { [weak self] act in
             guard let self, let segmented = act.sender as? UISegmentedControl else { return }
             brush.accumulation = segmented.selectedSegmentIndex == 1
-                ? MC_ACCUMULATION_BUILDUP.rawValue : MC_ACCUMULATION_MAXIMUM.rawValue
+                ? Int32(MC_ACCUMULATION_BUILDUP.rawValue) : Int32(MC_ACCUMULATION_MAXIMUM.rawValue)
             delegate?.brushPanel(self, didChange: brush)
         }, for: .valueChanged)
 

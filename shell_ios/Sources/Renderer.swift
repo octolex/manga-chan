@@ -465,7 +465,7 @@ final class Renderer: NSObject {
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.label = "Dab coverage"
         encoder.setRenderPipelineState(
-            brush.accumulation == MC_ACCUMULATION_BUILDUP.rawValue
+            brush.accumulation == Int32(MC_ACCUMULATION_BUILDUP.rawValue)
                 ? dabBuildupPipeline : dabMaximumPipeline)
 
         var uniforms = MSDabUniforms(
