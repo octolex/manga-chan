@@ -92,6 +92,9 @@ targets:
       # Compiled into the test bundle's own metallib so the shaders can be
       # rendered and compared against the CPU reference.
       - path: Sources/BlendShaders.metal
+      # The dab shaders too, so accumulation and dab shape are pinned in CI
+      # rather than judged by eye on the device.
+      - path: Sources/Shaders.metal
       - path: Sources/ShaderTypes.h
     dependencies:
       - target: MangaChan
