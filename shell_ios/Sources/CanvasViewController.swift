@@ -16,6 +16,7 @@
 
 import UIKit
 import Metal
+import simd
 
 final class MetalLayerView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
@@ -43,6 +44,8 @@ final class CanvasViewController: UIViewController {
     private var inputStats = InputStats()
     private let layersPanel = LayersPanelView()
     private let layersButton = UIButton(type: .system)
+    private let brushButton = UIButton(type: .system)
+    private let brushPanel = BrushPanelView()
 
     override func loadView() {
         view = metalView
@@ -93,6 +96,7 @@ final class CanvasViewController: UIViewController {
         addTapGesture(touches: 4, action: #selector(handleClear))
 
         setUpLayersPanel()
+        setUpBrushPanel()
 
         // Squeeze (Pencil Pro) and double-tap (Pencil 2 and later). Both are
         // only wired to counters for now — the point is to confirm they arrive
@@ -183,9 +187,57 @@ final class CanvasViewController: UIViewController {
         ])
     }
 
+    // MARK: - Brush panel
+
+    private func setUpBrushPanel() {
+        brushButton.setImage(UIImage(systemName: "paintbrush.pointed"), for: .normal)
+        brushButton.tintColor = .white
+        brushButton.backgroundColor = UIColor(white: 0.13, alpha: 0.9)
+        brushButton.layer.cornerRadius = 10
+        brushButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        brushButton.addTarget(self, action: #selector(toggleBrushPanel), for: .touchUpInside)
+
+        brushPanel.delegate = self
+        brushPanel.isHidden = true
+
+        [brushButton, brushPanel].forEach {
+            view.addSubview($0)
+            $0.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        NSLayoutConstraint.activate([
+            // Below the layers button, so the two panels never fight for the
+            // same corner and both stay reachable one-handed.
+            brushButton.topAnchor.constraint(equalTo: layersButton.bottomAnchor, constant: 10),
+            brushButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                                                  constant: -12),
+
+            brushPanel.topAnchor.constraint(equalTo: brushButton.bottomAnchor, constant: 10),
+            brushPanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                                                 constant: -12),
+            brushPanel.widthAnchor.constraint(equalToConstant: 330),
+            brushPanel.heightAnchor.constraint(lessThanOrEqualTo: view.heightAnchor,
+                                               multiplier: 0.75),
+        ])
+    }
+
+    @objc private func toggleBrushPanel() {
+        brushPanel.isHidden.toggle()
+        if !brushPanel.isHidden, let renderer {
+            // Only one panel at a time: together they cover most of the canvas,
+            // and the point of both is to see their effect on it.
+            layersPanel.isHidden = true
+            let ink = renderer.inkColor
+            brushPanel.sync(brush: renderer.brush,
+                            color: UIColor(red: CGFloat(ink.x), green: CGFloat(ink.y),
+                                           blue: CGFloat(ink.z), alpha: 1))
+        }
+    }
+
     @objc private func toggleLayersPanel() {
         layersPanel.isHidden.toggle()
         if !layersPanel.isHidden, let renderer {
+            brushPanel.isHidden = true
             layersPanel.reload(from: renderer.canvas)
         }
     }
@@ -282,7 +334,9 @@ final class CanvasViewController: UIViewController {
         // through the panel.
         let point = touch.location(in: view)
         if !layersPanel.isHidden, layersPanel.frame.contains(point) { return }
+        if !brushPanel.isHidden, brushPanel.frame.contains(point) { return }
         if layersButton.frame.contains(point) { return }
+        if brushButton.frame.contains(point) { return }
 
         // Several fingers already on the glass is a gesture, not drawing.
         if touch.type != .pencil, (event?.allTouches?.count ?? 1) > 1 {
@@ -442,6 +496,22 @@ extension CanvasViewController: LayersPanelDelegate {
     func layersPanel(_ panel: LayersPanelView, didUpdate properties: LayerProperties,
                      for layer: MCLayerId) {
         renderer?.setProperties(properties, of: layer)
+    }
+}
+
+extension CanvasViewController: BrushPanelDelegate {
+
+    func brushPanel(_ panel: BrushPanelView, didChange brush: MCBrush) {
+        // Takes effect on the next stroke. A brush is copied into the stroke
+        // when it begins, so a slider moved mid-stroke cannot retroactively
+        // change ink already laid down.
+        renderer?.brush = brush
+    }
+
+    func brushPanel(_ panel: BrushPanelView, didChangeColor color: UIColor) {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else { return }
+        renderer?.setInkRGB(simd_float3(Float(r), Float(g), Float(b)))
     }
 }
 

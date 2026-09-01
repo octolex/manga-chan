@@ -235,7 +235,18 @@ final class Renderer: NSObject {
 
     /// The brush the next stroke will use. A value, so changing it mid-stroke
     /// cannot alter a stroke already in progress.
-    var brush: MCBrush = mc_brush_ink_pen()
+    ///
+    /// Stroke opacity is carried in the ink colour rather than applied per dab:
+    /// the coverage buffer is tinted once when the stroke is composited, which
+    /// is exactly what stops a stroke darkening where it crosses itself.
+    var brush: MCBrush = mc_brush_ink_pen() {
+        didSet { inkColor.w = brush.opacity }
+    }
+
+    /// Ink colour without its alpha, which `brush.opacity` owns.
+    func setInkRGB(_ rgb: simd_float3) {
+        inkColor = simd_float4(rgb.x, rgb.y, rgb.z, brush.opacity)
+    }
 
     func setStroke(_ stroke: BrushStroke?, sampleCount: Int) {
         if stroke !== self.stroke {
