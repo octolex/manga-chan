@@ -185,8 +185,12 @@ point. All ⬜, and none of it is on our path.
 1. **Grain anchoring is right.** Movimiento/Texturizado is Rolling/Canvas.
 2. **Grain needs a blend mode, not a multiply.** Plus brightness and contrast
    on the map, and a minimum depth.
-3. **Alpha threshold is the missing mechanism** for grain that bites at the
-   edges instead of veiling the whole stroke.
+3. ~~**Alpha threshold is the missing mechanism** for grain that bites at the
+   edges instead of veiling the whole stroke.~~ **Wrong** — `Umbral alfa` sits
+   in Rendering, not Grain, and is off by default in the brush this was
+   transcribed from. Grain composites through the blend mode in its own
+   section. Building a thresholded grain on this reading made the stroke worse
+   on device; see bug 14 in TESTING.md.
 4. **Maximum/Buildup should become a rendering style.** Procreate has no such
    toggle; it has six named styles and Flow as a ceiling.
 5. **The pressure response must become a spline.** It is a graph in Procreate,

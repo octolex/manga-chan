@@ -53,10 +53,8 @@ whether it costs a frame.
 | # | What | How | Expected |
 |---|---|---|---|
 | 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Was invisible at 1, barely visible at 2. Density now accumulates across the ~2 dabs that land per pixel, which may resolve it with no special case |
-| 71 | Flow at 100% does not self-darken | Flow 100%, cross a stroke over itself | The crossing is **not** darker. This is what the Maximum mode used to do |
-| 72 | Flow below 100% builds up | Flow ~40%, same crossing | The crossing **is** darker — and no mode switch was needed to get there |
-| 73 | The edge stays soft | Flow 100%, long stroke, look closely along the edge | A smooth antialiased edge. A hard, slightly-too-wide rim means density is defining the edge and the geometry channel has stopped working |
-| 74 | Flow decides how much tooth shows | Depth ~70%; draw at Flow 100%, then at ~50% | At 100% the body is solid and only the edges break. At 50% the tooth shows through the body. Deliberate — a marker hides paper texture, a pencil does not |
+| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line. **Failing** — see bug 14 |
+| 76 | How opaque is a Flow-50% pass? | Flow 50%, Depth 0, one slow stroke, no crossing | Needed to settle bug 14. Is the line about half strength, or effectively solid? |
 
 ## Pending — UI regressions to confirm
 
@@ -156,6 +154,9 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | #37 Layer list scroll survives a rebuild | Pass, once bug 12 was fixed |
 | 2026-09-02 | #69 Both panels clear the toolbar, add-layer reachable | Pass |
 | 2026-09-02 | #70 Toolbar swallows its own touches, gap included | Pass — the coordinate-space change held |
+| 2026-09-02 | #71 Flow 100% does not self-darken | Pass |
+| 2026-09-02 | #72 Flow ~40% builds up on a crossing | Pass — no mode switch needed |
+| 2026-09-02 | #73 The stroke edge stays soft under density accumulation | Pass — the two-channel split holds on device |
 | 2026-09-02 | Grain tiles seamlessly: seam step 0.34 vs 3.16 inside the map | Pass, in CI |
 | 2026-09-02 | Metal grain sampler matches the engine reference | Pass, in CI — worst 3 of 255 over ~600 px |
 | 2026-09-02 | Canvas grain unchanged by overlapping dabs under Maximum | Pass, in CI |
@@ -225,6 +226,18 @@ they lived in the Swift shell rather than the engine:
 13. **A 1 px stroke is invisible.** At that size the dab is smaller than the
     antialiased edge that draws it, so almost all of its coverage is falloff.
     Not yet fixed.
+
+14. **Grain thresholding was the wrong fix.** Replacing the multiply with
+    `(coverage - tooth) / (1 - tooth)` made it worse, not better: at Flow 100%
+    it does nothing, and at 50% it masks the stroke away. The reason is that
+    the threshold is applied per dab, so a pixel whose tooth stands higher than
+    the flow is punched to zero by *every* dab and can never fill — permanent
+    holes, where real paper fills in as you work over it.
+    The reading that led there was also wrong. Procreate's **Umbral alfa** is a
+    toggle in Rendering, not the grain mechanism, and it is *off* by default;
+    grain there composites through a blend mode in the Grano section. That was
+    a misread of docs/procreate-brush-settings.md, not a subtlety.
+    Blocked on #76 before the third attempt — see the note there.
 
 The engine was correct throughout. Every one of these lived in how the shell
 drove it — layout and view lifecycle, not logic — which is the argument for
