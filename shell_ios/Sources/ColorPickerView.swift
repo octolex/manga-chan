@@ -120,7 +120,7 @@ final class ColorPickerView: UIView {
 
 // MARK: - Saturation / brightness square
 
-private final class SquareView: UIView {
+private final class SquareView: UIView, ScrollDragImmune {
 
     var onChange: ((CGFloat, CGFloat) -> Void)?
 
@@ -154,7 +154,14 @@ private final class SquareView: UIView {
 
         if cached == nil { cached = makeGradient() }
         if let cached {
-            context.draw(cached, in: bounds)
+            // UIImage.draw rather than context.draw(_:in:). A drawRect context
+            // is y-flipped relative to Core Graphics, so drawing a CGImage
+            // through the CG call renders it upside down — which inverted the
+            // brightness axis on screen while the touch mapping below stayed
+            // correct. The picker therefore returned the colour you meant and
+            // showed you a different one, which is the worst way for a colour
+            // picker to be wrong.
+            UIImage(cgImage: cached).draw(in: bounds)
         }
 
         // A ring rather than a filled dot, so the colour under it stays visible.
@@ -215,10 +222,34 @@ private final class SquareView: UIView {
 
 // MARK: - Hue slider
 
-private final class HueSliderView: UIView {
+private final class HueSliderView: UIView, ScrollDragImmune {
 
     var onChange: ((CGFloat) -> Void)?
     var hue: CGFloat = 0 { didSet { setNeedsDisplay() } }
+
+    /// The hue ramp, built once.
+    ///
+    /// This was twelve filled rectangles, on the reasoning that the eye cannot
+    /// resolve banding on a 26pt strip. It plainly can — the bands were the
+    /// first thing anyone noticed. They were also a lie about the mapping: a
+    /// band painted the hue at its left edge while a tap anywhere in it
+    /// selected the hue under the finger, so the strip could be up to a
+    /// twelfth of the spectrum away from what it would give you. Interpolating
+    /// makes the colour shown at a point the colour that point returns.
+    private static let spectrum: CGGradient? = {
+        // Every 10 degrees. Core Graphics interpolates in RGB between stops,
+        // which at that spacing is indistinguishable from a true HSV sweep.
+        let steps = 36
+        var colours: [CGColor] = []
+        var locations: [CGFloat] = []
+        for i in 0...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            colours.append(UIColor(hue: t, saturation: 1, brightness: 1, alpha: 1).cgColor)
+            locations.append(t)
+        }
+        return CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                          colors: colours as CFArray, locations: locations)
+    }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -232,16 +263,11 @@ private final class HueSliderView: UIView {
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
 
-        // Twelve stops is enough for a 26pt-tall strip; the eye cannot resolve
-        // the banding at this size and a real gradient object costs more.
-        let steps = 12
-        for i in 0..<steps {
-            let colour = UIColor(hue: CGFloat(i) / CGFloat(steps),
-                                 saturation: 1, brightness: 1, alpha: 1)
-            let slice = CGRect(x: bounds.width * CGFloat(i) / CGFloat(steps), y: 0,
-                               width: bounds.width / CGFloat(steps) + 1, height: bounds.height)
-            context.setFillColor(colour.cgColor)
-            context.fill(slice)
+        if let gradient = Self.spectrum {
+            context.drawLinearGradient(gradient,
+                                       start: CGPoint(x: 0, y: 0),
+                                       end: CGPoint(x: bounds.width, y: 0),
+                                       options: [])
         }
 
         let x = hue * bounds.width
