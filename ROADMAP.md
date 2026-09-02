@@ -28,6 +28,14 @@ until this worked.
 The iPad Air M4 is a 60 Hz panel with no ProMotion, so the frame budget on
 this device is 16.6 ms rather than 8.3 ms.
 
+**The route has since changed.** This milestone is kept as it was proven, but
+Windows and Sideloadly are no longer in it: there is no development machine at
+all now. Work is directed from the iPad through Claude Code, and the `.ipa` is
+downloaded and installed on the iPad with SideStore. See [README.md](README.md).
+What M0 actually established survives the change — that code written somewhere
+without a Mac reaches the device, signed by a free Apple ID, with no
+certificates in CI.
+
 ---
 
 ## ✅ M1 — Tiled sparse canvas
@@ -376,7 +384,9 @@ perspective and symmetry rulers · text, lettering and screentones.
 
 ## Constraints shaping all of this
 
-- **No Mac.** CI compiles; it cannot run Instruments or the Metal debugger.
+- **No development machine at all.** No Mac, no PC, no local toolchain — the
+  iPad running the app is the one it is written from. CI compiles; it cannot
+  run Instruments or the Metal debugger.
   Compensated by keeping the engine platform-agnostic and testable off-device,
   by the in-app HUD, and by on-device logs.
 - **~~10 App IDs per 7 days.~~** Resolved: the limit applies to registering
