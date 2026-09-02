@@ -163,11 +163,11 @@ disc.
 | ✅ | Exact per-dab tile capture, replacing per-sample bounding boxes |
 | ✅ | Brush and dabs across the C ABI, zero-copy into a Metal buffer |
 | ✅ | Instanced dab stamping in Metal, procedural shape |
-| ✅ | Maximum and Buildup accumulation as two blend states over one shader |
+| ↪️ | Maximum and Buildup accumulation — **replaced by the ink model, see below** |
 | ✅ | Colour picker — blocking several kinds of test, not just a feature |
 | ✅ | Grain: a seamless procedural map, anchored to the canvas or to the stroke |
-| ⬜ | Grain as a threshold, not a multiply — see below |
-| ⬜ | Accumulation re-cut as a rendering style |
+| ✅ | Grain as a threshold, not a multiply |
+| ✅ | Accumulation re-cut as one Flow control, with the mode switch removed |
 | ⬜ | Textured dab shapes on the same sampler |
 | ⬜ | Brush editor UI, and a starter set of manga brushes |
 | ⬜ | Per-tile dab culling once the canvas is larger than the screen |
@@ -274,6 +274,52 @@ The same document settles a question already open in this file: **Procreate's
 pressure response is a graph widget**, so the exponent has to become a spline
 before a brush editor exposes it. It is no longer a maybe.
 
+### The ink model, after the device found the old one wrong
+
+Both findings from the 2026-09-02 round are fixed, and the fix for the second
+was not the obvious one.
+
+**Flow is now the whole accumulation control.** The Maximum/Buildup switch is
+gone. At Flow 100% a single pass saturates, so a self-crossing cannot darken —
+what Maximum did. Below 100% the passes build — what Buildup did. Neither
+Photoshop nor Procreate asks for a mode here, and the switch was what made Flow
+and Opacity redundant at one end, since both then scaled the same final alpha
+and only their product mattered.
+
+**The obvious implementation of that destroys the antialiasing.** Simply always
+accumulating means a pixel just outside the stroke's true edge picks up partial
+coverage from every dab that passes near it; at 6% spacing that is roughly two
+dabs per pixel, so it saturates to 1. The stroke bloats by a pixel and its rim
+goes hard. Maximum existed precisely to prevent that, and deleting it takes the
+antialiasing with it.
+
+The fix is to stop conflating two things in one number:
+
+| Channel | Blend | Carries |
+|---|---|---|
+| RGB | alpha-over | **Ink density** — how much pigment landed, so flow works |
+| A | max | **Geometry** — the true antialiased silhouette |
+
+Composited as `min(density, geometry)`, each property comes from the channel
+that can express it. Metal splits blend state at the RGB/alpha boundary, so
+this costs one pass and one texture exactly as the single-channel version did —
+the coverage target goes from `r8Unorm` to `rgba8Unorm` and nothing else
+changes. A CI test drives a dense row of dabs and asserts the edge is still
+soft, because that regression would look like a slightly bolder brush rather
+than like a bug.
+
+**Grain thresholds rather than multiplies.** Ink sticks where it has more to
+give than the tooth takes: `(coverage − tooth) / (1 − tooth)`, clamped. That
+leaves a solid body and a broken edge instead of the uniform veil multiplying
+produced. The renormalisation has a consequence worth stating plainly: at Flow
+100% the body is fully covered and no tooth shows, so grain lives in the edges
+until Flow comes down. That is not a limitation — it is why a marker hides
+paper texture and a pencil does not, and it makes Flow the control that decides
+how much surface shows.
+
+Procreate's `Umbral alfa` is the same mechanism, and its grain **blend mode**,
+brightness, contrast and minimum depth are still ahead of us.
+
 ### Decisions worth revisiting
 
 - **Spacing is a fraction of dab diameter**, not an absolute distance, so a
@@ -290,10 +336,11 @@ before a brush editor exposes it. It is no longer a maybe.
   The sampler that shape textures will use now exists, built for grain — what
   is left is the shape map itself and the tile capture, which has to widen from
   the dab's radius to its corner once a stamp can put ink outside the disc.
-- **Grain multiplies coverage per dab, not the finished stroke.** Tinting the
-  whole stroke once would be cheaper and would be stable under both
-  accumulation modes, but it cannot express rolling grain at all, and per-dab
-  is the general mechanism a shape texture needs anyway.
+- **Grain thresholds coverage per dab, not the finished stroke.** Tinting the
+  whole stroke once would be cheaper, but it cannot express rolling grain at
+  all, and per-dab is the general mechanism a shape texture needs anyway.
+- **Coverage is two channels, not one.** Ink density and stroke geometry
+  accumulate differently and cannot share a number — see below.
 - **The response curve is an exponent, not a spline.** It covers ease-in,
   linear and ease-out in four bytes with no allocation, and every call site
   survives the swap. But a brush editor that exposes a curve control needs the

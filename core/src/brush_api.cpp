@@ -80,8 +80,6 @@ Brush fromC(const MCBrush& b) {
     out.angleFollowsDirection = b.angleFollowsDirection != 0;
     out.flow = b.flow;
     out.opacity = b.opacity;
-    out.accumulation = b.accumulation == MC_ACCUMULATION_BUILDUP
-        ? Accumulation::Buildup : Accumulation::Maximum;
     out.grainDepth = b.grainDepth;
     out.grainScale = b.grainScale;
     out.grainMovement = b.grainMovement == MC_GRAIN_ROLLING
@@ -111,8 +109,6 @@ MCBrush toC(const Brush& b) {
     out.angleFollowsDirection = b.angleFollowsDirection ? 1 : 0;
     out.flow = b.flow;
     out.opacity = b.opacity;
-    out.accumulation = b.accumulation == Accumulation::Buildup
-        ? MC_ACCUMULATION_BUILDUP : MC_ACCUMULATION_MAXIMUM;
     out.grainDepth = b.grainDepth;
     out.grainScale = b.grainScale;
     out.grainMovement = b.grainMovement == GrainMovement::Rolling

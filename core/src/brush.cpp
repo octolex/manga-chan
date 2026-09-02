@@ -40,9 +40,11 @@ Brush inkPen() {
     b.hardness = 0.95f;
     b.flow = 1.0f;
     b.opacity = 1.0f;
-    // An inking pen must not darken where it crosses itself.
-    b.accumulation = Accumulation::Maximum;
 
+    // Full flow, so one pass saturates at once and the line cannot darken
+    // where it crosses itself. That is what makes this an inking pen rather
+    // than a pencil, and it is a value now rather than a mode.
+    //
     // Pressure drives width and nothing else. Flow staying flat is what makes
     // the line read as ink rather than as a wash: a light pass is *thinner*,
     // not greyer.

@@ -24,8 +24,7 @@ and never touches the iPad.
 | 51b | Drags are not scrolls | Drag across the square, then the hue strip, without lifting | Colour tracks the whole way; the panel does **not** scroll under the finger |
 | 51c | Hue strip is smooth | Look along the strip | A continuous spectrum, not twelve flat bands |
 | 52 | Size | Drag Size, draw | Stroke weight follows. 1 px stays a visible line |
-| 53 | Opacity | Set ~30%, draw a stroke that crosses itself | Translucent, and the crossing is **not** darker |
-| 54 | Buildup | Switch to Buildup, Flow ~30%, cross a stroke | The crossing **is** darker. Switch back and it stops |
+| 53 | Opacity | Set ~30%, Flow 100%, draw a stroke that crosses itself | Translucent, and the crossing is **not** darker |
 | 55 | Hardness | Take it to 0%, draw | Soft airbrushed edge rather than a hard rim |
 | 56 | Stabilization | 0% then ~60%, draw the same shaky line | Visibly steadier, at the cost of lag behind the pencil |
 | 57 | Spacing | Raise toward 50%, draw slowly | Dabs separate into a chain — confirms spacing is real |
@@ -41,7 +40,7 @@ whether it costs a frame.
 | # | What | How | Expected |
 |---|---|---|---|
 | 60 | Depth off is off | Grain Depth at 0, draw | Identical to a stroke before grain existed — flat, no lightening |
-| 61 | Depth reads as tooth | Depth ~70%, draw slowly | Broken, textured edge. The stroke also gets lighter — that is the medium, not a bug |
+| 61 | Depth reads as tooth | Depth ~70%, **Flow ~50%**, draw slowly | Tooth showing through the body of the stroke, and a broken edge. At Flow 100% only the edges break — see #74 |
 | 62 | Scale | Scale from 24 px to 600 px, draw at each | Fine tooth through to coarse blotches. No repeating grid at any setting |
 | 63 | Canvas grain ignores the stroke | Canvas mode, cross a stroke back over itself | The texture in the crossing matches its surroundings — it belongs to the paper |
 | 64 | Rolling grain follows the stroke | Rolling mode, same crossing | The crossing **does** show. Both directions carry their own grain |
@@ -53,7 +52,11 @@ whether it costs a frame.
 
 | # | What | How | Expected |
 |---|---|---|---|
-| 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Currently invisible at 1, barely visible at 2. **Re-test after the ink model changes** — densely packed sub-pixel dabs may resolve it without a special case |
+| 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Was invisible at 1, barely visible at 2. Density now accumulates across the ~2 dabs that land per pixel, which may resolve it with no special case |
+| 71 | Flow at 100% does not self-darken | Flow 100%, cross a stroke over itself | The crossing is **not** darker. This is what the Maximum mode used to do |
+| 72 | Flow below 100% builds up | Flow ~40%, same crossing | The crossing **is** darker — and no mode switch was needed to get there |
+| 73 | The edge stays soft | Flow 100%, long stroke, look closely along the edge | A smooth antialiased edge. A hard, slightly-too-wide rim means density is defining the edge and the geometry channel has stopped working |
+| 74 | Flow decides how much tooth shows | Depth ~70%; draw at Flow 100%, then at ~50% | At 100% the body is solid and only the edges break. At 50% the tooth shows through the body. Deliberate — a marker hides paper texture, a pencil does not |
 
 ## Pending — UI regressions to confirm
 
@@ -72,6 +75,13 @@ Not bugs; do not report these until the milestone that addresses them.
 - **One grain map.** It is generated from a fixed seed rather than chosen, so
   there is nothing to switch between until the brush library exists. Depth and
   Scale are the whole of the control surface.
+- **Grain is invisible at Flow 100%.** Ink is thresholded against the tooth, so
+  a fully covering pass hides the surface under it and only the edges break.
+  Lower Flow to bring the texture into the body of the stroke. Not a bug — it
+  is the reason a marker shows no paper grain and a pencil does.
+- **No Maximum/Buildup switch.** Flow is the control: at 100% a pass saturates
+  and crossings do not darken; below that they build. The switch made Flow and
+  Opacity redundant at one end, which is what it was removed for.
 - **No brush library.** Settings can be changed but not saved, named, or
   switched between. One brush at a time until the brush editor proper.
 - **Tilt tops out near 86°, not 90°.** Measured on the Pencil Pro: the

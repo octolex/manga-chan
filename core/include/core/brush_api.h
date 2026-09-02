@@ -44,12 +44,6 @@ typedef struct {
     float grainOffset;/* arc length from the stroke start, for rolling grain */
 } MCDab;
 
-/* Matches mc::Accumulation. */
-typedef enum {
-    MC_ACCUMULATION_MAXIMUM = 0,  /* coverage takes the max; never self-darkens */
-    MC_ACCUMULATION_BUILDUP = 1,  /* coverage alpha-composites; dense passes darken */
-} MCAccumulation;
-
 /* Matches mc::GrainMovement. */
 typedef enum {
     MC_GRAIN_CANVAS = 0,   /* fixed to the canvas, like the tooth of the paper */
@@ -86,11 +80,10 @@ typedef struct {
     float angle;
     int32_t angleFollowsDirection;
 
-    float flow;
-    float opacity;
-    int32_t accumulation;      /* MCAccumulation */
+    float flow;                /* ink per dab; density accumulates across them */
+    float opacity;             /* ceiling on the finished stroke */
 
-    float grainDepth;          /* 0 ignores the grain map, 1 fully modulates */
+    float grainDepth;          /* tooth height; ink is thresholded against it */
     float grainScale;          /* canvas pixels per repeat of the map */
     int32_t grainMovement;     /* MCGrainMovement */
 

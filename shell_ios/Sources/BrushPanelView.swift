@@ -111,9 +111,14 @@ final class BrushPanelView: UIView {
             format: { "\(Int($0 * 100))%" },
             apply: { $0.opacity = $1 }))
 
+        // Flow is the accumulation control now, not a second opacity. At 100%
+        // one pass saturates and a self-crossing cannot darken; below that the
+        // passes build. The Maximum/Buildup switch that used to sit at the
+        // bottom of this panel was the two ends of this slider wearing a
+        // disguise, and it made Flow and Opacity redundant at one of them.
         stack.addArrangedSubview(slider(
             "Flow", key: "flow", value: brush.flow, range: 0.02...1,
-            format: { "\(Int($0 * 100))%" },
+            format: { $0 > 0.995 ? "100% — solid" : "\(Int($0 * 100))%" },
             apply: { $0.flow = $1 }))
 
         stack.addArrangedSubview(slider(
@@ -130,10 +135,6 @@ final class BrushPanelView: UIView {
             "Spacing", key: "spacing", value: brush.spacing, range: 0.02...0.5,
             format: { String(format: "%.0f%% of size", $0 * 100) },
             apply: { $0.spacing = $1 }))
-
-        stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(heading("Accumulation"))
-        stack.addArrangedSubview(accumulationControl())
 
         stack.addArrangedSubview(separator())
         stack.addArrangedSubview(heading("Grain"))
@@ -223,31 +224,6 @@ final class BrushPanelView: UIView {
         let row = UIStackView(arrangedSubviews: [header, control])
         row.axis = .vertical
         row.spacing = 2
-        return row
-    }
-
-    private func accumulationControl() -> UIView {
-        let control = UISegmentedControl(items: ["Maximum", "Buildup"])
-        control.selectedSegmentIndex = brush.accumulation == Int32(MC_ACCUMULATION_BUILDUP.rawValue) ? 1 : 0
-        control.selectedSegmentTintColor = UIColor(red: 0.16, green: 0.42, blue: 0.85, alpha: 1)
-        control.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        control.addAction(UIAction { [weak self] act in
-            guard let self, let segmented = act.sender as? UISegmentedControl else { return }
-            brush.accumulation = segmented.selectedSegmentIndex == 1
-                ? Int32(MC_ACCUMULATION_BUILDUP.rawValue) : Int32(MC_ACCUMULATION_MAXIMUM.rawValue)
-            delegate?.brushPanel(self, didChange: brush)
-        }, for: .valueChanged)
-
-        let note = UILabel()
-        note.numberOfLines = 0
-        note.font = .systemFont(ofSize: 11)
-        note.textColor = UIColor(white: 1, alpha: 0.45)
-        note.text = "Maximum never darkens where a stroke crosses itself. "
-                  + "Buildup does — set Flow below 100% to see the difference."
-
-        let row = UIStackView(arrangedSubviews: [control, note])
-        row.axis = .vertical
-        row.spacing = 8
         return row
     }
 
