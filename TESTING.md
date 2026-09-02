@@ -73,10 +73,10 @@ Not bugs; do not report these until the milestone that addresses them.
 - **One grain map.** It is generated from a fixed seed rather than chosen, so
   there is nothing to switch between until the brush library exists. Depth and
   Scale are the whole of the control surface.
-- **Grain is invisible at Flow 100%.** Ink is thresholded against the tooth, so
-  a fully covering pass hides the surface under it and only the edges break.
-  Lower Flow to bring the texture into the body of the stroke. Not a bug — it
-  is the reason a marker shows no paper grain and a pencil does.
+- **Grain does not currently work.** It is thresholded per dab, which at Flow
+  100% does nothing and at 50% masks the stroke away. This *was* listed here as
+  deliberate; it is not, it is bug 14, and the third attempt is blocked on #76.
+  Leave Depth at 0 until then and nothing else is affected.
 - **No Maximum/Buildup switch.** Flow is the control: at 100% a pass saturates
   and crossings do not darken; below that they build. The switch made Flow and
   Opacity redundant at one end, which is what it was removed for.
