@@ -53,9 +53,7 @@ whether it costs a frame.
 
 | # | What | How | Expected |
 |---|---|---|---|
-| 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Currently invisible at 1, barely visible at 2 |
-| 69 | Panels clear the toolbar | Open Layers, then Brush | Neither panel is covered by a button. Add-layer reachable |
-| 70 | Toolbar swallows its own touches | Draw starting on a button, and in the gap between the two | Nothing appears on the canvas |
+| 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Currently invisible at 1, barely visible at 2. **Re-test after the ink model changes** — densely packed sub-pixel dabs may resolve it without a special case |
 
 ## Pending — UI regressions to confirm
 
@@ -145,7 +143,9 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | #57 Spacing toward 50% separates the dabs | Pass |
 | 2026-09-02 | #59 Every slider survives its own drag | Pass |
 | 2026-09-02 | #38 Blend list scroll survives a rebuild | Pass |
-| 2026-09-02 | #37 Layer list scroll survives a rebuild | Blocked by bug 12 |
+| 2026-09-02 | #37 Layer list scroll survives a rebuild | Pass, once bug 12 was fixed |
+| 2026-09-02 | #69 Both panels clear the toolbar, add-layer reachable | Pass |
+| 2026-09-02 | #70 Toolbar swallows its own touches, gap included | Pass — the coordinate-space change held |
 | 2026-09-02 | Grain tiles seamlessly: seam step 0.34 vs 3.16 inside the map | Pass, in CI |
 | 2026-09-02 | Metal grain sampler matches the engine reference | Pass, in CI — worst 3 of 255 over ~600 px |
 | 2026-09-02 | Canvas grain unchanged by overlapping dabs under Maximum | Pass, in CI |
