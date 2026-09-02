@@ -1,11 +1,19 @@
 # Device test backlog
 
-Free-account signing allows **10 App IDs per 7 days**, so installs are a
-budgeted resource. Anything that can be verified in CI must be, and device
-installs are batched.
+Installs are **no longer budgeted**. The 10-App-IDs-per-7-days limit on free
+signing applies to *registering new* App IDs, and the pipeline reuses one
+static ID (`com.octolex.mangachan`) for every build, so reinstalling costs
+nothing. The 7-day certificate expiry still applies, and SideStore refreshes it
+on device over WiFi.
 
-**The rule:** if it needs the GPU, the Pencil, or the display, it goes on this
-list. Everything else gets a unit test and never touches the iPad.
+Current pipeline, no computer in the loop: download the `.ipa` from the CI
+artifact on the iPad, install with **SideStore + LocalDevVPN** against the
+existing App ID.
+
+**The rule stands anyway,** for a different reason: CI is faster and cheaper
+than a person with an iPad, and it does not get bored. If it needs the GPU, the
+Pencil, or the display, it goes on this list. Everything else gets a unit test
+and never touches the iPad.
 
 ## Pending — colour and brush controls
 
@@ -40,6 +48,14 @@ whether it costs a frame.
 | 65 | Grain costs no frame budget | Depth 100%, long fast stroke, watch `gpu` | Flat, and level with a Depth-0 stroke |
 | 66 | Grain survives commit and undo | Draw grained, lift, undo, redo | Returns identical — the map is seeded, not random |
 | 67 | Prediction is grained too | Depth 100%, draw fast, watch the leading tip | The tip ahead of the pen is textured, not a smooth lead-in that turns rough |
+
+## Pending — from the 2026-09-02 round
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Currently invisible at 1, barely visible at 2 |
+| 69 | Panels clear the toolbar | Open Layers, then Brush | Neither panel is covered by a button. Add-layer reachable |
+| 70 | Toolbar swallows its own touches | Draw starting on a button, and in the gap between the two | Nothing appears on the canvas |
 
 ## Pending — UI regressions to confirm
 
@@ -117,6 +133,19 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | #50 Brush panel opens | Pass, but with three rendering/gesture bugs — see 7-9 |
 | 2026-09-02 | #58 Panel does not leak touches to the canvas | Pass |
 | 2026-09-02 | #60 Grain Depth at 0 is indistinguishable from before grain | Pass |
+| 2026-09-02 | #61 Depth ~70% textures the stroke and lightens it | Pass, but see bug 10 — it veils rather than bites |
+| 2026-09-02 | #62 Scale sweep 24-600 px, no repeating grid at any setting | Pass — the seam maths holds on device |
+| 2026-09-02 | #63/#64 Canvas vs Rolling grain across a self-crossing | Pass |
+| 2026-09-02 | #65 Grain costs no frame budget | Pass — ~5 ms peak with and without, difference lost in noise |
+| 2026-09-02 | #66 Grain survives commit and undo | Inconclusive by eye; deterministic by construction |
+| 2026-09-02 | #53 Opacity 30%, self-crossing not darker | Pass, but see bug 11 |
+| 2026-09-02 | #54 Buildup darkens the crossing, Maximum stops it | Pass |
+| 2026-09-02 | #55 Hardness 0% gives a soft edge | Pass |
+| 2026-09-02 | #56 Stabilization 0% vs 60% | Pass |
+| 2026-09-02 | #57 Spacing toward 50% separates the dabs | Pass |
+| 2026-09-02 | #59 Every slider survives its own drag | Pass |
+| 2026-09-02 | #38 Blend list scroll survives a rebuild | Pass |
+| 2026-09-02 | #37 Layer list scroll survives a rebuild | Blocked by bug 12 |
 | 2026-09-02 | Grain tiles seamlessly: seam step 0.34 vs 3.16 inside the map | Pass, in CI |
 | 2026-09-02 | Metal grain sampler matches the engine reference | Pass, in CI — worst 3 of 255 over ~600 px |
 | 2026-09-02 | Canvas grain unchanged by overlapping dabs under Maximum | Pass, in CI |
@@ -165,11 +194,38 @@ they lived in the Swift shell rather than the engine:
    selected the hue under the finger, so the strip could be up to a twelfth of
    the spectrum away from what it would actually give you.
 
+10. **Grain veils the stroke instead of biting into it.** Coverage is
+    multiplied by the grain, so a solid stroke becomes a uniformly mottled
+    wash — the whole stroke goes lighter rather than the *edges* going broken.
+    Real media does not work that way: pigment catches on the high points of
+    the paper and misses the low ones, which is a *threshold* against the
+    grain, not a scaling by it. Procreate has this as an explicit control
+    (Umbral alfa / alpha threshold) — see docs/procreate-brush-settings.md.
+    Not yet fixed; it is a taxonomy change, not a patch.
+11. **Flow and Opacity are redundant under Maximum accumulation.** Both end up
+    scaling the same final alpha, so only their product matters, and reaching
+    build-up behaviour needs an explicit mode switch that Photoshop and
+    Procreate both manage without. Procreate expresses accumulation as a
+    six-value *rendering style* with Flow as a ceiling. Not yet fixed.
+12. **The layers panel opened underneath the brush button.** Each panel was
+    anchored below the button that opened it, and the brush button sits below
+    the layers button — so it drew on top of the layers panel's own header and
+    covered "add layer". Both panels now hang below the toolbar as a whole,
+    which also means a third button cannot reintroduce it.
+13. **A 1 px stroke is invisible.** At that size the dab is smaller than the
+    antialiased edge that draws it, so almost all of its coverage is falloff.
+    Not yet fixed.
+
 The engine was correct throughout. Every one of these lived in how the shell
 drove it — layout and view lifecycle, not logic — which is the argument for
 pushing more behind the C ABI where CI can reach it. Note the shape they share:
 none are arithmetic, all are UIKit rebuilding, sizing or re-orienting something
 at the wrong moment.
+
+12 is the same shape as the rest — a frame computed against the wrong thing.
+10, 11 and 13 are not: they are design errors in what the brush *means*, which
+is a category this project had not hit before and which no amount of UIKit
+discipline would have caught.
 
 7 and 9 are now assertions in `ColorPickerTests`: the picker is rendered into a
 bitmap and read back, so an inverted axis or a banded strip fails in CI. 8 is

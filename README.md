@@ -23,10 +23,12 @@ Windows  ──git push──▶  GitHub Actions (macos runner)
                         workflow artifact
                              │  download on Windows
                              ▼
-                        Sideloadly  ──USB──▶  iPad
+                     SideStore + LocalDevVPN  ──▶  iPad
 ```
 
-CI never signs anything. Sideloadly signs on Windows with your free Apple ID,
+CI never signs anything. SideStore signs on the iPad itself with your free
+Apple ID — no computer in the loop at all. Sideloadly over USB from Windows
+also works and was the original route,
 which is why this repository contains no certificates and needs no secrets.
 
 The macOS job takes about 40 seconds. Engine tests run separately on free

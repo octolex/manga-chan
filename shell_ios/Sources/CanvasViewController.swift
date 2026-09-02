@@ -45,6 +45,16 @@ final class CanvasViewController: UIViewController {
     private let layersPanel = LayersPanelView()
     private let layersButton = UIButton(type: .system)
     private let brushButton = UIButton(type: .system)
+
+    /// Both buttons in one column, so a panel can hang below the *toolbar*
+    /// rather than below whichever button opened it.
+    ///
+    /// That distinction is the whole bug this replaced: the layers panel was
+    /// anchored under the layers button, which put it exactly where the brush
+    /// button sits, and the button drew on top of the panel's own header —
+    /// covering "add layer" and making the panel untestable. Anchoring to the
+    /// stack means a third button can never reintroduce it.
+    private let toolbar = UIStackView()
     private let brushPanel = BrushPanelView()
 
     override func loadView() {
@@ -95,6 +105,7 @@ final class CanvasViewController: UIViewController {
         addTapGesture(touches: 3, action: #selector(handleRedo))
         addTapGesture(touches: 4, action: #selector(handleClear))
 
+        setUpToolbar()
         setUpLayersPanel()
         setUpBrushPanel()
 
@@ -152,31 +163,48 @@ final class CanvasViewController: UIViewController {
         renderer?.clearActiveLayer()
     }
 
+    // MARK: - Toolbar
+
+    private func setUpToolbar() {
+        for button in [layersButton, brushButton] {
+            button.tintColor = .white
+            button.backgroundColor = UIColor(white: 0.13, alpha: 0.9)
+            button.layer.cornerRadius = 10
+            button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        }
+        layersButton.setImage(UIImage(systemName: "square.3.layers.3d"), for: .normal)
+        layersButton.addTarget(self, action: #selector(toggleLayersPanel), for: .touchUpInside)
+        brushButton.setImage(UIImage(systemName: "paintbrush.pointed"), for: .normal)
+        brushButton.addTarget(self, action: #selector(toggleBrushPanel), for: .touchUpInside)
+
+        toolbar.axis = .vertical
+        toolbar.spacing = 10
+        toolbar.alignment = .trailing
+        toolbar.addArrangedSubview(layersButton)
+        toolbar.addArrangedSubview(brushButton)
+
+        view.addSubview(toolbar)
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            toolbar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor,
+                                         constant: 12),
+            toolbar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                                              constant: -12),
+        ])
+    }
+
     // MARK: - Layers panel
 
     private func setUpLayersPanel() {
-        layersButton.setImage(UIImage(systemName: "square.3.layers.3d"), for: .normal)
-        layersButton.tintColor = .white
-        layersButton.backgroundColor = UIColor(white: 0.13, alpha: 0.9)
-        layersButton.layer.cornerRadius = 10
-        layersButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        layersButton.addTarget(self, action: #selector(toggleLayersPanel), for: .touchUpInside)
-
         layersPanel.delegate = self
         layersPanel.isHidden = true
 
-        [layersButton, layersPanel].forEach {
-            view.addSubview($0)
-            $0.translatesAutoresizingMaskIntoConstraints = false
-        }
+        view.addSubview(layersPanel)
+        layersPanel.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            layersButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor,
-                                              constant: 12),
-            layersButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                                                   constant: -12),
-
-            layersPanel.topAnchor.constraint(equalTo: layersButton.bottomAnchor, constant: 10),
+            layersPanel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
             layersPanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
                                                   constant: -12),
             layersPanel.widthAnchor.constraint(equalToConstant: 330),
@@ -190,29 +218,16 @@ final class CanvasViewController: UIViewController {
     // MARK: - Brush panel
 
     private func setUpBrushPanel() {
-        brushButton.setImage(UIImage(systemName: "paintbrush.pointed"), for: .normal)
-        brushButton.tintColor = .white
-        brushButton.backgroundColor = UIColor(white: 0.13, alpha: 0.9)
-        brushButton.layer.cornerRadius = 10
-        brushButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        brushButton.addTarget(self, action: #selector(toggleBrushPanel), for: .touchUpInside)
-
         brushPanel.delegate = self
         brushPanel.isHidden = true
 
-        [brushButton, brushPanel].forEach {
-            view.addSubview($0)
-            $0.translatesAutoresizingMaskIntoConstraints = false
-        }
+        view.addSubview(brushPanel)
+        brushPanel.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            // Below the layers button, so the two panels never fight for the
-            // same corner and both stay reachable one-handed.
-            brushButton.topAnchor.constraint(equalTo: layersButton.bottomAnchor, constant: 10),
-            brushButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                                                  constant: -12),
-
-            brushPanel.topAnchor.constraint(equalTo: brushButton.bottomAnchor, constant: 10),
+            // Below the whole toolbar, exactly as the layers panel is. Only one
+            // panel is ever visible, so they can share the position.
+            brushPanel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
             brushPanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
                                                  constant: -12),
             brushPanel.widthAnchor.constraint(equalToConstant: 330),
@@ -335,8 +350,12 @@ final class CanvasViewController: UIViewController {
         let point = touch.location(in: view)
         if !layersPanel.isHidden, layersPanel.frame.contains(point) { return }
         if !brushPanel.isHidden, brushPanel.frame.contains(point) { return }
-        if layersButton.frame.contains(point) { return }
-        if brushButton.frame.contains(point) { return }
+        // The toolbar's frame, not the buttons'. Their frames are relative to
+        // the stack view now, so testing them against a point in `view` would
+        // silently compare two different coordinate spaces — and the Pencil
+        // would draw straight through the buttons. Testing the stack also
+        // covers the gap between them, which used to be a live canvas.
+        if toolbar.frame.contains(point) { return }
 
         // Several fingers already on the glass is a gesture, not drawing.
         if touch.type != .pencil, (event?.allTouches?.count ?? 1) > 1 {

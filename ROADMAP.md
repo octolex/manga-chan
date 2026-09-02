@@ -166,6 +166,8 @@ disc.
 | ✅ | Maximum and Buildup accumulation as two blend states over one shader |
 | ✅ | Colour picker — blocking several kinds of test, not just a feature |
 | ✅ | Grain: a seamless procedural map, anchored to the canvas or to the stroke |
+| ⬜ | Grain as a threshold, not a multiply — see below |
+| ⬜ | Accumulation re-cut as a rendering style |
 | ⬜ | Textured dab shapes on the same sampler |
 | ⬜ | Brush editor UI, and a starter set of manga brushes |
 | ⬜ | Per-tile dab culling once the canvas is larger than the screen |
@@ -233,6 +235,45 @@ disagreement. A flipped V or a missing half-texel misses by far more, and
 neither is visible in a screenshot, which is the entire argument for testing it
 this way.
 
+### What the device found, and what Procreate says about it
+
+Grain shipped and was tested on device the same day. It works, costs nothing
+measurable — ~5 ms peak either way, indistinguishable from a Depth-0 stroke —
+and tiles without a seam at every scale from 24 to 600 px. The maths held.
+
+The *model* did not. Two findings, both from drawing with it rather than from
+any test:
+
+**Grain veils rather than bites.** Coverage is multiplied by the grain, so a
+solid stroke becomes a uniformly mottled wash: the whole stroke goes lighter
+instead of its edges going broken. Real media does the opposite — pigment
+catches the high points of the paper and misses the low ones, which is a
+*threshold* against the grain, not a scaling by it. Multiplying is why it reads
+as a filter laid over the stroke rather than as the surface underneath it.
+
+**Flow and Opacity are redundant under Maximum.** Both scale the same final
+alpha, so only their product matters, and getting build-up needs a mode switch
+that neither Photoshop nor Procreate asks for.
+
+[docs/procreate-brush-settings.md](docs/procreate-brush-settings.md) — a
+transcription of Procreate's brush studio — confirms both, and names the
+mechanisms:
+
+- Grain composites through a **blend mode**, with brightness, contrast and a
+  minimum depth. Multiply is one mode of many.
+- **Umbral alfa** (alpha threshold) with a threshold amount, in the Rendering
+  section. That is the tooth-versus-veil control.
+- There is **no Maximum/Buildup toggle**. Accumulation is a **rendering style**
+  with six named values, and Flow is a "maximum level" rather than a slider.
+- Our two grain anchoring modes match Procreate's exactly
+  (Movimiento/Texturizado), which is the one part of the taxonomy that came out
+  right — though Movement is also an *amount* there, where ours is locked 1:1
+  to arc length.
+
+The same document settles a question already open in this file: **Procreate's
+pressure response is a graph widget**, so the exponent has to become a spline
+before a brush editor exposes it. It is no longer a maybe.
+
 ### Decisions worth revisiting
 
 - **Spacing is a fraction of dab diameter**, not an absolute distance, so a
@@ -291,7 +332,10 @@ perspective and symmetry rulers · text, lettering and screentones.
 - **No Mac.** CI compiles; it cannot run Instruments or the Metal debugger.
   Compensated by keeping the engine platform-agnostic and testable off-device,
   by the in-app HUD, and by on-device logs.
-- **10 App IDs per 7 days.** Device installs are budgeted, so device tests are
-  batched — see [TESTING.md](TESTING.md).
+- **~~10 App IDs per 7 days.~~** Resolved: the limit applies to registering
+  *new* App IDs, and the pipeline reuses one static ID, so reinstalling is
+  free. Installs now go straight onto the iPad with SideStore, no computer in
+  the loop. Device tests are still batched, but because a person's attention is
+  the scarce thing now, not the install — see [TESTING.md](TESTING.md).
 - **60 Hz panel.** A 120 Hz latency target can only ever be validated on an
   iPad Pro.
