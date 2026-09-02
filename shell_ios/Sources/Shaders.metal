@@ -39,9 +39,36 @@ using namespace metal;
 struct DabRasterData {
     float4 position [[position]];
     float2 local;      // -1...1 across the dab, before rotation and squash
+    float2 grainUV;    // map space, 1.0 being one full repeat
     float  flow;
     float  hardness;
 };
+
+//  Grain modulates coverage, and *where* its coordinate comes from is the whole
+//  design. Canvas grain takes it from the pixel, so every dab covering a given
+//  canvas pixel samples the same value there — which under max accumulation
+//  makes the grain exactly invariant to overlap, because
+//  max(g*c1, g*c2) = g*max(c1, c2). That identity is why canvas grain reads as
+//  paper the stroke is drawn on rather than as a pattern printed onto it.
+//
+//  Rolling grain takes it from the dab's own frame, offset by how far along the
+//  stroke the dab sits, so the texture scrolls with the brush. It deliberately
+//  loses that invariance: two dabs at one pixel are at different arc lengths and
+//  sample different grain, so overlaps show. Correct for dry media, wrong for
+//  paper, which is exactly why this is a mode and not a slider.
+inline float grain_modulation(texture2d<float> grain, float2 uv, float depth)
+{
+    // Uniform across the draw, so this branch costs nothing beyond the compare
+    // and it skips the texture fetch entirely on every brush that has no grain
+    // — which is all of them by default.
+    if (depth <= 0.0) { return 1.0; }
+
+    // Repeat and linear, matching mc::sampleAlpha in the engine. Those two
+    // choices are what let the CPU reference and this sampler be compared at
+    // all; a mismatch in either is invisible on screen.
+    constexpr sampler grainSampler(filter::linear, address::repeat);
+    return mix(1.0, grain.sample(grainSampler, uv).r, saturate(depth));
+}
 
 vertex DabRasterData dab_vertex(uint vertexID [[vertex_id]],
                                 uint instanceID [[instance_id]],
@@ -69,17 +96,30 @@ vertex DabRasterData dab_vertex(uint vertexID [[vertex_id]],
                             scaled.x * s + scaled.y * c);
     float2 pixel = float2(dab.x, dab.y) + rotated;
 
+    // Canvas grain is anchored to the pixel; rolling grain to the dab's own
+    // unrotated frame, scrolled along by the arc length the engine recorded.
+    // `scaled` rather than `rotated` for the rolling case, so a nib that turns
+    // through a curve carries its grain around with it instead of dragging it
+    // across the texture.
+    float invGrainScale = uniforms.grainScale > 0.0 ? 1.0 / uniforms.grainScale : 0.0;
+    float2 grainPixel = uniforms.grainMovement == MSGrainRolling
+        ? scaled + float2(dab.grainOffset, 0.0)
+        : pixel;
+
     DabRasterData out;
     out.position = float4(pixel.x / uniforms.viewportSize.x * 2.0 - 1.0,
                           1.0 - pixel.y / uniforms.viewportSize.y * 2.0,
                           0.0, 1.0);
     out.local = local;
+    out.grainUV = grainPixel * invGrainScale;
     out.flow = dab.flow;
     out.hardness = dab.hardness;
     return out;
 }
 
-fragment float4 dab_coverage_fragment(DabRasterData in [[stage_in]])
+fragment float4 dab_coverage_fragment(DabRasterData in [[stage_in]],
+                                      texture2d<float> grain [[texture(0)]],
+                                      constant MSDabUniforms &uniforms [[buffer(MSBufferIndexUniforms)]])
 {
     float d = length(in.local);
     float w = max(fwidth(d), 1e-4);
@@ -91,7 +131,9 @@ fragment float4 dab_coverage_fragment(DabRasterData in [[stage_in]])
     float inner = min(in.hardness, 1.0 - w);
     float coverage = 1.0 - smoothstep(inner, 1.0, d);
 
-    return float4(coverage * in.flow, 0.0, 0.0, 0.0);
+    coverage *= in.flow;
+    coverage *= grain_modulation(grain, in.grainUV, uniforms.grainDepth);
+    return float4(coverage, 0.0, 0.0, 0.0);
 }
 
 /// Predicted dabs, painted straight onto the finished frame in ink colour.
@@ -100,12 +142,19 @@ fragment float4 dab_coverage_fragment(DabRasterData in [[stage_in]])
 /// now, so a guess stamped there would be baked into the stroke and committed.
 /// Painting over the composited frame instead means it disappears on its own.
 fragment float4 dab_ink_fragment(DabRasterData in [[stage_in]],
-                                 constant float4 &inkColor [[buffer(0)]])
+                                 constant float4 &inkColor [[buffer(0)]],
+                                 texture2d<float> grain [[texture(0)]],
+                                 constant MSDabUniforms &uniforms [[buffer(MSBufferIndexUniforms)]])
 {
     float d = length(in.local);
     float w = max(fwidth(d), 1e-4);
     float inner = min(in.hardness, 1.0 - w);
     float coverage = (1.0 - smoothstep(inner, 1.0, d)) * in.flow;
+
+    // The prediction has to be grained too. It is drawn a frame ahead of the
+    // committed stroke and replaced by it, so an ungrained lookahead would show
+    // as a smooth tip that turns textured as the real dabs catch up.
+    coverage *= grain_modulation(grain, in.grainUV, uniforms.grainDepth);
 
     float alpha = inkColor.a * coverage;
     return float4(inkColor.rgb * alpha, alpha); // premultiplied

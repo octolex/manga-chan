@@ -43,6 +43,31 @@ enum class Accumulation : int32_t {
     Buildup = 1,
 };
 
+/// What the grain is anchored to.
+///
+/// This is not a cosmetic choice between two textures — it decides whether the
+/// grain reads as a property of the *paper* or of the *brush*, and only one of
+/// them survives a stroke crossing its own path unchanged.
+enum class GrainMovement : int32_t {
+    /// Fixed to the canvas, like the tooth of the paper. Every dab covering a
+    /// given canvas pixel samples the same grain value there, so under
+    /// `Maximum` accumulation the grain is exactly invariant to how many dabs
+    /// overlap: max(g·c₁, g·c₂) = g·max(c₁, c₂). That identity is the whole
+    /// reason this mode looks like a surface rather than like a pattern
+    /// printed onto the stroke.
+    Canvas = 0,
+
+    /// Travels with the stroke, as though the brush head carried it. Dry media
+    /// dragged along the paper.
+    ///
+    /// Deliberately does *not* have the invariance above: two dabs at the same
+    /// pixel are at different arc lengths, so they sample different grain and
+    /// overlaps are visible even under `Maximum`. That is correct for the
+    /// medium it imitates, and it is why the two modes cannot share one code
+    /// path with a flag.
+    Rolling = 1,
+};
+
 /// Maps one normalised input channel onto a multiplier.
 ///
 /// `curve` is an exponent rather than a spline. A spline is what a brush
@@ -129,6 +154,27 @@ struct Brush {
     float opacity = 1.0f;
 
     Accumulation accumulation = Accumulation::Maximum;
+
+    // MARK: Grain
+
+    /// How strongly the grain map modulates coverage. 0 ignores it entirely,
+    /// 1 multiplies coverage by the raw map.
+    ///
+    /// Defaults to off, so every brush that existed before grain did behaves
+    /// exactly as it did. Note that the map averages near half, so depth also
+    /// lightens the stroke — which is what happens when a pencil only reaches
+    /// the high points of rough paper, and is the reason depth is one control
+    /// rather than separate "texture" and "opacity" ones.
+    float grainDepth = 0.0f;
+
+    /// Canvas pixels spanned by one repeat of the grain map. Larger is a
+    /// coarser tooth.
+    ///
+    /// In canvas pixels rather than in dab diameters, because paper grain does
+    /// not get finer when you pick up a smaller pencil.
+    float grainScale = 192.0f;
+
+    GrainMovement grainMovement = GrainMovement::Canvas;
 
     // MARK: Dynamics
 

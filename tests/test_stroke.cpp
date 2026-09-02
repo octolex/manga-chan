@@ -296,6 +296,58 @@ void testTaperThinsBothEnds() {
     CHECK(std::fabs(middle - 10.0f) < 0.01f);
 }
 
+void testGrainOffsetTracksArcLength() {
+    std::printf("each dab records how far along the stroke it sits\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.25f;   // a dab every 5 px
+    brush.smoothing = 0.0f;
+
+    StrokePath path = straightLine(brush, 100.0f, 600.0f, 40);
+    const auto& dabs = path.dabs();
+    CHECK(dabs.size() > 90);
+
+    // Rolling grain scrolls the texture by this number, so it has to be arc
+    // length and not dab index — otherwise the grain would advance at a rate
+    // that changed with brush size, and a pencil would scroll its own texture
+    // faster simply for being thinner.
+    CHECK(dabs.front().grainOffset == 0.0f);
+    for (size_t i = 0; i + 1 < dabs.size(); ++i) {
+        CHECK(dabs[i + 1].grainOffset > dabs[i].grainOffset);
+        CHECK(std::fabs((dabs[i + 1].grainOffset - dabs[i].grainOffset) - 5.0f) < 0.6f);
+    }
+
+    // The last dab's offset is the distance walked to reach it, so it sits just
+    // short of the stroke's total length rather than at it.
+    CHECK(dabs.back().grainOffset <= path.length() + 0.001f);
+    CHECK(dabs.back().grainOffset > path.length() - 6.0f);
+}
+
+void testScatterDoesNotDisturbTheGrainOffset() {
+    std::printf("scatter shakes where a dab lands, not how far along it is\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.25f;
+    brush.smoothing = 0.0f;
+
+    StrokePath plain = straightLine(brush, 100.0f, 400.0f, 20);
+
+    brush.scatter = 0.8f;
+    StrokePath scattered = straightLine(brush, 100.0f, 400.0f, 20);
+
+    // Scatter is a lateral shake of the landing point; it is not travel along
+    // the path. If it fed back into the offset, a scattered brush would scroll
+    // its rolling grain at a different rate than the same brush without
+    // scatter, which is not something either control claims to do.
+    CHECK_EQ(static_cast<long long>(plain.dabs().size()),
+             static_cast<long long>(scattered.dabs().size()));
+    for (size_t i = 0; i < plain.dabs().size(); ++i) {
+        CHECK(plain.dabs()[i].grainOffset == scattered.dabs()[i].grainOffset);
+    }
+}
+
 void testJitterIsDeterministic() {
     std::printf("the same seed lays down the same jittered stroke\n");
 
@@ -482,6 +534,8 @@ int main() {
     testNegativeCoordinatesUseFloorDivision();
     testSmoothingPullsThePathIn();
     testTaperThinsBothEnds();
+    testGrainOffsetTracksArcLength();
+    testScatterDoesNotDisturbTheGrainOffset();
     testJitterIsDeterministic();
     testAngleFollowsDirection();
     testATapStillLeavesAMark();

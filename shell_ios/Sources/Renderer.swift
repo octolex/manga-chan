@@ -107,6 +107,12 @@ final class Renderer: NSObject {
     /// until commit.
     private var scratchTexture: MTLTexture?
 
+    /// The grain map every dab is stamped through. Built once: it is a pure
+    /// function of a fixed seed, it is 64 KB, and nothing at runtime changes
+    /// it — depth and scale are uniforms, so the artist's controls never touch
+    /// the texture itself.
+    private var grainTexture: MTLTexture?
+
     private var stroke: BrushStroke?
     private var prediction: BrushStroke?
     private var strokeBuffer: MTLBuffer?
@@ -224,6 +230,14 @@ final class Renderer: NSObject {
         // only in tests.
         engine.setBudgets(residentBytes: 96 * UInt64(engine.tileByteCount),
                           compressedBytes: 32 * 1024 * 1024)
+
+        grainTexture = GrainTexture.make(device: device)
+        if grainTexture == nil {
+            // Not fatal. The shader reads the grain only when depth is above
+            // zero, so a brush with grain switched off draws exactly as before
+            // — losing the texture must not cost us the app.
+            Diagnostics.log("grain texture unavailable; grain will be inert")
+        }
 
         Diagnostics.log("Metal device: \(device.name)")
         Diagnostics.log("  supportsFamily(.apple9): \(device.supportsFamily(.apple9))")
@@ -447,6 +461,20 @@ final class Renderer: NSObject {
         return buffer
     }
 
+    /// Uniforms for both dab passes, built in one place so the committed stroke
+    /// and the predicted tail ahead of it cannot disagree about the grain.
+    ///
+    /// Depth is forced to zero when there is no texture, which makes the
+    /// shader's `depth <= 0` early-out double as the guard that keeps it from
+    /// ever sampling an unbound texture.
+    private func dabUniforms(width: Int, height: Int) -> MSDabUniforms {
+        MSDabUniforms(viewportSize: simd_float2(Float(width), Float(height)),
+                      grainDepth: grainTexture == nil ? 0 : brush.grainDepth,
+                      grainScale: brush.grainScale,
+                      grainMovement: brush.grainMovement,
+                      _pad: 0)
+    }
+
     private func encodeCoverage(in commandBuffer: MTLCommandBuffer) {
         guard let scratch = scratchTexture, let stroke else { return }
 
@@ -468,10 +496,14 @@ final class Renderer: NSObject {
             brush.accumulation == Int32(MC_ACCUMULATION_BUILDUP.rawValue)
                 ? dabBuildupPipeline : dabMaximumPipeline)
 
-        var uniforms = MSDabUniforms(
-            viewportSize: simd_float2(Float(scratch.width), Float(scratch.height)))
+        var uniforms = dabUniforms(width: scratch.width, height: scratch.height)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
                                index: Int(MSBufferIndexUniforms.rawValue))
+        // The fragment stage needs them too: the vertex stage decides *where*
+        // the grain is sampled, the fragment stage how deeply.
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
+                                 index: Int(MSBufferIndexUniforms.rawValue))
+        encoder.setFragmentTexture(grainTexture, index: 0)
 
         let first = coverageNeedsClear ? 0 : stampedDabs
         if count > first, let buffer = dabBuffer(for: stroke) {
@@ -507,10 +539,12 @@ final class Renderer: NSObject {
         encoder.label = "Predicted dabs"
         encoder.setRenderPipelineState(predictionPipeline)
 
-        var uniforms = MSDabUniforms(
-            viewportSize: simd_float2(Float(target.width), Float(target.height)))
+        var uniforms = dabUniforms(width: target.width, height: target.height)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
                                index: Int(MSBufferIndexUniforms.rawValue))
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
+                                 index: Int(MSBufferIndexUniforms.rawValue))
+        encoder.setFragmentTexture(grainTexture, index: 0)
 
         let length = MemoryLayout<MSDab>.stride * prediction.dabCount
         if let buffer = device.makeBuffer(bytes: dabs, length: length,

@@ -30,10 +30,21 @@ typedef struct {
     float flow;
     float roundness;
     float hardness;
+    float grainOffset;  // arc length from the stroke start, for rolling grain
 } MSDab;
+
+// Matches MCGrainMovement in core/brush_api.h.
+typedef enum {
+    MSGrainCanvas = 0,   // grain fixed to the canvas, like the tooth of paper
+    MSGrainRolling = 1   // grain travels with the stroke, like dry media
+} MSGrainMovement;
 
 typedef struct {
     simd_float2 viewportSize;  // drawable size in pixels
+    float grainDepth;          // 0 ignores the grain map entirely
+    float grainScale;          // canvas pixels spanned by one repeat of the map
+    int32_t grainMovement;     // MSGrainMovement
+    int32_t _pad;
 } MSDabUniforms;
 
 typedef struct {

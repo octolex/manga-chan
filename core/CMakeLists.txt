@@ -10,6 +10,7 @@ add_library(core STATIC
     src/layer.cpp
     src/layer_stack.cpp
     src/stroke.cpp
+    src/texture.cpp
     src/tile_spill.cpp
     src/tile_store.cpp
     src/undo.cpp

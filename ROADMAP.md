@@ -164,8 +164,9 @@ disc.
 | ✅ | Brush and dabs across the C ABI, zero-copy into a Metal buffer |
 | ✅ | Instanced dab stamping in Metal, procedural shape |
 | ✅ | Maximum and Buildup accumulation as two blend states over one shader |
-| ⬜ | Textured dabs and grain |
-| ⬜ | Colour picker — blocking several kinds of test, not just a feature |
+| ✅ | Colour picker — blocking several kinds of test, not just a feature |
+| ✅ | Grain: a seamless procedural map, anchored to the canvas or to the stroke |
+| ⬜ | Textured dab shapes on the same sampler |
 | ⬜ | Brush editor UI, and a starter set of manga brushes |
 | ⬜ | Per-tile dab culling once the canvas is larger than the screen |
 
@@ -193,7 +194,44 @@ no turn sharper than 0.05 rad and no dab further than 2 px off the true arc.
 The faceting bug from M0 could not survive that, and neither could a
 regression in it.
 
-**19,631 checks** in the stroke suite alone, on Linux and Windows, in ~40 s.
+**21,002 checks** across the engine suite, on Linux and Windows, in ~40 s.
+
+### Grain
+
+The grain map is **generated, not loaded**. That defers the asset-format
+question to the brush editor, where it belongs, and it buys something an asset
+file could not: the map is a pure function of a seed, so bit-identical grain
+exists in the C++ suite, in the simulator harness, and on the device with
+nothing crossing between them. It is what lets the Metal sampler be pinned
+against the engine's own CPU sampler pixel by pixel.
+
+Seamlessness is the part that had to be built in rather than tested for
+afterwards: every octave's lattice is indexed modulo its own period, so the map
+tiles by construction. Measured across the join, the step is **0.34** against
+**3.16** for an average step inside the map — a seam smoother than the texture
+around it. Butting two *different* grains together, which is what a
+non-wrapping generator effectively produces at every tile boundary, gives
+**55.6**. The test asserts both, so it cannot pass by having no teeth.
+
+The two anchoring modes are not two textures, they are the question of what the
+grain belongs to:
+
+- **Canvas** anchors to the pixel, so every dab covering a pixel finds the same
+  grain there. Under `Maximum` accumulation the grain is then exactly invariant
+  to overlap, since max(g·c₁, g·c₂) = g·max(c₁, c₂). That identity is why it
+  reads as paper the stroke is drawn on rather than as a pattern printed onto
+  the stroke, and it is asserted directly in CI.
+- **Rolling** anchors to the dab, scrolled by the arc length the engine records
+  per dab, so the texture travels with the brush. It deliberately gives up that
+  invariance — two dabs at one pixel are at different arc lengths — which is
+  correct for dry media and wrong for paper.
+
+**Verified in CI, not yet on device.** The shader's grain is compared against
+`mc_grain_sample` over ~600 pixels of a dab's interior, worst difference within
+3 of 255 — quantisation and the sampler's 8-bit sub-texel weights, not
+disagreement. A flipped V or a missing half-texel misses by far more, and
+neither is visible in a screenshot, which is the entire argument for testing it
+this way.
 
 ### Decisions worth revisiting
 
@@ -208,6 +246,13 @@ regression in it.
 - **The dab shape is procedural.** A textured dab slots into the same place
   later; a procedural disc has no sampling error at any size, which makes it
   the right thing to pin the engine against while the geometry is being proven.
+  The sampler that shape textures will use now exists, built for grain — what
+  is left is the shape map itself and the tile capture, which has to widen from
+  the dab's radius to its corner once a stamp can put ink outside the disc.
+- **Grain multiplies coverage per dab, not the finished stroke.** Tinting the
+  whole stroke once would be cheaper and would be stable under both
+  accumulation modes, but it cannot express rolling grain at all, and per-dab
+  is the general mechanism a shape texture needs anyway.
 - **The response curve is an exponent, not a spline.** It covers ease-in,
   linear and ease-out in four bytes with no allocation, and every call site
   survives the swap. But a brush editor that exposes a curve control needs the

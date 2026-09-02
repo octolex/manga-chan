@@ -96,6 +96,10 @@ targets:
       # rather than judged by eye on the device.
       - path: Sources/Shaders.metal
       - path: Sources/ShaderTypes.h
+      # The grain builder, so the harness pins the Metal sampler against the
+      # very bytes the app uploads rather than against a second copy of the
+      # upload path that would quietly drift from it.
+      - path: Sources/GrainTexture.swift
     dependencies:
       - target: MangaChan
       # Linked directly as well as through the host app: a hosted test bundle

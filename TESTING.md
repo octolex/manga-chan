@@ -22,6 +22,23 @@ list. Everything else gets a unit test and never touches the iPad.
 | 58 | Panel does not leak touches | Draw a stroke starting on the panel | Nothing appears underneath it |
 | 59 | Sliders survive their drag | Drag each one edge to edge without lifting | Tracks the whole way, value updates live |
 
+## Pending — grain
+
+CI already pins the grain arithmetic against the engine's CPU sampler, so what
+is left here is only what a test cannot see: whether it looks like paper, and
+whether it costs a frame.
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 60 | Depth off is off | Grain Depth at 0, draw | Identical to a stroke before grain existed — flat, no lightening |
+| 61 | Depth reads as tooth | Depth ~70%, draw slowly | Broken, textured edge. The stroke also gets lighter — that is the medium, not a bug |
+| 62 | Scale | Scale from 24 px to 600 px, draw at each | Fine tooth through to coarse blotches. No repeating grid at any setting |
+| 63 | Canvas grain ignores the stroke | Canvas mode, cross a stroke back over itself | The texture in the crossing matches its surroundings — it belongs to the paper |
+| 64 | Rolling grain follows the stroke | Rolling mode, same crossing | The crossing **does** show. Both directions carry their own grain |
+| 65 | Grain costs no frame budget | Depth 100%, long fast stroke, watch `gpu` | Flat, and level with a Depth-0 stroke |
+| 66 | Grain survives commit and undo | Draw grained, lift, undo, redo | Returns identical — the map is seeded, not random |
+| 67 | Prediction is grained too | Depth 100%, draw fast, watch the leading tip | The tip ahead of the pen is textured, not a smooth lead-in that turns rough |
+
 ## Pending — UI regressions to confirm
 
 | # | What | How | Expected |
@@ -33,8 +50,12 @@ list. Everything else gets a unit test and never touches the iPad.
 
 Not bugs; do not report these until the milestone that addresses them.
 
-- **Square stroke ends.** Round caps arrive with dab stamping at M3.
-- **No texture.** There is no brush engine yet — strokes are smooth geometry.
+- **Dab shapes are procedural discs.** Grain textures the *coverage*; the dab
+  itself is still an analytic circle, so there is no bristle or stamp shape
+  yet. A shape map goes through the same sampler the grain now uses.
+- **One grain map.** It is generated from a fixed seed rather than chosen, so
+  there is nothing to switch between until the brush library exists. Depth and
+  Scale are the whole of the control surface.
 - **No brush library.** Settings can be changed but not saved, named, or
   switched between. One brush at a time until the brush editor proper.
 - **Tilt tops out near 86°, not 90°.** Measured on the Pencil Pro: the
@@ -89,6 +110,10 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-01 | Self-crossing does not darken (max vs buildup) | Pass, in CI on the simulator |
 | 2026-09-01 | Coverage accumulates rather than redrawing; `gpu` flat over a long stroke | Pass |
 | 2026-09-01 | Prediction survives the move onto the composited frame | Pass |
+| 2026-09-02 | Grain tiles seamlessly: seam step 0.34 vs 3.16 inside the map | Pass, in CI |
+| 2026-09-02 | Metal grain sampler matches the engine reference | Pass, in CI — worst 3 of 255 over ~600 px |
+| 2026-09-02 | Canvas grain unchanged by overlapping dabs under Maximum | Pass, in CI |
+| 2026-09-02 | Rolling grain scrolls with arc length; canvas grain ignores it | Pass, in CI |
 
 Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:

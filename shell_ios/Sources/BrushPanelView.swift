@@ -134,6 +134,24 @@ final class BrushPanelView: UIView {
         stack.addArrangedSubview(separator())
         stack.addArrangedSubview(heading("Accumulation"))
         stack.addArrangedSubview(accumulationControl())
+
+        stack.addArrangedSubview(separator())
+        stack.addArrangedSubview(heading("Grain"))
+
+        stack.addArrangedSubview(slider(
+            "Depth", key: "grainDepth", value: brush.grainDepth, range: 0...1,
+            format: { $0 < 0.005 ? "off" : "\(Int($0 * 100))%" },
+            apply: { $0.grainDepth = $1 }))
+
+        // In canvas pixels, and over a wide range, because the two ends are
+        // different media rather than two settings of one: fine is a tooth the
+        // ink catches on, coarse is a texture the stroke sits inside.
+        stack.addArrangedSubview(slider(
+            "Scale", key: "grainScale", value: brush.grainScale, range: 24...600,
+            format: { String(format: "%.0f px", $0) },
+            apply: { $0.grainScale = $1 }))
+
+        stack.addArrangedSubview(grainMovementControl())
     }
 
     /// Called when the panel opens, so it shows what is actually in effect
@@ -226,6 +244,35 @@ final class BrushPanelView: UIView {
         note.textColor = UIColor(white: 1, alpha: 0.45)
         note.text = "Maximum never darkens where a stroke crosses itself. "
                   + "Buildup does — set Flow below 100% to see the difference."
+
+        let row = UIStackView(arrangedSubviews: [control, note])
+        row.axis = .vertical
+        row.spacing = 8
+        return row
+    }
+
+    private func grainMovementControl() -> UIView {
+        let control = UISegmentedControl(items: ["Canvas", "Rolling"])
+        control.selectedSegmentIndex = brush.grainMovement == Int32(MC_GRAIN_ROLLING.rawValue) ? 1 : 0
+        control.selectedSegmentTintColor = UIColor(red: 0.16, green: 0.42, blue: 0.85, alpha: 1)
+        control.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        control.addAction(UIAction { [weak self] act in
+            guard let self, let segmented = act.sender as? UISegmentedControl else { return }
+            brush.grainMovement = segmented.selectedSegmentIndex == 1
+                ? Int32(MC_GRAIN_ROLLING.rawValue) : Int32(MC_GRAIN_CANVAS.rawValue)
+            delegate?.brushPanel(self, didChange: brush)
+        }, for: .valueChanged)
+
+        let note = UILabel()
+        note.numberOfLines = 0
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = UIColor(white: 1, alpha: 0.45)
+        // Says what to *do* to tell them apart, because the difference is
+        // invisible on a single straight stroke and obvious the moment one
+        // crosses itself.
+        note.text = "Canvas pins the grain to the paper, so a stroke crossing "
+                  + "its own path finds the same texture there. Rolling carries "
+                  + "it along the stroke, so crossings show."
 
         let row = UIStackView(arrangedSubviews: [control, note])
         row.axis = .vertical
