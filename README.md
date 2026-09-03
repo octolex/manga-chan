@@ -68,6 +68,9 @@ That URL is a fixed tag whose `source.json` asset every build replaces, so it
 never changes. Do not delete the `sidestore-source` release; the tag *is* the
 contract.
 
+Full rules — what each number means, when it changes, and what 1.0 will
+require — are in [docs/versioning.md](docs/versioning.md).
+
 ### Why the version number moves
 
 `project.yml` pins `MARKETING_VERSION` to `0.0.1` for local builds, but CI
@@ -82,12 +85,12 @@ because that failure is silent.
 Where the project is, and what the words mean. Each release is marked with its
 stage in the title and flagged as a GitHub pre-release.
 
-| Stage | Means | When |
+| Stage | Means | Version |
 |---|---|---|
-| **internal pre-alpha** | Incomplete. Features still being built, known-broken things documented rather than fixed. Author's device only. | **Now**, until every milestone in ROADMAP.md is done |
-| **internal alpha** | Feature-complete against the roadmap, still author-only, expect bugs | After the last milestone lands |
-| **beta** | Stable enough for testers who are not the author | If it ever goes beyond one person |
-| **1.0** | No longer pre-release | Far off |
+| **internal pre-alpha** | Incomplete. Known-broken things documented rather than fixed. Author's device only. | `0.x.y` while milestones remain |
+| **internal alpha** | Feature-complete against the roadmap, still author-only | `0.x.y` after the last milestone |
+| **beta** | Stable enough for people who are not the author | `1.0.0-beta.n` |
+| **release** | No longer pre-release | `1.0.0` |
 
 Everything published so far is pre-alpha and none of it is a public build.
 

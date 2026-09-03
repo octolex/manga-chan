@@ -45,7 +45,13 @@ jobs:
           # hardcodes 0.0.1 for local builds — left alone, every build would
           # look identical to the one already installed and no update would ever
           # be offered. The run number is monotonic and never reused.
-          VERSION="0.1.${{ github.run_number }}"
+          # Series comes from the VERSION file — the milestone in progress, bumped
+          # deliberately when one closes. Build is the CI run number: global,
+          # monotonic, never reset, never chosen by hand. See docs/versioning.md.
+          SERIES=$(tr -d '[:space:]' < VERSION)
+          echo "$SERIES" | grep -Eq '^[0-9]+\.[0-9]+$' \
+            || { echo "::error::VERSION must be MAJOR.MINOR, got '$SERIES'"; exit 1; }
+          VERSION="$SERIES.${{ github.run_number }}"
           {
             echo "version=$VERSION"
             echo "tag=v$VERSION"
