@@ -52,12 +52,22 @@ jobs:
           echo "$SERIES" | grep -Eq '^[0-9]+\.[0-9]+$' \
             || { echo "::error::VERSION must be MAJOR.MINOR, got '$SERIES'"; exit 1; }
           VERSION="$SERIES.${{ github.run_number }}"
+
+          # On a pull_request event github.sha is the throwaway merge commit
+          # GitHub builds to test the PR. It belongs to no branch, so tagging it
+          # produces a release whose target is unreachable from main and a
+          # "commits since the previous tag" range computed against a commit
+          # that is not in the history. Both happened: v0.1.72 and v0.3.73 point
+          # at 498e5be9 and dc206970, neither of which main can reach.
+          # The PR head is a real commit on a real branch, so tag that instead.
+          SHA="${{ github.event.pull_request.head.sha || github.sha }}"
           {
             echo "version=$VERSION"
             echo "tag=v$VERSION"
             echo "build=${{ github.run_number }}"
+            echo "sha=$SHA"
           } >> "$GITHUB_OUTPUT"
-          echo "Building $VERSION (build ${{ github.run_number }})"
+          echo "Building $VERSION (build ${{ github.run_number }}) from $SHA"
 
       - name: Show toolchain versions
         run: |
@@ -234,10 +244,18 @@ jobs:
           set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.version.outputs.sha }}"
 
           # Commits since the previous build, so a release says what changed
           # rather than only that it exists.
-          PREVIOUS=$(git tag -l 'v0.1.*' --sort=-version:refname | head -n 1 || true)
+          # Any release tag, in any series — the glob used to read 'v0.1.*',
+          # which stopped matching the moment VERSION moved to 0.3 and left
+          # every later release measuring its changes against v0.1.72. Version
+          # sort is the right order because the build number is monotonic and
+          # never reset, so 0.4.100 sorts above 0.3.99 exactly as it should.
+          # $TAG is excluded so re-running a build does not diff against itself.
+          PREVIOUS=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname \
+                       | grep -vx "$TAG" | head -n 1 || true)
           if [ -n "$PREVIOUS" ]; then
             RANGE="$PREVIOUS..HEAD"
             SINCE="since $PREVIOUS"
@@ -267,11 +285,27 @@ jobs:
             echo
             echo "### Changes ($SINCE)"
             echo
-            cat changes.txt
+            # A merge-to-main build usually has nothing to list: the previous
+            # tag sits on the PR head, which the merge commit descends from, and
+            # --no-merges drops the merge itself. That is not an error, but an
+            # empty heading is not documentation either — say which release
+            # already described this code.
+            if [ -s changes.txt ]; then
+              cat changes.txt
+            elif [ -n "$PREVIOUS" ]; then
+              echo "No new commits since [$PREVIOUS](https://github.com/${{ github.repository }}/releases/tag/$PREVIOUS)."
+              echo "This build is that same code, built on \`${{ github.ref_name }}\`."
+            else
+              echo "No commit history available for this build."
+            fi
             echo
             echo "---"
             echo
-            echo "Built from \`${{ github.sha }}\` by run [${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            if [ -n "${{ github.event.pull_request.head.sha }}" ]; then
+              echo "Built from \`$SHA\` merged into \`${{ github.base_ref }}\` by run [${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            else
+              echo "Built from \`$SHA\` by run [${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            fi
           } > notes.md
 
           # Re-running a build must not fail on an existing tag.
@@ -281,7 +315,7 @@ jobs:
             --title "Manga-Chan $VERSION — internal pre-alpha" \
             --notes-file notes.md \
             --prerelease \
-            --target "${{ github.sha }}"
+            --target "$SHA"
 
           echo "Published $TAG"
 
@@ -292,6 +326,7 @@ jobs:
           set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.version.outputs.sha }}"
           SIZE=$(stat -f%z MangaChan.ipa)
           DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           BASE="https://github.com/${{ github.repository }}/releases/download"
@@ -318,14 +353,14 @@ jobs:
                 "category": "entertainment",
                 "version": "$VERSION",
                 "versionDate": "$DATE",
-                "versionDescription": "Internal pre-alpha build $VERSION, from ${{ github.sha }}.",
+                "versionDescription": "Internal pre-alpha build $VERSION, from $SHA.",
                 "downloadURL": "$BASE/$TAG/MangaChan.ipa",
                 "size": $SIZE,
                 "versions": [
                   {
                     "version": "$VERSION",
                     "date": "$DATE",
-                    "localizedDescription": "Internal pre-alpha build $VERSION, from ${{ github.sha }}.",
+                    "localizedDescription": "Internal pre-alpha build $VERSION, from $SHA.",
                     "downloadURL": "$BASE/$TAG/MangaChan.ipa",
                     "size": $SIZE,
                     "minOSVersion": "17.0"
