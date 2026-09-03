@@ -41,13 +41,14 @@ typedef struct {
     float flow;       /* per-dab alpha, before stroke opacity */
     float roundness;  /* 1 circular, below that flattened along `angle` */
     float hardness;   /* 1 hard edge, 0 fades from the centre */
+    float grainOffset;/* arc length from the stroke start, for rolling grain */
 } MCDab;
 
-/* Matches mc::Accumulation. */
+/* Matches mc::GrainMovement. */
 typedef enum {
-    MC_ACCUMULATION_MAXIMUM = 0,  /* coverage takes the max; never self-darkens */
-    MC_ACCUMULATION_BUILDUP = 1,  /* coverage alpha-composites; dense passes darken */
-} MCAccumulation;
+    MC_GRAIN_CANVAS = 0,   /* fixed to the canvas, like the tooth of the paper */
+    MC_GRAIN_ROLLING = 1,  /* travels with the stroke, like dry media dragged */
+} MCGrainMovement;
 
 /* Matches mc::Response. */
 typedef struct {
@@ -79,9 +80,12 @@ typedef struct {
     float angle;
     int32_t angleFollowsDirection;
 
-    float flow;
-    float opacity;
-    int32_t accumulation;      /* MCAccumulation */
+    float flow;                /* ink per dab; density accumulates across them */
+    float opacity;             /* ceiling on the finished stroke */
+
+    float grainDepth;          /* tooth height; ink is thresholded against it */
+    float grainScale;          /* canvas pixels per repeat of the map */
+    int32_t grainMovement;     /* MCGrainMovement */
 
     MCModulation sizeDynamics;
     MCModulation flowDynamics;
@@ -102,6 +106,31 @@ typedef struct {
 
 /* The default inking brush: hard edge, tight spacing, width on pressure. */
 MCBrush mc_brush_ink_pen(void);
+
+/*
+ * Fills `out` with a seamlessly tiling grain map: `size` x `size` single-channel
+ * 8-bit texels, row-major from the top left. Returns the number of bytes
+ * written, or 0 if `capacity` is too small.
+ *
+ * Generated rather than loaded from an asset. That keeps the asset-format
+ * decision inside the brush editor milestone where it belongs, and it means the
+ * map is a pure function of its seed — so the grain the shader samples on the
+ * device is bit-identical to the one the C++ suite and the simulator harness
+ * check against, with no file crossing between them.
+ *
+ * Upload the result as an r8Unorm texture with a repeating, linear sampler.
+ * Those two choices are not incidental: repeat is what makes the tiling
+ * seamless, and linear is what mc::AlphaTexture::sample reproduces.
+ */
+size_t mc_grain_generate(int32_t size, uint64_t seed, uint8_t* out, size_t capacity);
+
+/*
+ * The grain value the shader is expected to read at a point, for tests.
+ * `u` and `v` are in map space, where 1.0 is one full repeat. This is the
+ * reference the Metal sampler is pinned against — a flipped V or a half-texel
+ * offset between the two is invisible on screen and obvious here.
+ */
+float mc_grain_sample(const uint8_t* map, int32_t size, float u, float v);
 
 typedef struct MCStrokePath MCStrokePath;
 
