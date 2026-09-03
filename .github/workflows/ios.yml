@@ -25,8 +25,33 @@ jobs:
     name: Test and build unsigned .ipa
     runs-on: macos-15
 
+    # Publishing releases needs write access to repository contents. Nothing
+    # else in this workflow writes anything, so this is the only elevation.
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Release notes are built from the commits since the previous tag, and
+          # the default shallow clone has none of them.
+          fetch-depth: 0
+
+      - name: Version this build
+        id: version
+        run: |
+          # The marketing version MUST change on every build. SideStore decides
+          # whether an update exists by comparing this string, and project.yml
+          # hardcodes 0.0.1 for local builds — left alone, every build would
+          # look identical to the one already installed and no update would ever
+          # be offered. The run number is monotonic and never reused.
+          VERSION="0.1.${{ github.run_number }}"
+          {
+            echo "version=$VERSION"
+            echo "tag=v$VERSION"
+            echo "build=${{ github.run_number }}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION (build ${{ github.run_number }})"
 
       - name: Show toolchain versions
         run: |
@@ -151,6 +176,8 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION=${{ steps.version.outputs.version }} \
+            CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build }} \
             build
 
       - name: Verify app bundle
@@ -161,6 +188,15 @@ jobs:
           # A missing metallib is a silent black screen on device, so catch it here.
           test -f "$APP/default.metallib" \
             || { echo "::error::default.metallib missing — the .metal file did not compile"; exit 1; }
+
+          # The version override is passed on the xcodebuild command line, so a
+          # typo or a renamed build setting would fail silently and ship a build
+          # that still calls itself 0.0.1 — which SideStore would ignore forever.
+          # Cheaper to assert it than to debug an update that never arrives.
+          STAMPED=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Info.plist")
+          echo "Info.plist reports version $STAMPED"
+          test "$STAMPED" = "${{ steps.version.outputs.version }}" \
+            || { echo "::error::version not stamped — plist says '$STAMPED', expected '${{ steps.version.outputs.version }}'"; exit 1; }
 
           lipo -info "$APP/MangaChan"
           echo "Bundle contents:"
@@ -174,10 +210,137 @@ jobs:
           zip -qry MangaChan.ipa Payload
           ls -lh MangaChan.ipa
 
-      - name: Upload .ipa
+      # Kept alongside the release: artifacts are authenticated and expire in 30
+      # days, which is fine as a build log attachment and useless as a download
+      # target. The release is the one SideStore reads.
+      - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
         with:
           name: MangaChan-ipa
           path: MangaChan.ipa
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Commits since the previous build, so a release says what changed
+          # rather than only that it exists.
+          PREVIOUS=$(git tag -l 'v0.1.*' --sort=-version:refname | head -n 1 || true)
+          if [ -n "$PREVIOUS" ]; then
+            RANGE="$PREVIOUS..HEAD"
+            SINCE="since $PREVIOUS"
+          else
+            RANGE="HEAD~10..HEAD"
+            SINCE="last 10 commits"
+          fi
+          git log --no-merges --pretty='- %s' "$RANGE" > changes.txt 2>/dev/null || git log --no-merges -10 --pretty='- %s' > changes.txt
+
+          {
+            echo "> **Internal pre-alpha.** Not a public build. Milestones M3 onward"
+            echo "> are still open — see [ROADMAP.md](https://github.com/${{ github.repository }}/blob/main/ROADMAP.md)"
+            echo "> for what works and [TESTING.md](https://github.com/${{ github.repository }}/blob/main/TESTING.md)"
+            echo "> for what is known broken."
+            echo
+            echo "### Install"
+            echo
+            echo "Through the SideStore source, which offers this as an update automatically:"
+            echo
+            echo '```'
+            echo "https://github.com/${{ github.repository }}/releases/download/sidestore-source/source.json"
+            echo '```'
+            echo
+            echo "The \`.ipa\` below also installs directly. It is **unsigned** — SideStore"
+            echo "signs it on device with your free Apple ID, so it stops launching 7 days"
+            echo "after install and reinstalling resets that."
+            echo
+            echo "### Changes ($SINCE)"
+            echo
+            cat changes.txt
+            echo
+            echo "---"
+            echo
+            echo "Built from \`${{ github.sha }}\` by run [${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          } > notes.md
+
+          # Re-running a build must not fail on an existing tag.
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+
+          gh release create "$TAG" MangaChan.ipa \
+            --title "Manga-Chan $VERSION — internal pre-alpha" \
+            --notes-file notes.md \
+            --prerelease \
+            --target "${{ github.sha }}"
+
+          echo "Published $TAG"
+
+      - name: Refresh the SideStore source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          SIZE=$(stat -f%z MangaChan.ipa)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          BASE="https://github.com/${{ github.repository }}/releases/download"
+
+          # The app object carries `version`/`downloadURL` at the top level AND a
+          # `versions` array holding the same thing. That duplication is
+          # deliberate: SideStore requires the top-level downloadURL even when a
+          # versions array is present, where AltStore infers it from the newest
+          # entry. SideStore's own published source does the same.
+          cat > source.json <<JSON
+          {
+            "name": "Manga-Chan (internal)",
+            "identifier": "com.octolex.mangachan.source",
+            "sourceURL": "$BASE/sidestore-source/source.json",
+            "apps": [
+              {
+                "name": "Manga-Chan",
+                "bundleIdentifier": "com.octolex.mangachan",
+                "developerName": "octolex",
+                "subtitle": "Internal pre-alpha — manga drawing app for iPad",
+                "localizedDescription": "A manga-oriented drawing app for iPad. Internal pre-alpha: the tiled canvas, compositor and brush engine work; grain and several brush settings do not yet. See ROADMAP.md and TESTING.md in the repository.",
+                "iconURL": "https://avatars.githubusercontent.com/u/4704228?v=4",
+                "tintColor": "2A6BD9",
+                "category": "entertainment",
+                "version": "$VERSION",
+                "versionDate": "$DATE",
+                "versionDescription": "Internal pre-alpha build $VERSION, from ${{ github.sha }}.",
+                "downloadURL": "$BASE/$TAG/MangaChan.ipa",
+                "size": $SIZE,
+                "versions": [
+                  {
+                    "version": "$VERSION",
+                    "date": "$DATE",
+                    "localizedDescription": "Internal pre-alpha build $VERSION, from ${{ github.sha }}.",
+                    "downloadURL": "$BASE/$TAG/MangaChan.ipa",
+                    "size": $SIZE,
+                    "minOSVersion": "17.0"
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+
+          python3 -c "import json,sys; json.load(open('source.json'))" \
+            || { echo "::error::source.json is not valid JSON"; exit 1; }
+          cat source.json
+
+          # A fixed tag, so the URL added to SideStore never changes. Created
+          # once, then only its asset is replaced.
+          gh release view sidestore-source >/dev/null 2>&1 || \
+            gh release create sidestore-source \
+              --title "SideStore source (do not delete)" \
+              --notes "The app source SideStore reads. Its \`source.json\` asset is replaced by every build so this tag's URL stays stable. Deleting this release breaks updates for anyone who added the source." \
+              --prerelease
+
+          gh release upload sidestore-source source.json --clobber
+          echo "Source now points at $TAG"

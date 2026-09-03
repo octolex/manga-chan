@@ -96,6 +96,15 @@ targets:
       # rather than judged by eye on the device.
       - path: Sources/Shaders.metal
       - path: Sources/ShaderTypes.h
+      # The grain builder, so the harness pins the Metal sampler against the
+      # very bytes the app uploads rather than against a second copy of the
+      # upload path that would quietly drift from it.
+      - path: Sources/GrainTexture.swift
+      # The colour picker and the scroll view it lives in. Three bugs reached
+      # the device here in one build, all of them visible in a screenshot and
+      # invisible to every test we had.
+      - path: Sources/ColorPickerView.swift
+      - path: Sources/RestorableScrollView.swift
     dependencies:
       - target: MangaChan
       # Linked directly as well as through the host app: a hosted test bundle

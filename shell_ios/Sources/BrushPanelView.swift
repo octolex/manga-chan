@@ -111,9 +111,14 @@ final class BrushPanelView: UIView {
             format: { "\(Int($0 * 100))%" },
             apply: { $0.opacity = $1 }))
 
+        // Flow is the accumulation control now, not a second opacity. At 100%
+        // one pass saturates and a self-crossing cannot darken; below that the
+        // passes build. The Maximum/Buildup switch that used to sit at the
+        // bottom of this panel was the two ends of this slider wearing a
+        // disguise, and it made Flow and Opacity redundant at one of them.
         stack.addArrangedSubview(slider(
             "Flow", key: "flow", value: brush.flow, range: 0.02...1,
-            format: { "\(Int($0 * 100))%" },
+            format: { $0 > 0.995 ? "100% — solid" : "\(Int($0 * 100))%" },
             apply: { $0.flow = $1 }))
 
         stack.addArrangedSubview(slider(
@@ -132,8 +137,22 @@ final class BrushPanelView: UIView {
             apply: { $0.spacing = $1 }))
 
         stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(heading("Accumulation"))
-        stack.addArrangedSubview(accumulationControl())
+        stack.addArrangedSubview(heading("Grain"))
+
+        stack.addArrangedSubview(slider(
+            "Depth", key: "grainDepth", value: brush.grainDepth, range: 0...1,
+            format: { $0 < 0.005 ? "off" : "\(Int($0 * 100))%" },
+            apply: { $0.grainDepth = $1 }))
+
+        // In canvas pixels, and over a wide range, because the two ends are
+        // different media rather than two settings of one: fine is a tooth the
+        // ink catches on, coarse is a texture the stroke sits inside.
+        stack.addArrangedSubview(slider(
+            "Scale", key: "grainScale", value: brush.grainScale, range: 24...600,
+            format: { String(format: "%.0f px", $0) },
+            apply: { $0.grainScale = $1 }))
+
+        stack.addArrangedSubview(grainMovementControl())
     }
 
     /// Called when the panel opens, so it shows what is actually in effect
@@ -208,15 +227,15 @@ final class BrushPanelView: UIView {
         return row
     }
 
-    private func accumulationControl() -> UIView {
-        let control = UISegmentedControl(items: ["Maximum", "Buildup"])
-        control.selectedSegmentIndex = brush.accumulation == Int32(MC_ACCUMULATION_BUILDUP.rawValue) ? 1 : 0
+    private func grainMovementControl() -> UIView {
+        let control = UISegmentedControl(items: ["Canvas", "Rolling"])
+        control.selectedSegmentIndex = brush.grainMovement == Int32(MC_GRAIN_ROLLING.rawValue) ? 1 : 0
         control.selectedSegmentTintColor = UIColor(red: 0.16, green: 0.42, blue: 0.85, alpha: 1)
         control.heightAnchor.constraint(equalToConstant: 32).isActive = true
         control.addAction(UIAction { [weak self] act in
             guard let self, let segmented = act.sender as? UISegmentedControl else { return }
-            brush.accumulation = segmented.selectedSegmentIndex == 1
-                ? Int32(MC_ACCUMULATION_BUILDUP.rawValue) : Int32(MC_ACCUMULATION_MAXIMUM.rawValue)
+            brush.grainMovement = segmented.selectedSegmentIndex == 1
+                ? Int32(MC_GRAIN_ROLLING.rawValue) : Int32(MC_GRAIN_CANVAS.rawValue)
             delegate?.brushPanel(self, didChange: brush)
         }, for: .valueChanged)
 
@@ -224,8 +243,12 @@ final class BrushPanelView: UIView {
         note.numberOfLines = 0
         note.font = .systemFont(ofSize: 11)
         note.textColor = UIColor(white: 1, alpha: 0.45)
-        note.text = "Maximum never darkens where a stroke crosses itself. "
-                  + "Buildup does — set Flow below 100% to see the difference."
+        // Says what to *do* to tell them apart, because the difference is
+        // invisible on a single straight stroke and obvious the moment one
+        // crosses itself.
+        note.text = "Canvas pins the grain to the paper, so a stroke crossing "
+                  + "its own path finds the same texture there. Rolling carries "
+                  + "it along the stroke, so crossings show."
 
         let row = UIStackView(arrangedSubviews: [control, note])
         row.axis = .vertical

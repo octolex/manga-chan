@@ -86,6 +86,18 @@ struct Dab {
 
     /// Edge falloff, carried per dab so a future dynamic can drive it.
     float hardness = 1.0f;
+
+    /// Arc length from the start of the stroke, in canvas pixels.
+    ///
+    /// Carried for `GrainMovement::Rolling`, which scrolls the grain along the
+    /// stroke and therefore needs to know how far this dab is into it. Canvas
+    /// grain ignores it and derives its coordinate from the pixel position.
+    ///
+    /// It is here rather than in a uniform because it differs per dab and the
+    /// GPU has no way to recover it: arc length is what the walk in
+    /// `emitSegment` produces and nothing downstream can reconstruct it from
+    /// positions alone once smoothing and scatter have moved the dabs.
+    float grainOffset = 0.0f;
 };
 
 /// Turns a growing list of samples into a growing list of dabs.

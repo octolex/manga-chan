@@ -25,22 +25,27 @@
 
 namespace mc {
 
-/// How overlapping dabs within a single stroke combine.
+/// What the grain is anchored to.
 ///
-/// This is the single most consequential brush setting, because it decides
-/// whether a stroke can darken itself. It is a rendering mode, not a slider:
-/// the two paths differ in the blend state of the coverage pass.
-enum class Accumulation : int32_t {
-    /// Coverage takes the maximum. A pixel covered ten times looks exactly
-    /// like a pixel covered once, so a stroke never beads where it overlaps
-    /// itself or crosses back over its own path. This is what an inking pen
-    /// wants, and it is why a semi-transparent stroke stays even.
-    Maximum = 0,
+/// This is not a cosmetic choice between two textures — it decides whether the
+/// grain reads as a property of the *paper* or of the *brush*, and only one of
+/// them survives a stroke crossing its own path unchanged.
+enum class GrainMovement : int32_t {
+    /// Fixed to the canvas, like the tooth of the paper. Every dab covering a
+    /// given canvas pixel breaks against the same tooth height there, so the
+    /// texture belongs to the surface rather than to the stroke — two passes
+    /// over one spot find the same grain, which is what makes it read as paper
+    /// the drawing sits on rather than as a pattern printed onto the line.
+    Canvas = 0,
 
-    /// Coverage accumulates with alpha-over. Slow, dense passes build up
-    /// darker than fast ones, which is what a soft airbrush or a wash wants.
-    /// The cost is that self-crossings *are* visible — correctly so.
-    Buildup = 1,
+    /// Travels with the stroke, as though the brush head carried it. Dry media
+    /// dragged along the paper.
+    ///
+    /// Deliberately gives up the property above: two dabs at the same pixel
+    /// are at different arc lengths, so they break against different grain and
+    /// overlaps show. That is correct for the medium it imitates, and it is
+    /// why the two modes cannot share one code path with a flag.
+    Rolling = 1,
 };
 
 /// Maps one normalised input channel onto a multiplier.
@@ -119,16 +124,50 @@ struct Brush {
 
     // MARK: Ink
 
-    /// Per-dab alpha. Under `Maximum` accumulation this sets the ceiling a
-    /// single stroke can reach; under `Buildup` it sets how fast it gets there.
+    /// Ink laid down per dab. Density accumulates across dabs, so this decides
+    /// how fast a stroke reaches full strength — and therefore whether it
+    /// darkens where it crosses itself.
+    ///
+    /// At 1 a single pass saturates immediately, so overlaps cannot darken and
+    /// the stroke reads as ink. Below 1 the passes build, which is what a
+    /// pencil or an airbrush does. There is deliberately no mode switch: the
+    /// two behaviours are the ends of this one control, as in Photoshop. A
+    /// switch made `flow` and `opacity` redundant at one end of it, since both
+    /// then scaled the same final alpha and only their product mattered.
     float flow = 1.0f;
 
-    /// Stroke-level alpha, applied once when the finished stroke is composited
-    /// rather than per dab — which is precisely what stops a stroke from
-    /// darkening where it crosses itself.
+    /// Stroke-level alpha, applied once when the finished stroke is
+    /// composited. A ceiling on the whole stroke rather than a per-dab
+    /// multiplier, so lowering it never makes overlaps appear.
     float opacity = 1.0f;
 
-    Accumulation accumulation = Accumulation::Maximum;
+    // MARK: Grain
+
+    /// How high the paper's tooth stands, 0 to 1. Ink is *thresholded*
+    /// against it rather than scaled by it: pigment sticks where it has more
+    /// to give than the tooth takes, and misses entirely where it has less.
+    ///
+    /// Multiplying was the first attempt and it was wrong. It lightened the
+    /// whole stroke uniformly — a veil laid over the line — where real media
+    /// leaves a solid body and a broken edge. Thresholding puts the texture
+    /// where the ink is thin, which is where a surface actually shows through.
+    ///
+    /// The consequence worth knowing: at `flow` 1 the body of a stroke is
+    /// fully covered, so no tooth shows there and only the edges break. Lower
+    /// `flow` to bring the grain into the body. That is not a limitation — it
+    /// is the same reason a marker hides paper texture and a pencil does not.
+    ///
+    /// Defaults to off, so a brush that predates grain behaves as it did.
+    float grainDepth = 0.0f;
+
+    /// Canvas pixels spanned by one repeat of the grain map. Larger is a
+    /// coarser tooth.
+    ///
+    /// In canvas pixels rather than in dab diameters, because paper grain does
+    /// not get finer when you pick up a smaller pencil.
+    float grainScale = 192.0f;
+
+    GrainMovement grainMovement = GrainMovement::Canvas;
 
     // MARK: Dynamics
 

@@ -2,6 +2,7 @@
 
 #include "core/brush.h"
 #include "core/stroke.h"
+#include "core/texture.h"
 
 #include <cstring>
 #include <type_traits>
@@ -21,6 +22,7 @@ static_assert(offsetof(MCDab, angle) == offsetof(Dab, angle), "dab angle offset"
 static_assert(offsetof(MCDab, flow) == offsetof(Dab, flow), "dab flow offset");
 static_assert(offsetof(MCDab, roundness) == offsetof(Dab, roundness), "dab roundness offset");
 static_assert(offsetof(MCDab, hardness) == offsetof(Dab, hardness), "dab hardness offset");
+static_assert(offsetof(MCDab, grainOffset) == offsetof(Dab, grainOffset), "dab grainOffset offset");
 static_assert(std::is_trivially_copyable<Dab>::value, "dabs must be memcpy-able to the GPU");
 
 struct MCStrokePath {
@@ -78,8 +80,10 @@ Brush fromC(const MCBrush& b) {
     out.angleFollowsDirection = b.angleFollowsDirection != 0;
     out.flow = b.flow;
     out.opacity = b.opacity;
-    out.accumulation = b.accumulation == MC_ACCUMULATION_BUILDUP
-        ? Accumulation::Buildup : Accumulation::Maximum;
+    out.grainDepth = b.grainDepth;
+    out.grainScale = b.grainScale;
+    out.grainMovement = b.grainMovement == MC_GRAIN_ROLLING
+        ? GrainMovement::Rolling : GrainMovement::Canvas;
     out.sizeDynamics = fromC(b.sizeDynamics);
     out.flowDynamics = fromC(b.flowDynamics);
     out.velocityReference = b.velocityReference;
@@ -105,8 +109,10 @@ MCBrush toC(const Brush& b) {
     out.angleFollowsDirection = b.angleFollowsDirection ? 1 : 0;
     out.flow = b.flow;
     out.opacity = b.opacity;
-    out.accumulation = b.accumulation == Accumulation::Buildup
-        ? MC_ACCUMULATION_BUILDUP : MC_ACCUMULATION_MAXIMUM;
+    out.grainDepth = b.grainDepth;
+    out.grainScale = b.grainScale;
+    out.grainMovement = b.grainMovement == GrainMovement::Rolling
+        ? MC_GRAIN_ROLLING : MC_GRAIN_CANVAS;
     out.sizeDynamics = toC(b.sizeDynamics);
     out.flowDynamics = toC(b.flowDynamics);
     out.velocityReference = b.velocityReference;
@@ -128,6 +134,28 @@ extern "C" {
 
 MCBrush mc_brush_ink_pen(void) {
     return toC(inkPen());
+}
+
+size_t mc_grain_generate(int32_t size, uint64_t seed, uint8_t* out, size_t capacity) {
+    if (out == nullptr || size <= 0) return 0;
+
+    const size_t needed = static_cast<size_t>(size) * static_cast<size_t>(size);
+    if (capacity < needed) return 0;
+
+    const AlphaTexture grain = makeGrain(size, seed);
+    if (grain.byteCount() != needed) return 0;
+
+    std::memcpy(out, grain.pixels(), needed);
+    return needed;
+}
+
+float mc_grain_sample(const uint8_t* map, int32_t size, float u, float v) {
+    if (map == nullptr || size <= 0) return 1.0f;
+
+    // Repeat, because that is the address mode the grain is uploaded with. A
+    // reference sampler that disagreed with the shader's sampler about
+    // addressing would pass every test and fail on the device.
+    return sampleAlpha(map, size, size, u, v, Wrap::Repeat);
 }
 
 MCStrokePath* mc_stroke_begin(const MCBrush* brush, uint64_t seed) {
