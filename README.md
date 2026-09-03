@@ -3,52 +3,122 @@
 A manga-oriented drawing app for iPad, aiming at Procreate-class painting
 performance with a full manga production pipeline on top.
 
-Developed on Windows, with no Mac. macOS appears only as a free GitHub Actions
-runner that does the final compile.
+Built without a development machine. There is no Mac, no Windows PC and no
+local toolchain: the work is directed from the iPad through Claude Code, which
+edits and pushes from a cloud session, and GitHub Actions compiles. The same
+iPad that runs the app is the one it is written from.
 
 ## Status
 
-**M0 complete** — Windows to iPad pipeline proven, Pencil input working.
-**M1 in progress** — sparse tiled canvas with compressed residency.
+| | |
+|---|---|
+| ✅ | **M0** — pipeline proven, Pencil input working |
+| ✅ | **M1** — sparse tiled canvas with compressed residency, no layer cap |
+| ✅ | **M2** — compositor with under/over caching |
+| 🔨 | **M3** — brush engine: dab stamping, grain, colour |
 
-See [ROADMAP.md](ROADMAP.md) for milestone status and [TESTING.md](TESTING.md)
-for the device-test backlog.
+See [ROADMAP.md](ROADMAP.md) for milestone detail and [TESTING.md](TESTING.md)
+for the device-test backlog and the bugs found on device.
 
 ## How a build reaches the iPad
 
 ```
-Windows  ──git push──▶  GitHub Actions (macos runner)
-                             │  builds unsigned MangaChan.ipa
-                             ▼
-                        workflow artifact
-                             │  download on Windows
-                             ▼
-                        Sideloadly  ──USB──▶  iPad
+iPad ──▶ Claude Code ──git push──▶ GitHub Actions
+                                        │
+                        ┌───────────────┴───────────────┐
+                        ▼                               ▼
+              Linux + Windows runners            macOS runner
+              engine tests, ~40 s                simulator tests,
+                                                 unsigned .ipa, ~4 min
+                                                        │
+                                                        ▼
+                                                 workflow artifact
+                                                        │  download on the iPad
+                                                        ▼
+                                            unzip ──▶ SideStore ──▶ installed
+                                                      (+ LocalDevVPN)
 ```
 
-CI never signs anything. Sideloadly signs on Windows with your free Apple ID,
-which is why this repository contains no certificates and needs no secrets.
+Every successful build also publishes a **release**, and that is what SideStore
+reads — see below. The workflow artifact is kept as a build-log attachment, but
+it is authenticated and expires in 30 days, which makes it a poor download
+target.
 
-The macOS job takes about 40 seconds. Engine tests run separately on free
-Linux and Windows runners in under a minute, so most work never waits on a Mac
-at all.
+**CI never signs anything.** SideStore signs on the iPad itself with a free
+Apple ID, which is why this repository holds no certificates and needs no
+secrets. Nothing in the loop is a computer.
+
+Linux and Windows both appear above because the engine is compiled and tested
+on both every push. That is a portability check on `core/`, not a development
+machine — nobody edits code there.
+
+## Releases
+
+Every build publishes a release tagged `v0.1.<run number>`, with the unsigned
+`.ipa` attached and notes listing what changed since the previous one.
+
+**Add this to SideStore once** and updates arrive as a tap, with no downloading,
+unzipping or manual installing:
+
+```
+https://github.com/octolex/manga-chan/releases/download/sidestore-source/source.json
+```
+
+That URL is a fixed tag whose `source.json` asset every build replaces, so it
+never changes. Do not delete the `sidestore-source` release; the tag *is* the
+contract.
+
+Full rules — what each number means, when it changes, and what 1.0 will
+require — are in [docs/versioning.md](docs/versioning.md).
+
+### Why the version number moves
+
+`project.yml` pins `MARKETING_VERSION` to `0.0.1` for local builds, but CI
+overrides it with `0.1.<run number>` and asserts the value actually reached
+`Info.plist`. SideStore decides an update exists by comparing that string, so a
+fixed version means no update is ever offered — and the symptom is a source
+that looks broken rather than a version that did not move. The assertion exists
+because that failure is silent.
+
+### Release stages
+
+Where the project is, and what the words mean. Each release is marked with its
+stage in the title and flagged as a GitHub pre-release.
+
+| Stage | Means | Version |
+|---|---|---|
+| **internal pre-alpha** | Incomplete. Known-broken things documented rather than fixed. Author's device only. | `0.x.y` while milestones remain |
+| **internal alpha** | Feature-complete against the roadmap, still author-only | `0.x.y` after the last milestone |
+| **beta** | Stable enough for people who are not the author | `1.0.0-beta.n` |
+| **release** | No longer pre-release | `1.0.0` |
+
+Everything published so far is pre-alpha and none of it is a public build.
 
 ## Layout
 
 | Path | What it is |
 |---|---|
 | `core/` | C++20 engine core. No platform or graphics dependencies. |
-| `tests/` | Host-side tests for `core/`. |
+| `tests/` | Host-side tests for `core/`. ~21,000 checks, under a minute. |
 | `shell_ios/` | Swift + UIKit app. `project.yml` replaces the `.xcodeproj`. |
-| `.github/workflows/` | `core.yml` (Linux/Windows tests), `ios.yml` (unsigned `.ipa`). |
+| `shell_ios/Tests/` | Simulator tests. Real Metal, so shaders are checked against the CPU reference rather than by eye. |
+| `docs/` | Verified platform facts, and a transcription of Procreate's brush settings. |
+| `.github/workflows/` | `core.yml` (Linux/Windows engine tests), `ios.yml` (simulator tests + unsigned `.ipa`). |
 
 `shell_ios/project.yml` is edited by hand; the `.xcodeproj` is generated by
 XcodeGen on the runner and is never committed.
 
 ## Known constraints
 
-- Free Apple ID signing means the app stops launching **7 days** after each
-  install. Reinstalling resets the clock.
-- No Xcode, no Instruments, no Metal frame debugger. In their place:
-  an in-app HUD, and `session.log` / `previous.log` written to the app's
-  Documents folder — reachable from the iPad's Files app.
+- **Free Apple ID signing expires after 7 days.** Reinstalling resets it, and
+  SideStore can refresh on device over WiFi. Reinstalls do *not* consume the
+  10-App-IDs-per-7-days allowance, because that limit applies to registering
+  new App IDs and every build reuses `com.octolex.mangachan`.
+- **No Xcode, no Instruments, no Metal frame debugger.** In their place: an
+  in-app HUD, and `session.log` / `previous.log` written to the app's Documents
+  folder, reachable from the iPad's Files app.
+- **Anything that can be tested off-device, is.** Every bug that has cost real
+  time on this project lived in the Swift shell, where the C++ suite could not
+  see it — which is why CI reaches into the simulator and compares shaders
+  against a CPU reference. What is left for the device is what a test cannot
+  answer: whether it looks right, and whether it costs a frame.

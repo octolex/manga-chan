@@ -4,15 +4,15 @@
 //  Owns the frame loop and the stroke in progress; LayerCompositor owns the
 //  layer stack's pixels.
 //
-//  The stroke being drawn lives in a single-channel coverage texture that is
-//  rebuilt from its geometry every frame. Three things fall out of that:
+//  The stroke being drawn lives in its own coverage texture, accumulated as
+//  dabs arrive. Three things fall out of that:
 //
-//    · Overlapping ribbon quads accumulate with MAX, so a dense self-
-//      overlapping stroke has uniform coverage rather than darkening at every
-//      overlap, and a semi-transparent stroke does not darken where it crosses
-//      itself.
-//    · Predicted touches are drawn alongside the real ones and vanish on the
-//      next frame's clear, so a wrong guess can never reach a layer.
+//    · Coverage carries ink density and stroke geometry in separate channels,
+//      blended differently — see Shaders.metal. Density decides whether a
+//      stroke darkens where it crosses itself; geometry keeps the edge
+//      antialiased however many dabs pass over it.
+//    · Predicted touches are painted onto the finished frame rather than into
+//      coverage, so a wrong guess can never reach a layer.
 //    · Stroke opacity stays adjustable until the moment it is committed.
 //
 //  At stroke end the coverage is flattened into the active layer's texture,
@@ -87,14 +87,17 @@ final class Renderer: NSObject {
 
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
-    /// Two pipelines over one shader, differing only in blend state.
+    /// One pipeline, with two blend operations on the one attachment.
     ///
-    /// Maximum keeps the greater coverage, so a stroke never darkens where it
-    /// crosses itself — what an inking pen wants. Buildup alpha-composites, so
-    /// slow dense passes go darker than fast ones — what an airbrush wants.
-    /// The choice belongs to the brush, so both are built up front.
-    private let dabMaximumPipeline: MTLRenderPipelineState
-    private let dabBuildupPipeline: MTLRenderPipelineState
+    /// RGB carries ink density and accumulates with alpha-over, so flow decides
+    /// how fast a stroke reaches full strength. Alpha carries the stroke's
+    /// geometry and takes the maximum, so the antialiased edge survives however
+    /// many dabs cross it. Compositing min(density, geometry) then gets each
+    /// property from the channel that can express it — see Shaders.metal.
+    ///
+    /// This replaced a Maximum/Buildup switch. Accumulating alone bloats the
+    /// edge; taking the maximum alone makes flow and opacity redundant.
+    private let dabPipeline: MTLRenderPipelineState
     private let predictionPipeline: MTLRenderPipelineState
     private let layer: CAMetalLayer
     private let engine: CanvasEngine
@@ -102,10 +105,16 @@ final class Renderer: NSObject {
 
     private var displayLink: CAMetalDisplayLink?
 
-    /// Coverage of the stroke in progress. Single channel: the ink colour is
-    /// applied when it is composited, which is what keeps opacity adjustable
-    /// until commit.
+    /// Coverage of the stroke in progress: ink density in RGB, geometry in
+    /// alpha. The ink colour is applied when it is composited, which is what
+    /// keeps opacity adjustable until commit.
     private var scratchTexture: MTLTexture?
+
+    /// The grain map every dab is stamped through. Built once: it is a pure
+    /// function of a fixed seed, it is 64 KB, and nothing at runtime changes
+    /// it — depth and scale are uniforms, so the artist's controls never touch
+    /// the texture itself.
+    private var grainTexture: MTLTexture?
 
     private var stroke: BrushStroke?
     private var prediction: BrushStroke?
@@ -119,9 +128,9 @@ final class Renderer: NSObject {
     /// whole stroke each time. Redrawing every dab per frame makes the frame
     /// cost grow with stroke length, which is exactly backwards: a long stroke
     /// is when the artist can least afford a dropped frame. Both accumulation
-    /// modes are safe to build up incrementally — max is idempotent, and
-    /// alpha-over is correct as long as each dab is drawn exactly once, which
-    /// is what this counter guarantees.
+    /// channels are safe to build up incrementally — the maximum is
+    /// idempotent, and alpha-over is correct as long as each dab is drawn
+    /// exactly once, which is what this counter guarantees.
     private var stampedDabs = 0
     private var coverageNeedsClear = true
     private var pendingCommit = false
@@ -141,7 +150,12 @@ final class Renderer: NSObject {
     private var smoothedGPUMs: Double = 0
     private var smoothedCPUMs: Double = 0
 
-    private static let coverageFormat: MTLPixelFormat = .r8Unorm
+    /// Four channels rather than one: RGB holds ink density and alpha holds
+    /// the stroke's geometry, and they need different blend operations. Metal
+    /// splits blend state at the RGB/alpha boundary and nowhere finer, so a
+    /// two-channel format cannot express this — `rg8Unorm` has no alpha to put
+    /// the maximum-blended channel in.
+    private static let coverageFormat: MTLPixelFormat = .rgba8Unorm
 
     var canvas: CanvasEngine { engine }
 
@@ -171,24 +185,22 @@ final class Renderer: NSObject {
         layer.maximumDrawableCount = 2
 
         let dabs = MTLRenderPipelineDescriptor()
-        dabs.label = "Dab coverage (max)"
+        dabs.label = "Dab coverage"
         dabs.vertexFunction = try function("dab_vertex")
         dabs.fragmentFunction = try function("dab_coverage_fragment")
         let dabAttachment = dabs.colorAttachments[0]!
         dabAttachment.pixelFormat = Self.coverageFormat
         dabAttachment.isBlendingEnabled = true
-        dabAttachment.rgbBlendOperation = .max
-        dabAttachment.alphaBlendOperation = .max
-        self.dabMaximumPipeline = try device.makeRenderPipelineState(descriptor: dabs)
 
-        dabs.label = "Dab coverage (buildup)"
+        // Ink density: alpha-over, so passes build.
         dabAttachment.rgbBlendOperation = .add
-        dabAttachment.alphaBlendOperation = .add
         dabAttachment.sourceRGBBlendFactor = .one
-        dabAttachment.sourceAlphaBlendFactor = .one
         dabAttachment.destinationRGBBlendFactor = .oneMinusSourceColor
-        dabAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        self.dabBuildupPipeline = try device.makeRenderPipelineState(descriptor: dabs)
+
+        // Geometry: the maximum, so the silhouette stays the true antialiased
+        // edge. Blend factors are ignored for a max operation.
+        dabAttachment.alphaBlendOperation = .max
+        self.dabPipeline = try device.makeRenderPipelineState(descriptor: dabs)
 
         // Predicted dabs go straight onto the drawable in ink colour, so this
         // one composites rather than accumulating coverage.
@@ -224,6 +236,14 @@ final class Renderer: NSObject {
         // only in tests.
         engine.setBudgets(residentBytes: 96 * UInt64(engine.tileByteCount),
                           compressedBytes: 32 * 1024 * 1024)
+
+        grainTexture = GrainTexture.make(device: device)
+        if grainTexture == nil {
+            // Not fatal. The shader reads the grain only when depth is above
+            // zero, so a brush with grain switched off draws exactly as before
+            // — losing the texture must not cost us the app.
+            Diagnostics.log("grain texture unavailable; grain will be inert")
+        }
 
         Diagnostics.log("Metal device: \(device.name)")
         Diagnostics.log("  supportsFamily(.apple9): \(device.supportsFamily(.apple9))")
@@ -447,6 +467,20 @@ final class Renderer: NSObject {
         return buffer
     }
 
+    /// Uniforms for both dab passes, built in one place so the committed stroke
+    /// and the predicted tail ahead of it cannot disagree about the grain.
+    ///
+    /// Depth is forced to zero when there is no texture, which makes the
+    /// shader's `depth <= 0` early-out double as the guard that keeps it from
+    /// ever sampling an unbound texture.
+    private func dabUniforms(width: Int, height: Int) -> MSDabUniforms {
+        MSDabUniforms(viewportSize: simd_float2(Float(width), Float(height)),
+                      grainDepth: grainTexture == nil ? 0 : brush.grainDepth,
+                      grainScale: brush.grainScale,
+                      grainMovement: brush.grainMovement,
+                      _pad: 0)
+    }
+
     private func encodeCoverage(in commandBuffer: MTLCommandBuffer) {
         guard let scratch = scratchTexture, let stroke else { return }
 
@@ -464,14 +498,16 @@ final class Renderer: NSObject {
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.label = "Dab coverage"
-        encoder.setRenderPipelineState(
-            brush.accumulation == Int32(MC_ACCUMULATION_BUILDUP.rawValue)
-                ? dabBuildupPipeline : dabMaximumPipeline)
+        encoder.setRenderPipelineState(dabPipeline)
 
-        var uniforms = MSDabUniforms(
-            viewportSize: simd_float2(Float(scratch.width), Float(scratch.height)))
+        var uniforms = dabUniforms(width: scratch.width, height: scratch.height)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
                                index: Int(MSBufferIndexUniforms.rawValue))
+        // The fragment stage needs them too: the vertex stage decides *where*
+        // the grain is sampled, the fragment stage how deeply.
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
+                                 index: Int(MSBufferIndexUniforms.rawValue))
+        encoder.setFragmentTexture(grainTexture, index: 0)
 
         let first = coverageNeedsClear ? 0 : stampedDabs
         if count > first, let buffer = dabBuffer(for: stroke) {
@@ -507,10 +543,12 @@ final class Renderer: NSObject {
         encoder.label = "Predicted dabs"
         encoder.setRenderPipelineState(predictionPipeline)
 
-        var uniforms = MSDabUniforms(
-            viewportSize: simd_float2(Float(target.width), Float(target.height)))
+        var uniforms = dabUniforms(width: target.width, height: target.height)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
                                index: Int(MSBufferIndexUniforms.rawValue))
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
+                                 index: Int(MSBufferIndexUniforms.rawValue))
+        encoder.setFragmentTexture(grainTexture, index: 0)
 
         let length = MemoryLayout<MSDab>.stride * prediction.dabCount
         if let buffer = device.makeBuffer(bytes: dabs, length: length,

@@ -230,6 +230,11 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
     dab.roundness = clamp01(brush_.roundness);
     dab.hardness = clamp01(brush_.hardness);
 
+    // Arc length *at this dab*, recorded before scatter moves it: rolling
+    // grain should scroll with progress along the stroke, and scatter is a
+    // lateral shake of where the dab lands rather than travel along the path.
+    dab.grainOffset = travelled_;
+
     if (brush_.scatter > 0.0f) {
         const float theta = nextRandom() * 6.2831853f;
         const float reach = nextRandom() * brush_.scatter * diameter;
