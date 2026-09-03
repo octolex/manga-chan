@@ -39,8 +39,10 @@ iPad ──▶ Claude Code ──git push──▶ GitHub Actions
                                                       (+ LocalDevVPN)
 ```
 
-The artifact downloads as a zip containing `MangaChan.ipa`; SideStore wants the
-`.ipa` inside, not the wrapper.
+Every successful build also publishes a **release**, and that is what SideStore
+reads — see below. The workflow artifact is kept as a build-log attachment, but
+it is authenticated and expires in 30 days, which makes it a poor download
+target.
 
 **CI never signs anything.** SideStore signs on the iPad itself with a free
 Apple ID, which is why this repository holds no certificates and needs no
@@ -49,6 +51,45 @@ secrets. Nothing in the loop is a computer.
 Linux and Windows both appear above because the engine is compiled and tested
 on both every push. That is a portability check on `core/`, not a development
 machine — nobody edits code there.
+
+## Releases
+
+Every build publishes a release tagged `v0.1.<run number>`, with the unsigned
+`.ipa` attached and notes listing what changed since the previous one.
+
+**Add this to SideStore once** and updates arrive as a tap, with no downloading,
+unzipping or manual installing:
+
+```
+https://github.com/octolex/manga-chan/releases/download/sidestore-source/source.json
+```
+
+That URL is a fixed tag whose `source.json` asset every build replaces, so it
+never changes. Do not delete the `sidestore-source` release; the tag *is* the
+contract.
+
+### Why the version number moves
+
+`project.yml` pins `MARKETING_VERSION` to `0.0.1` for local builds, but CI
+overrides it with `0.1.<run number>` and asserts the value actually reached
+`Info.plist`. SideStore decides an update exists by comparing that string, so a
+fixed version means no update is ever offered — and the symptom is a source
+that looks broken rather than a version that did not move. The assertion exists
+because that failure is silent.
+
+### Release stages
+
+Where the project is, and what the words mean. Each release is marked with its
+stage in the title and flagged as a GitHub pre-release.
+
+| Stage | Means | When |
+|---|---|---|
+| **internal pre-alpha** | Incomplete. Features still being built, known-broken things documented rather than fixed. Author's device only. | **Now**, until every milestone in ROADMAP.md is done |
+| **internal alpha** | Feature-complete against the roadmap, still author-only, expect bugs | After the last milestone lands |
+| **beta** | Stable enough for testers who are not the author | If it ever goes beyond one person |
+| **1.0** | No longer pre-release | Far off |
+
+Everything published so far is pre-alpha and none of it is a public build.
 
 ## Layout
 
