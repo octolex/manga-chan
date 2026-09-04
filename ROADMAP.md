@@ -316,17 +316,55 @@ changes. A CI test drives a dense row of dabs and asserts the edge is still
 soft, because that regression would look like a slightly bolder brush rather
 than like a bug.
 
-**Grain thresholds rather than multiplies.** Ink sticks where it has more to
-give than the tooth takes: `(coverage − tooth) / (1 − tooth)`, clamped. That
-leaves a solid body and a broken edge instead of the uniform veil multiplying
-produced. The renormalisation has a consequence worth stating plainly: at Flow
-100% the body is fully covered and no tooth shows, so grain lives in the edges
-until Flow comes down. That is not a limitation — it is why a marker hides
-paper texture and a pencil does not, and it makes Flow the control that decides
-how much surface shows.
+**Grain thresholds rather than multiplies.** ~~Ink sticks where it has more to
+give than the tooth takes: `(coverage − tooth) / (1 − tooth)`, clamped.~~
+**Superseded 2026-09-03**, and the way it failed is the most useful thing in
+this section, so it stays.
 
-Procreate's `Umbral alfa` is the same mechanism, and its grain **blend mode**,
-brightness, contrast and minimum depth are still ahead of us.
+The paragraph that stood here ended: *"at Flow 100% the body is fully covered
+and no tooth shows, so grain lives in the edges until Flow comes down… it makes
+Flow the control that decides how much surface shows."* That reasoning was
+right. It rested on one assumption nobody wrote down or checked — that Flow
+**could** come down.
+
+It could not. Flow was a per-dab alpha, and about seventeen dabs cover every
+pixel at the default spacing, so Flow 50% accumulated to 0.99999 and Flow 75%
+was indistinguishable from 100%. The stroke body was 1 for every setting a
+person would actually use. A threshold against a coverage of 1 returns 1, which
+is precisely the "no effect at 100%" the device reported — except it was no
+effect at nearly *every* value, and the one place the tooth did bite was where
+it punched permanent holes.
+
+So all three grain attempts — multiply, per-dab threshold, and the geometry
+channel that was next in line — failed for one reason that was never about
+grain: **there was no partial coverage anywhere for a tooth to bite into.**
+Bug 15 in TESTING.md is the fix; grain is now unblocked rather than solved, and
+the third attempt waits on device confirmation that Flow means something first.
+
+Two lessons, both cheap to state and expensive to have learned:
+
+- The engine's tests all checked *geometry* — where dabs land, how large they
+  are, which tiles they touch. None checked what a stroke was **worth**. Three
+  device rounds went into the visible symptom while the cause sat in four lines
+  of arithmetic that no test looked at.
+- A design can be correct and still unreachable because a different component
+  quietly forecloses it. The reasoning above was not wrong; it was written
+  against a Flow control that did not exist.
+
+~~Procreate's `Umbral alfa` is the same mechanism~~ — **wrong**, it is a
+Rendering toggle, off by default in the brush the settings were transcribed
+from. Grain there composites through a **blend mode** in its own section, and
+that mode, plus brightness, contrast and minimum depth, is still ahead of us.
+
+**Flow is what the finished stroke is worth.** A dab deposits
+`1 − (1−flow)^overlap`, where overlap is one over the number of dabs covering a
+point, so *n* dabs compose back to exactly `flow`. The alternative — leaving
+Flow as a per-dab alpha and telling people to use small numbers — fails on the
+second half of the bug: the accumulated result depends on Spacing, so the same
+brush at 3% spacing came out about twice as dark as at 6%. Two controls that
+look independent must not secretly multiply, or no brush preset survives being
+edited. Flow 100% still yields alpha 1, so the default inking brush is
+bit-identical to before.
 
 ### Decisions worth revisiting
 

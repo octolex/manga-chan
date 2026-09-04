@@ -521,6 +521,99 @@ void testConsumeReportsOnlyNewDabs() {
                 static_cast<long long>(total));
 }
 
+
+/// What a stroke is worth where it overlaps itself, at a point the brush has
+/// walked straight over. Alpha-over, exactly as the coverage target blends it.
+float accumulatedFlowAt(const std::vector<Dab>& dabs, float px, float py) {
+    float acc = 0.0f;
+    for (const Dab& d : dabs) {
+        const float dx = d.x - px;
+        const float dy = d.y - py;
+        if (std::sqrt(dx * dx + dy * dy) > d.radius) { continue; }
+        acc += d.flow * (1.0f - acc);
+    }
+    return acc;
+}
+
+/// Flow says what the finished stroke is worth, not what one dab deposits.
+///
+/// This is the rule the device round broke: at 6% spacing about seventeen dabs
+/// cover every pixel, so an uncompensated per-dab alpha of 0.5 accumulated to
+/// 0.99999 and the stroke came out solid. Only around 10% was visibly
+/// translucent, which made the slider a switch with a very short throw.
+void testFlowIsWhatTheStrokeIsWorth() {
+    for (float wanted : {0.1f, 0.25f, 0.5f, 0.75f}) {
+        Brush brush = inkPen();
+        brush.flow = wanted;
+        brush.hardness = 1.0f;
+        const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+        const float got = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
+        std::printf("  flow %.2f requested, stroke worth %.3f\n",
+                    static_cast<double>(wanted), static_cast<double>(got));
+        CHECK(std::fabs(got - wanted) < 0.06f);
+    }
+}
+
+/// And says it independently of Spacing.
+///
+/// The uncompensated version made the same brush twice as dark at half the
+/// spacing, so every spacing change silently rewrote every flow on the brush.
+/// That coupling is the part that could not be left in: it makes two settings
+/// that look independent secretly multiply.
+void testFlowDoesNotMoveWithSpacing() {
+    float darkest = 0.0f;
+    float lightest = 1.0f;
+    for (float spacing : {0.03f, 0.06f, 0.12f, 0.25f}) {
+        Brush brush = inkPen();
+        brush.flow = 0.5f;
+        brush.hardness = 1.0f;
+        brush.spacing = spacing;
+        const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+        const float got = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
+        std::printf("  spacing %.2f -> stroke worth %.3f\n",
+                    static_cast<double>(spacing), static_cast<double>(got));
+        darkest = std::max(darkest, got);
+        lightest = std::min(lightest, got);
+    }
+    // Spread across a 8x range of spacings, not merely "each one is near 0.5":
+    // a compensation that drifted with spacing could still pass the per-case
+    // check while making the brush visibly different at the two ends.
+    std::printf("  spread across spacings: %.3f\n",
+                static_cast<double>(darkest - lightest));
+    CHECK(darkest - lightest < 0.08f);
+}
+
+/// Flow 100% is untouched. The default inking brush must not have moved.
+void testFullFlowStillSaturatesInOnePass() {
+    Brush brush = inkPen();
+    brush.flow = 1.0f;
+    const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+    for (const Dab& d : path.dabs()) {
+        CHECK(d.flow > 0.999f);
+    }
+}
+
+/// Crossing the stroke over itself still darkens.
+///
+/// This is the behaviour the device round explicitly asked us to keep — at 10%
+/// flow the intersection reading darker than either line is the thing that
+/// showed flow was doing anything at all. Compensation must not flatten it into
+/// a stroke that cannot build.
+void testCrossingTheStrokeStillDarkens() {
+    Brush brush = inkPen();
+    brush.flow = 0.4f;
+    brush.hardness = 1.0f;
+    const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+    const float once = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
+
+    // A second pass over ground already at `once`, as a crossing stroke is.
+    const float twice = once + accumulatedFlowAt(path.dabs(), 160.0f, 100.0f) * (1.0f - once);
+    std::printf("  one pass %.3f, crossed %.3f\n",
+                static_cast<double>(once), static_cast<double>(twice));
+    CHECK(twice > once + 0.15f);
+    CHECK(twice < 1.0f);
+}
+
 }  // namespace
 
 int main() {
@@ -542,5 +635,9 @@ int main() {
     testVelocityDynamicsThinAFastStroke();
     testIncrementalEmissionMatchesOneShot();
     testConsumeReportsOnlyNewDabs();
+    testFlowIsWhatTheStrokeIsWorth();
+    testFlowDoesNotMoveWithSpacing();
+    testFullFlowStillSaturatesInOnePass();
+    testCrossingTheStrokeStillDarkens();
     return check::report("stroke");
 }

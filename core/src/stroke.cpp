@@ -17,6 +17,12 @@ constexpr int kSubsteps = 24;
 /// Below this, a dab is smaller than the antialiased edge that would draw it.
 constexpr float kMinimumRadius = 0.05f;
 
+/// Dabs never land closer than half a pixel apart, however small the brush or
+/// tight the spacing. Named because the flow compensation divides by it: a
+/// floor that clamps the step also raises the effective spacing fraction, and
+/// the two calculations have to agree on which number won.
+constexpr float kMinimumSpacing = 0.5f;
+
 float clamp01(float v) noexcept {
     return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
 }
@@ -226,7 +232,35 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
     dab.y = at.y;
     dab.radius = std::max(kMinimumRadius, diameter * 0.5f);
     dab.angle = angle;
-    dab.flow = flow;
+
+    // Flow is what the finished stroke is worth, not what one dab deposits.
+    //
+    // Those are wildly different numbers. Dabs land a fraction of a diameter
+    // apart, so at the default 6% spacing roughly seventeen of them cover any
+    // given pixel, and a per-dab alpha of 0.5 accumulates to 1 - 0.5^17, which
+    // is 0.99999. Measured on device: Flow 50% draws a solid line and only
+    // around 10% is visibly translucent. The slider was effectively a switch,
+    // and worse, its meaning moved with Spacing — the same brush at 3% spacing
+    // was twice as dark, which is not a property any painting app should have.
+    //
+    // So invert the accumulation. n dabs of alpha a compose to 1 - (1-a)^n, and
+    // n is one over the spacing fraction, so asking for the stroke to finish at
+    // `flow` means each dab deposits 1 - (1-flow)^spacing. Flow 100% still
+    // gives alpha 1 and nothing changes for the default inking brush.
+    //
+    // Crossing the stroke over itself still darkens: that is a second pass of n
+    // dabs over ground already at `flow`, which composes to 1 - (1-flow)^2, and
+    // it is the behaviour the device round asked us to keep.
+    // The count is (diameter / step) + 1, not diameter / step: a probe point
+    // sees every dab whose centre lies within a radius either side, and that
+    // span has one more dab in it than it has gaps. The term is nothing at 6%
+    // spacing — seventeen dabs against sixteen and two thirds — and a quarter
+    // of the total at 25%, where four gaps carry five dabs. Dropping it made a
+    // wide-spaced brush come out at 0.58 for a requested 0.5.
+    const float step = std::max(kMinimumSpacing, brush_.spacing * dab.radius * 2.0f);
+    const float diameterHere = std::max(dab.radius * 2.0f, 1e-4f);
+    const float overlap = std::min(1.0f, step / (diameterHere + step));
+    dab.flow = flow >= 1.0f ? 1.0f : 1.0f - std::pow(1.0f - flow, overlap);
     dab.roundness = clamp01(brush_.roundness);
     dab.hardness = clamp01(brush_.hardness);
 
@@ -246,10 +280,10 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
     noteTiles(dab);
 
     // Spacing is a fraction of *this* dab's diameter, so the stroke keeps its
-    // character as pressure changes the width. Recomputed after placement
-    // rather than before, because the diameter is only known once dynamics and
-    // jitter have run.
-    nextSpacing_ = std::max(0.5f, brush_.spacing * dab.radius * 2.0f);
+    // character as pressure changes the width. Already computed above, because
+    // the flow compensation needs the same number: the two must not drift
+    // apart, or a dab would be weighted for an overlap it does not have.
+    nextSpacing_ = step;
 }
 
 void StrokePath::noteTiles(const Dab& dab) {

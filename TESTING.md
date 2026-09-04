@@ -53,8 +53,12 @@ whether it costs a frame.
 | # | What | How | Expected |
 |---|---|---|---|
 | 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Was invisible at 1, barely visible at 2. Density now accumulates across the ~2 dabs that land per pixel, which may resolve it with no special case |
-| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line. **Failing** — see bug 14 |
-| 76 | How opaque is a Flow-50% pass? | Flow 50%, Depth 0, one slow stroke, no crossing | Needed to settle bug 14. Is the line about half strength, or effectively solid? |
+| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line. **Failing** — see bug 14. Blocked behind #77: there is nothing for a tooth to bite into until Flow leaves a stroke partly transparent |
+| ~~76~~ | ~~How opaque is a Flow-50% pass?~~ | — | **Answered 2026-09-03: effectively solid.** Only ~10% was visibly translucent. That is bug 15, and it is why every grain attempt failed |
+| 77 | Flow means what it says | Depth 0. Draw single non-crossing strokes at Flow 25%, 50%, 75% | Three clearly different strengths, roughly a quarter, half and three quarters. Before this change 50% and 75% were both solid black |
+| 78 | Flow no longer moves with Spacing | Flow 50%, draw. Set Spacing to about half what it was, draw again | The two strokes are the same darkness. Previously halving the spacing made the same brush markedly darker |
+| 79 | Crossings still build | Flow 25%, draw a loop that crosses itself once | The crossing is clearly darker than either line through it — the behaviour the 10% panel showed, kept |
+| 80 | Full flow is unchanged | Flow 100%, draw and cross | Solid, and the crossing exactly as dark as the line. This is the default inking brush and it must not have moved |
 
 ## Pending — UI regressions to confirm
 
@@ -75,8 +79,10 @@ Not bugs; do not report these until the milestone that addresses them.
   Scale are the whole of the control surface.
 - **Grain does not currently work.** It is thresholded per dab, which at Flow
   100% does nothing and at 50% masks the stroke away. This *was* listed here as
-  deliberate; it is not, it is bug 14, and the third attempt is blocked on #76.
-  Leave Depth at 0 until then and nothing else is affected.
+  deliberate; it is not, it is bug 14. #76 has now answered why, and the answer
+  was not what the entry assumed: the fault is not only *where* the threshold
+  is applied but that Flow left nothing partly transparent to threshold. See
+  bug 15. Leave Depth at 0; nothing else is affected.
 - **No Maximum/Buildup switch.** Flow is the control: at 100% a pass saturates
   and crossings do not darken; below that they build. The switch made Flow and
   Opacity redundant at one end, which is what it was removed for.
@@ -138,6 +144,8 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | Install straight onto the iPad, no computer in the loop | Works. Method not yet recorded — the budgeting rule at the top of this file may be stale |
 | 2026-09-02 | #50 Brush panel opens | Pass, but with three rendering/gesture bugs — see 7-9 |
 | 2026-09-02 | #58 Panel does not leak touches to the canvas | Pass |
+| 2026-09-03 | #76 Flow 50% with Depth 0 — is one pass half strength or solid? | **Solid.** Only ~10% reads as translucent. Answers bug 14 and opens bug 15 |
+| 2026-09-03 | #76 Flow 10%, self-crossing stroke | Translucent, and the crossing visibly darker — build-up works, the scale does not |
 | 2026-09-02 | #60 Grain Depth at 0 is indistinguishable from before grain | Pass |
 | 2026-09-02 | #61 Depth ~70% textures the stroke and lightens it | Pass, but see bug 10 — it veils rather than bites |
 | 2026-09-02 | #62 Scale sweep 24-600 px, no repeating grid at any setting | Pass — the seam maths holds on device |
@@ -237,18 +245,51 @@ they lived in the Swift shell rather than the engine:
     toggle in Rendering, not the grain mechanism, and it is *off* by default;
     grain there composites through a blend mode in the Grano section. That was
     a misread of docs/procreate-brush-settings.md, not a subtlety.
-    Blocked on #76 before the third attempt — see the note there.
+    **#76 has now answered this (2026-09-03).** The third attempt is still not
+    written, but the reason all three placements failed is settled, and it is
+    not a grain problem — see bug 15. Grain has to modulate something that
+    varies between the body of a stroke and its edge, and until Flow stopped
+    saturating there was no such quantity: the body was 1 everywhere.
 
-The engine was correct throughout. Every one of these lived in how the shell
-drove it — layout and view lifecycle, not logic — which is the argument for
+15. **Flow was a per-dab alpha, not what the stroke is worth.** Dabs land a
+    fraction of a diameter apart, so at the default 6% spacing about seventeen
+    of them cover every pixel. A per-dab alpha of 0.5 therefore accumulated to
+    `1 - 0.5^17` — 0.99999, solid black. Measured on device: Flow 50% and 75%
+    are indistinguishable from 100%, and only around 10% is visibly
+    translucent. The slider was a switch with a very short throw.
+    Worse, its meaning moved with Spacing. The same brush at 3% spacing was
+    about twice as dark, so two settings that look independent secretly
+    multiplied, and no brush preset could survive a spacing change.
+    Fixed by inverting the accumulation: a dab deposits
+    `1 - (1-flow)^overlap`, where overlap is one over the number of dabs
+    covering a point, so *n* of them compose to exactly `flow`. Flow 100% still
+    gives alpha 1, so the default inking brush is untouched. Crossings still
+    darken, which the device round explicitly asked to keep.
+    Pinned by four tests in `test_stroke.cpp`, including one that holds the
+    result flat across an eight-fold spread of spacings.
+    **This is also the whole reason grain never worked.** Bugs 10 and 14 were
+    both read as grain problems and neither was: a tooth can only bite into
+    coverage that is less than 1, and Flow was not producing any.
+
+Every one of these but 15 lived in how the shell drove the engine — layout and view lifecycle, not logic — which is the argument for
 pushing more behind the C ABI where CI can reach it. Note the shape they share:
 none are arithmetic, all are UIKit rebuilding, sizing or re-orienting something
 at the wrong moment.
 
 12 is the same shape as the rest — a frame computed against the wrong thing.
-10, 11 and 13 are not: they are design errors in what the brush *means*, which
-is a category this project had not hit before and which no amount of UIKit
-discipline would have caught.
+10, 11, 13 and 15 are not: they are design errors in what the brush *means*,
+which is a category this project had not hit before and which no amount of
+UIKit discipline would have caught.
+
+15 breaks the pattern in a way worth keeping visible, because the old claim
+here was that the engine had been correct throughout and every device bug had
+lived in the Swift shell. That is no longer true. It is also the least
+surprising place for it to stop being true: the engine's tests all checked
+*geometry* — where dabs land, how big they are, which tiles they touch — and
+none of them checked what a stroke was worth once the dabs were composited.
+A property no test asserts is a property nobody is defending, and the
+arithmetic that broke it is four lines long and was never wrong on its own
+terms. It answered a question nobody had asked out loud.
 
 7 and 9 are now assertions in `ColorPickerTests`: the picker is rendered into a
 bitmap and read back, so an inverted axis or a banded strip fails in CI. 8 is
