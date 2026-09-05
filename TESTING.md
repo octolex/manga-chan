@@ -144,6 +144,11 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | Install straight onto the iPad, no computer in the loop | Works. Method not yet recorded — the budgeting rule at the top of this file may be stale |
 | 2026-09-02 | #50 Brush panel opens | Pass, but with three rendering/gesture bugs — see 7-9 |
 | 2026-09-02 | #58 Panel does not leak touches to the canvas | Pass |
+| 2026-09-05 | Procreate A — does one stroke accumulate against itself? | **Yes.** A single crossing darkens; many crossings go solid. Our model is right on this axis |
+| 2026-09-05 | Procreate B — Renderizado→Flujo at 100% vs 0% | Both strokes clearly present, second lighter and softer. Not a coverage alpha; do not map it to our Flow |
+| 2026-09-05 | Procreate C — does darkness move with Spacing? | **Invalid test, my design fault.** Ran from no-overlap to some-overlap, where both models predict the same thing. See C-redo |
+| 2026-09-05 | Procreate D — grain under repeated scrubbing | **Rolling fills in solid; Canvas persists forever.** Depth controls body coverage. Low opacity does **not** show more texture |
+| 2026-09-05 | Procreate E — wet mix across a contrasting colour | Drags the underlying colour along. Mixed region reads grey, so the mixing looks like plain RGB |
 | 2026-09-03 | #76 Flow 50% with Depth 0 — is one pass half strength or solid? | **Solid.** Only ~10% reads as translucent. Answers bug 14 and opens bug 15 |
 | 2026-09-03 | #76 Flow 10%, self-crossing stroke | Translucent, and the crossing visibly darker — build-up works, the scale does not |
 | 2026-09-02 | #60 Grain Depth at 0 is indistinguishable from before grain | Pass |
@@ -245,11 +250,22 @@ they lived in the Swift shell rather than the engine:
     toggle in Rendering, not the grain mechanism, and it is *off* by default;
     grain there composites through a blend mode in the Grano section. That was
     a misread of docs/procreate-brush-settings.md, not a subtlety.
-    **#76 has now answered this (2026-09-03).** The third attempt is still not
-    written, but the reason all three placements failed is settled, and it is
-    not a grain problem — see bug 15. Grain has to modulate something that
-    varies between the body of a stroke and its edge, and until Flow stopped
-    saturating there was no such quantity: the body was 1 everywhere.
+    **#76 answered this on 2026-09-03**, and the Procreate experiments on
+    2026-09-05 answered the rest. The threshold is wrong at every level: grain
+    does not vary with opacity in Procreate at all, which a threshold against
+    accumulated coverage would make it do dramatically.
+    What grain actually is: the tooth **multiplies** a dab's coverage before the
+    maximum blend that builds the silhouette. Canvas-anchored, the tooth is the
+    same for every dab, so the pits never fill however many passes cross them.
+    Rolling, it shifts with arc length, so each pass puts its pits elsewhere and
+    the stroke fills to solid. Both behaviours were observed in Procreate, and
+    one mechanism gives both with no mode-specific code.
+    That is what **attempt #1 already did**. It was rejected on device as "a
+    uniform veil", and that objection is now falsified: Procreate's canvas grain
+    does keep texture across the whole inked area, permanently. The fault was
+    most likely the map rather than the maths — our four-octave fractal noise
+    sits near mid-grey and reads as a wash. Procreate exposes Brightness and
+    Contrast on the grain for exactly this reason. Not yet fixed.
 
 15. **Flow was a per-dab alpha, not what the stroke is worth.** Dabs land a
     fraction of a diameter apart, so at the default 6% spacing about seventeen

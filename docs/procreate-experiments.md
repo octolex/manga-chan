@@ -218,3 +218,111 @@ mechanism missing that we have been trying to fake with the two we have.
 
 None of this needs to be done in one sitting, and A, C and D are worth more than
 B and E if the time is short.
+
+---
+
+# Results — 2026-09-05
+
+Run by octolex. Screenshots in the session; not committed. Read by eye from the
+images, not measured off pixel values — the images were not saved to disk, and
+calling that a measurement would be exactly the confusion this project exists to
+avoid.
+
+## A — a stroke DOES accumulate against itself. Prediction wrong.
+
+One continuous self-crossing loop shows visible darkening at the crossing; a
+loop crossed several times at one point goes solid black there.
+
+So the Glaze hypothesis is dead for this brush: Procreate's default behaviour is
+dab-by-dab accumulation within a single stroke, which is what we already do.
+**The six rendering styles were not tested** — A3 was not run — so what the
+Glaze styles change is still unknown, and it is no longer the urgent question.
+
+Our current model is right on this axis. The Maximum/Buildup switch was correctly
+removed after all, for a reason different from the one given at the time.
+
+## B — Renderizado → Flujo is not our Flow. Inconclusive.
+
+At Flujo 100% and Flujo **0%**, both strokes are clearly present; the second is
+lighter and softer, not absent. A control that leaves a strong visible stroke at
+zero is not a coverage alpha. It reads as a density or edge-softness modifier
+with a floor.
+
+Whatever "maximum level" means in that settings list, it does not mean what
+`Brush::flow` means here. **Do not map the two onto each other.** Needs a
+better-designed test before it informs anything.
+
+## C — INVALID TEST. Not a result, and the design fault was mine.
+
+The spacing was widened until individual dabs were visible, then halved. That
+crosses from *no overlap* to *some overlap*, and overlap compensation does
+nothing until dabs overlap. Both models predict the second stroke is darker
+there:
+
+| spacing | compensated | uncompensated |
+|---|---|---|
+| 1.5 diameters | isolated dabs at 0.34, white gaps | isolated dabs at 0.50, white gaps |
+| 0.75 diameters | continuous 0.50 | continuous 0.60 |
+
+Which is what the picture shows, under either model. The test could not
+distinguish them and must be rerun in the regime where they diverge:
+
+**C-redo.** Top Opacity **10%** — low, so the uncompensated model does not
+saturate and hide the difference. Set Espaciado to about **10%** and draw a
+straight stroke. Set it to about **5%** and draw another beside it.
+
+> Are the two the same light grey, or is the second markedly darker?
+
+Compensated predicts **0.10 and 0.10** — indistinguishable. Uncompensated
+predicts **0.65 and 0.88** — both far darker than the 10% asked for, and clearly
+different from each other. There is no regime where these two look alike, which
+is what the first version of this test lacked.
+
+## D — the decisive result. Grain is a cap on coverage, not a threshold.
+
+Three findings, and together they pick the model:
+
+1. **Profundidad controls how much the body is affected.** Turn it up and the
+   texture appears through the body of the stroke, not only at its edges.
+2. **Movimiento (Rolling): scrubbing repeatedly fills in to a completely solid
+   line.** Texturizado (Canvas): the texture persists in inked areas no matter
+   how many times you scrub over them.
+3. **Lower opacity does not show more texture.**
+
+Finding 3 kills thresholding against accumulated coverage outright — that model
+predicts grain gets dramatically stronger as opacity falls, and it does not.
+
+Findings 1 and 2 are the useful part, because **one mechanism produces both**
+with no mode-specific code. If the tooth multiplies the dab's coverage *before*
+the maximum blend that builds the stroke's silhouette:
+
+- **Canvas**: the tooth is identical for every dab at a given pixel, so
+  `max(tooth x shape)` is `tooth x geometry`. The pits never receive ink however
+  many passes go over them. Persists forever. ✓
+- **Rolling**: the tooth shifts with arc length, so each pass puts its pits
+  somewhere else and the maximum climbs toward 1. Fills in to solid. ✓
+
+That is **exactly what attempt #1 did** — the version rejected on device as "a
+uniform veil". The mechanism was right and it was abandoned on an aesthetic
+objection that this experiment has now falsified: Procreate's canvas-anchored
+grain genuinely does keep texture across the whole inked area, forever. What was
+wrong was most likely the *map*, not the maths — our grain is smooth four-octave
+fractal noise with most of its mass near mid-grey, which reads as a flat wash
+rather than as tooth. Procreate exposes **Brillo** and **Contraste** on the grain
+for precisely this.
+
+## E — wet mix is colour pickup, and Procreate appears to mix in RGB.
+
+Green drawn across magenta drags magenta into itself, and a green blob painted
+inside the magenta stays contaminated. So the brush carries a colour that is
+updated from the canvas as it travels — a smudge or pickup model, not a fluid
+solver.
+
+One detail in the screenshot is worth more than the confirmation: **where the two
+colours mix, the result reads grey/olive.** Green and magenta are complementary
+in RGB and average to grey; real pigments would go dark and muddy, not neutral.
+So Procreate's wet mix looks like straightforward RGB interpolation, which means
+matching it needs no pigment model at all — and that beating it is available
+cheaply if we ever want it.
+
+See `docs/wet-mix-references.md` for the algorithms and papers.
