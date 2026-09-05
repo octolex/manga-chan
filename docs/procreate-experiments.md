@@ -390,3 +390,69 @@ maximum, the same stroke. Does either weaken along its length?
 Nothing depends on this yet. It confirms whether Carga and Dilución are a
 paint-load model, which would be a whole axis the engine has no equivalent for,
 and is worth knowing before the brush editor is designed rather than after.
+
+---
+
+# Round 4 results — 2026-09-06
+
+Run on single brushes, with the iPad switched to English. Read by eye: the
+images were not saved to disk and there is no image tooling in the session, so
+nothing below is a measurement of pixel values.
+
+## Test 1 — unresolved, and neither prediction fits
+
+Four strokes, each darker than the last — **but all four stay pale.** The
+uncompensated model predicted a ramp to 47%, 69%, 89% and 99%, ending
+essentially black. Nothing in the image is remotely near black.
+
+So the direction says "not compensated" and the magnitude says "very nearly
+compensated", and those cannot both be read off a JPEG by eye. **This needs
+numbers**, and Procreate can give them: the eyedropper reads a colour, and the
+colour panel shows brightness as a percentage.
+
+> **Test 1b.** With the four strokes still on the canvas, hold a finger on each
+> one until the eyedropper picks it up, then open the colour panel and read the
+> **B** (brightness) value in HSB. Four numbers, in order.
+>
+> Compensated predicts about **90, 90, 90, 90**. Uncompensated predicts about
+> **53, 31, 11, 1**. Anything in between is a third model and more interesting
+> than either.
+
+Until those numbers arrive the flow compensation in `stroke.cpp` stays, on the
+grounds that its *user-facing* behaviour — a slider that means roughly what it
+says, barely moved by spacing — is what the pale strokes show, whatever
+mechanism Procreate uses to get there.
+
+## Test 2 — confirmed on a single brush. Grain implemented.
+
+All three round 3 findings reproduced without the double brush:
+
+1. **Texture mode never fills in.** No amount of scrubbing makes it solid.
+2. **Movement mode fills in** to a solid stroke.
+3. **Depth changes only how darkly the gaps are masked.** The pattern is static
+   — it does not mutate, move or change scale. More depth, more masking.
+
+Finding 3 is the new one and it pins Depth as a plain interpolation toward the
+map, `mix(1, grain, depth)`, with nothing near the sampling coordinate.
+
+Implemented the same day: the tooth multiplies a dab's coverage into the
+geometry channel, and the maximum blend that builds the silhouette does the
+rest. Canvas grain is permanent because every dab finds the same tooth; rolling
+grain fills because each pass puts its pits somewhere new. One mechanism, both
+modes, no special case — which is the reason to believe it after three failures.
+
+## Test 3 — Load is a ceiling, not a reservoir. The published documentation is wrong.
+
+Neither the 1% nor the 100% stroke weakens along its length, over strokes long
+enough that a reservoir would have run dry several times. Instead Load behaves
+as a **maximum**: press lightly and less paint lands, press hard and it reaches
+whatever Load allows.
+
+This contradicts the community documentation quoted in
+`docs/wet-mix-references.md` — "as the brush runs out of paint, the trail of
+colour it leaves will become less intense". The device says otherwise, and the
+device wins. Corrected there.
+
+So there is no depletion model to copy, and the paint-load axis this was meant
+to uncover does not exist in the form expected. Load is closer to our
+`flowDynamics` maximum than to anything new.

@@ -143,19 +143,30 @@ struct Brush {
 
     // MARK: Grain
 
-    /// How high the paper's tooth stands, 0 to 1. Ink is *thresholded*
-    /// against it rather than scaled by it: pigment sticks where it has more
-    /// to give than the tooth takes, and misses entirely where it has less.
+    /// How high the paper's tooth stands, 0 to 1. It is a *ceiling on where
+    /// ink may sit*, not a scaling of how much lands and not a threshold
+    /// against how much has accumulated: the tooth multiplies a dab's coverage
+    /// before the maximum blend that builds the stroke's silhouette.
     ///
-    /// Multiplying was the first attempt and it was wrong. It lightened the
-    /// whole stroke uniformly — a veil laid over the line — where real media
-    /// leaves a solid body and a broken edge. Thresholding puts the texture
-    /// where the ink is thin, which is where a surface actually shows through.
+    /// That one line produces both anchoring modes with no special case, which
+    /// is the reason to believe it. Canvas grain finds the same tooth at a
+    /// pixel for every dab, so `max(tooth * shape)` stays `tooth * silhouette`
+    /// however many passes cross it and the pits never fill. Rolling grain is
+    /// offset by arc length, so each pass puts its pits somewhere new and the
+    /// running maximum climbs to solid.
     ///
-    /// The consequence worth knowing: at `flow` 1 the body of a stroke is
-    /// fully covered, so no tooth shows there and only the edges break. Lower
-    /// `flow` to bring the grain into the body. That is not a limitation — it
-    /// is the same reason a marker hides paper texture and a pencil does not.
+    /// Both behaviours were measured in Procreate on 2026-09-05, along with the
+    /// two facts that rule out the alternatives: depth changes only how darkly
+    /// the gaps are masked and never the pattern's shape, and lower opacity
+    /// does *not* show more texture. A threshold against accumulated coverage
+    /// would fail that last one badly.
+    ///
+    /// Three implementations came before this one — multiply, per-dab
+    /// threshold, and a planned composite-time threshold — and the first was
+    /// mechanically this. It was dropped on the objection that it "veiled the
+    /// whole stroke", which the same measurement falsified: a canvas-anchored
+    /// grain veils the whole inked area permanently, on purpose. What looked
+    /// wrong was almost certainly the map, not the maths.
     ///
     /// Defaults to off, so a brush that predates grain behaves as it did.
     float grainDepth = 0.0f;

@@ -144,6 +144,11 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | Install straight onto the iPad, no computer in the loop | Works. Method not yet recorded — the budgeting rule at the top of this file may be stale |
 | 2026-09-02 | #50 Brush panel opens | Pass, but with three rendering/gesture bugs — see 7-9 |
 | 2026-09-02 | #58 Panel does not leak touches to the canvas | Pass |
+| 2026-09-06 | Procreate 1 — four spacings at Opacity 10%, single brush | Each stroke darker than the last, but **all four stay pale**. Neither prediction: uncompensated wanted a ramp into black. Magnitude unresolved — needs eyedropper values |
+| 2026-09-06 | Procreate 2 — grain scrub, Texture mode, single brush | Texture survives any amount of scrubbing. Never solid. **Confirms round 3 without the double brush** |
+| 2026-09-06 | Procreate 2 — grain scrub, Movement mode | Fills in to a solid stroke |
+| 2026-09-06 | Procreate 2 — Depth 50% vs 100% | Only how darkly the gaps are masked. Pattern static: no change of shape, scale or position |
+| 2026-09-06 | Procreate 3 — Load at 1% vs 100%, long strokes | **Neither fades along its length.** Load is a per-dab ceiling scaled by pressure, not a depleting reservoir |
 | 2026-09-05 | Procreate A — does one stroke accumulate against itself? | **Yes.** A single crossing darkens; many crossings go solid. Our model is right on this axis |
 | 2026-09-05 | Procreate B — Renderizado→Flujo at 100% vs 0% | Both strokes clearly present, second lighter and softer. Not a coverage alpha; do not map it to our Flow |
 | 2026-09-05 | Procreate C — does darkness move with Spacing? | **Invalid test, my design fault.** Ran from no-overlap to some-overlap, where both models predict the same thing. See C-redo |
@@ -265,7 +270,13 @@ they lived in the Swift shell rather than the engine:
     does keep texture across the whole inked area, permanently. The fault was
     most likely the map rather than the maths — our four-octave fractal noise
     sits near mid-grey and reads as a wash. Procreate exposes Brightness and
-    Contrast on the grain for exactly this reason. Not yet fixed.
+    Contrast on the grain for exactly this reason.
+    **Fixed 2026-09-06**, after the same three findings were reproduced on a
+    single brush — the round 3 results came off a double brush, which stacks two
+    grain sources into one stamp and could have produced them artificially. The
+    tooth now multiplies a dab's coverage into the geometry channel, where the
+    maximum blend makes canvas grain permanent and lets rolling grain fill in,
+    and `grain_threshold` is gone. Awaiting device confirmation.
 
 15. **Flow was a per-dab alpha, not what the stroke is worth.** Dabs land a
     fraction of a diameter apart, so at the default 6% spacing about seventeen

@@ -55,11 +55,19 @@ documentation:
 | **Arrastre** — Pull | Works with Dilution; how much paint gets dragged around — this is `smudge` |
 | **Grado** — Grade | Chunkiness and contrast of the brush's texture |
 
-Charge plus Dilution together are a **load model**: the brush holds a finite
-amount of paint and the trail weakens as it is used up. That is a third axis
-alongside flow and grain, and we have nothing like it. It is probably a large
-part of why Procreate's painterly brushes read the way they do, and it is
-independent of both the grain question and the flow question.
+~~Charge plus Dilution together are a **load model**: the brush holds a finite
+amount of paint and the trail weakens as it is used up.~~ **Measured on device
+2026-09-06 and it is not true.** Long strokes at Charge 1% and at Charge 100%
+are both even from end to end — neither fades, over distances where a reservoir
+would have emptied repeatedly. Charge behaves as a **ceiling** that pressure
+scales toward, which is much closer to our existing `flowDynamics` maximum than
+to anything new.
+
+The claim above came from the community documentation cited below, which says
+"as the brush runs out of paint, the trail of colour it leaves will become less
+intense". Either that describes a different setting, or it is simply wrong. It
+is quoted here rather than deleted because it is exactly the kind of plausible
+secondary source that would otherwise get believed twice.
 
 ## If we ever want mixing better than Procreate's
 

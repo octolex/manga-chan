@@ -121,14 +121,14 @@ final class DabShaderTests: XCTestCase {
     // MARK: - Grain
 
     func testGrainMatchesTheEngineReference() throws {
-        // Flow below full and depth below full on purpose. The threshold
-        // renormalises, so at flow 1 the body of a stroke is solid and there is
-        // no grain left to compare; and at depth 1 much of the map clamps to
-        // zero, where a wrong sampler would agree with a right one. These values
-        // keep every sampled pixel strictly between 0 and 1, so every one of
-        // them carries information.
+        // Full flow and mid depth on purpose. The composite takes the smaller
+        // of density and tooth, so any pixel where density is the smaller one
+        // reads back a flat number that carries nothing about the sampler — a
+        // wrong sampler would pass there. Flow 1 puts the tooth on the bottom
+        // everywhere, and depth 0.6 keeps it clear of both 0 and 1, so all 200+
+        // sampled pixels are live.
         let scale: Float = 96
-        let flow: Float = 0.7
+        let flow: Float = 1.0
         let depth: Float = 0.6
 
         let pixels = try renderCoverage([dab(x: 32, y: 32, radius: 26, flow: flow)],
@@ -146,14 +146,14 @@ final class DabShaderTests: XCTestCase {
                 let grain = mc_grain_sample(map, Int32(GrainTexture.size),
                                             (Float(x) + 0.5) / scale,
                                             (Float(y) + 0.5) / scale)
-                let tooth = grain * depth
-                let expected = (flow - tooth) / (1 - tooth)
+                let tooth = (1 - depth) + grain * depth
+                let expected = min(flow, tooth)
 
-                // Wider than the 3-of-255 the multiply version allowed, because
-                // the threshold amplifies: d/d(grain) of the expression above is
-                // about -1.1 at these values, so a sampler off by one level
-                // lands a little over one level out here.
-                XCTAssertEqual(composited(pixels, x: x, y: y), expected, accuracy: 0.015,
+                // Back to the tight bound the multiply version allowed: the
+                // expression is linear in the sampled value with slope `depth`,
+                // so a sampler off by one level of 255 lands under one level out
+                // rather than being amplified.
+                XCTAssertEqual(composited(pixels, x: x, y: y), expected, accuracy: 0.008,
                                "grain at (\(x), \(y)) disagrees with the engine reference")
                 compared += 1
             }
@@ -161,18 +161,75 @@ final class DabShaderTests: XCTestCase {
         XCTAssertGreaterThan(compared, 200, "the comparison must actually cover the dab")
     }
 
-    func testFullFlowLeavesNoToothShowing() throws {
-        // A deliberate consequence of thresholding rather than multiplying, and
-        // pinned so it is not later mistaken for a bug and "fixed" back into a
-        // veil. Ink that covers completely hides the surface under it; that is
-        // why a marker shows no paper texture and a pencil does.
+    func testFullFlowStillShowsTheTooth() throws {
+        // This test asserted the exact opposite until 2026-09-05, when Procreate
+        // was measured on device: at full opacity and full grain depth the paper
+        // is plainly visible through the body of a stroke. The old assertion was
+        // reasoning ("a marker shows no paper texture") pinned as if it were a
+        // measurement, and it defended a model that failed on device three times.
         let pixels = try renderCoverage([dab(x: 32, y: 32, radius: 24, flow: 1)],
                                         depth: 1, scale: 96)
 
+        var belowHalf = 0
+        var aboveHalf = 0
         for x in 26...38 {
-            XCTAssertEqual(composited(pixels, x: x, y: 32), 1.0, accuracy: 0.02,
-                           "full flow must cover the tooth at x=\(x)")
+            if composited(pixels, x: x, y: 32) < 0.5 { belowHalf += 1 } else { aboveHalf += 1 }
         }
+        // Both, not merely "some texture": a stroke where every pixel dipped
+        // would be a veil at constant strength, and one where none did would be
+        // the bug this replaces.
+        XCTAssertGreaterThan(belowHalf, 0, "full flow must not paint over the tooth")
+        XCTAssertGreaterThan(aboveHalf, 0, "the tooth must not mask the whole stroke either")
+    }
+
+    func testCanvasGrainNeverFillsInButRollingGrainDoes() throws {
+        // The measurement that settled the whole grain model, and the one no
+        // test defended while three implementations of it failed on device.
+        // Procreate, 2026-09-05: scrub twenty passes over one patch and canvas
+        // grain is exactly as textured as after one pass, while rolling grain
+        // goes solid.
+        //
+        // Both modes get the same twenty dabs in the same place. The only
+        // difference is the arc length each one carries.
+        let stack = (0..<20).map {
+            dab(x: 32, y: 32, radius: 24, flow: 1, grainOffset: Float($0) * 37)
+        }
+        let one = [dab(x: 32, y: 32, radius: 24, flow: 1, grainOffset: 0)]
+
+        let canvasOnce = try renderCoverage(one, depth: 1, scale: 96)
+        let canvasMany = try renderCoverage(stack, depth: 1, scale: 96)
+        let rollingMany = try renderCoverage(stack, depth: 1, scale: 96,
+                                             movement: MSGrainRolling)
+
+        var canvasMoved = 0
+        var canvasTotal: Float = 0
+        var rollingTotal: Float = 0
+        var samples = 0
+        for y in 24...40 {
+            for x in 24...40 {
+                guard insideDab(x: x, y: y, cx: 32, cy: 32, radius: 24, margin: 3) else { continue }
+                samples += 1
+                if abs(composited(canvasMany, x: x, y: y)
+                       - composited(canvasOnce, x: x, y: y)) > 0.01 { canvasMoved += 1 }
+                canvasTotal += composited(canvasMany, x: x, y: y)
+                rollingTotal += composited(rollingMany, x: x, y: y)
+            }
+        }
+        XCTAssertGreaterThan(samples, 200, "the comparison must actually cover the dab")
+
+        // Canvas is the exact assertion: not "less fill", none at all.
+        XCTAssertEqual(canvasMoved, 0,
+                       "canvas grain filled in under repeated passes; the tooth must be permanent")
+
+        // Rolling is a relative one on purpose. How far twenty passes climb
+        // depends on how much contrast the map has, and ours is smooth fractal
+        // noise clustered near mid-grey — pinning an absolute level here would
+        // be pinning the map rather than the mechanism.
+        let canvasMean = canvasTotal / Float(samples)
+        let rollingMean = rollingTotal / Float(samples)
+        print("grain fill: canvas \(canvasMean), rolling \(rollingMean)")
+        XCTAssertGreaterThan(rollingMean, canvasMean + 0.1,
+                             "rolling grain must fill in where canvas grain cannot")
     }
 
     func testGrainDepthOffLeavesCoverageExact() throws {
@@ -180,7 +237,9 @@ final class DabShaderTests: XCTestCase {
                                         depth: 0, scale: 96)
 
         // The "off" end of the slider has to be genuinely off. A grain that
-        // still bit faintly at zero would change every brush in the app.
+        // still bit faintly at zero would change every brush in the app — and
+        // with the tooth now multiplying the geometry channel, a depth of 0 has
+        // to yield a tooth of exactly 1 rather than merely nearly 1.
         XCTAssertEqual(composited(pixels, x: 32, y: 32), 0.5, accuracy: 0.01)
     }
 
@@ -189,9 +248,12 @@ final class DabShaderTests: XCTestCase {
         // a property of that pixel, so two different dabs covering it find the
         // same grain there. Both sample points sit deep inside their dab, where
         // geometry is 1, so the only thing that could differ is the grain.
-        let a = try renderCoverage([dab(x: 26, y: 32, radius: 22, flow: 0.6)],
+        // Flow 1 so the tooth is what the composite returns; at a lower flow
+        // the density would clamp the brighter half of the map to one constant
+        // and the comparison would pass there whatever the grain did.
+        let a = try renderCoverage([dab(x: 26, y: 32, radius: 22, flow: 1)],
                                    depth: 0.7, scale: 96)
-        let b = try renderCoverage([dab(x: 38, y: 32, radius: 22, flow: 0.6)],
+        let b = try renderCoverage([dab(x: 38, y: 32, radius: 22, flow: 1)],
                                    depth: 0.7, scale: 96)
 
         for x in 30...34 {
@@ -203,8 +265,8 @@ final class DabShaderTests: XCTestCase {
 
     func testRollingGrainMovesWithTheStrokeAndCanvasGrainDoesNot() throws {
         // The same dab in the same place, at two points along the stroke.
-        let atStart = dab(x: 32, y: 32, radius: 24, flow: 0.6, grainOffset: 0)
-        let farAlong = dab(x: 32, y: 32, radius: 24, flow: 0.6, grainOffset: 137)
+        let atStart = dab(x: 32, y: 32, radius: 24, flow: 1, grainOffset: 0)
+        let farAlong = dab(x: 32, y: 32, radius: 24, flow: 1, grainOffset: 137)
 
         let rollingA = try renderCoverage([atStart], depth: 0.7, scale: 96, movement: MSGrainRolling)
         let rollingB = try renderCoverage([farAlong], depth: 0.7, scale: 96, movement: MSGrainRolling)

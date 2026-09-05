@@ -31,6 +31,13 @@ Stated directly, so it does not have to be restated each session.
   every time — this project's whole discipline rests on that line.
 - **Reference test instructions inline, not by number.** They have no local copy
   of `TESTING.md` open while testing on the iPad. "#73" alone is unusable.
+  Better still, publish the round as a page they can keep open beside Procreate,
+  with any predicted outcome drawn rather than described — a grey swatch they
+  can hold the canvas against beats a percentage they have to imagine.
+- **Their iPad is in English as of 2026-09-06.** Procreate's UI is English now,
+  so name settings in English. `docs/procreate-brush-settings.md` keeps the
+  Spanish alongside because that is what was originally observed, and losing it
+  would mean re-transcribing to check anything.
 - **Direct, honest communication is a stated value.** No padding, no agreeing
   for the sake of it. Disagree when there is reason to.
 
