@@ -144,7 +144,9 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | Install straight onto the iPad, no computer in the loop | Works. Method not yet recorded — the budgeting rule at the top of this file may be stale |
 | 2026-09-02 | #50 Brush panel opens | Pass, but with three rendering/gesture bugs — see 7-9 |
 | 2026-09-02 | #58 Panel does not leak touches to the canvas | Pass |
-| 2026-09-06 | Procreate 1 — four spacings at Opacity 10%, single brush | Each stroke darker than the last, but **all four stay pale**. Neither prediction: uncompensated wanted a ramp into black. Magnitude unresolved — needs eyedropper values |
+| 2026-09-06 | Procreate 1 — four spacings at Opacity 10%, single brush | Each stroke darker than the last, but **all four stay pale**. Neither prediction: uncompensated wanted a ramp into black |
+| 2026-09-06 | Procreate 1b — eyedropper brightness of those four strokes | **B = 98, 95, 93, 92.** Ink alpha 0.02 / 0.05 / 0.07 / 0.08. **Both models refuted**: compensated needs alpha constant (varies 4x), uncompensated needs alpha-per-dab constant (varies 2.8x) |
+| 2026-09-06 | Procreate 1b — implication | At Opacity 10% the darkest stroke reaches 8% ink. Either the slider is far from literal or the eyedropper dilutes thin strokes. Test 0 settles which |
 | 2026-09-06 | Procreate 2 — grain scrub, Texture mode, single brush | Texture survives any amount of scrubbing. Never solid. **Confirms round 3 without the double brush** |
 | 2026-09-06 | Procreate 2 — grain scrub, Movement mode | Fills in to a solid stroke |
 | 2026-09-06 | Procreate 2 — Depth 50% vs 100% | Only how darkly the gaps are masked. Pattern static: no change of shape, scale or position |

@@ -456,3 +456,61 @@ device wins. Corrected there.
 So there is no depletion model to copy, and the paint-load axis this was meant
 to uncover does not exist in the form expected. Load is closer to our
 `flowDynamics` maximum than to anything new.
+
+---
+
+# Round 4b — the eyedropper numbers, 2026-09-06
+
+Brightness read with the eyedropper on each of the four Test 1 strokes, drawn at
+Opacity 10%. `alpha = 1 - B/100`; `n` is dabs covering a point, `1/spacing + 1`.
+
+| Spacing | B | alpha | n | alpha per dab |
+|---|---|---|---|---|
+| 20% | 98 | 0.020 | 6  | 0.0034 |
+| 10% | 95 | 0.050 | 11 | 0.0047 |
+| 5%  | 93 | 0.070 | 21 | 0.0034 |
+| 2%  | 92 | 0.080 | 51 | 0.0016 |
+
+**Both candidate models are refuted.** Compensation requires the `alpha` column
+to be constant; it varies four-fold. No compensation requires `alpha per dab` to
+be constant; it varies 2.8-fold and collapses at the tightest spacing.
+
+Relative to the widest spacing, alpha goes 1 : 2.5 : 3.5 : 4.0 while the dab
+count goes 1 : 1.83 : 3.5 : 8.5. So the stroke tracks the dab count up to 5%
+spacing and then falls a long way behind it. A minimum-spacing floor like our own
+half-pixel clamp would produce exactly that shape, by making 2% and 5% land at
+nearly the same real spacing — but so would a ceiling on accumulation, and these
+four numbers cannot tell those apart.
+
+**The larger problem is the scale.** At an Opacity of 10% the darkest of the four
+reaches 8% ink and the lightest reaches 2%. Either Procreate's Opacity slider is
+nothing like literal, or the eyedropper averages over an area and diluted four
+thin strokes by four different amounts. Those point in opposite directions, so
+round 5 validates the instrument before measuring anything else with it.
+
+## Round 5 — the script
+
+<https://claude.ai/code/artifact/aaeb1115-6ec1-4d96-93cd-b45cc1b38240>
+
+**Test 0.** Studio Pen, large, Opacity 100%, grain off. Scribble a fat solid
+patch and eyedropper its middle, well clear of any edge. **B = 0** means the
+instrument is faithful and the numbers above stand. Above about 3 means it
+samples an area, the four strokes were diluted by the white around them, and
+Test 1 needs redoing with a much fatter brush.
+
+**Test 5 — the model neither of us has tested.** Studio Pen, large, Opacity 25%,
+grain off.
+
+1. Note the brush's current **Rendering style**.
+2. One continuous twenty-pass scribble over a patch, never lifting. Read **B**.
+3. Five more scribbles over the same patch, lifting between each. Read **B**.
+4. Fresh patch, Rendering style **Uniform Blending**, repeat step 2. Read **B**.
+5. Fresh patch, Rendering style **Light Glaze**, repeat step 2. Read **B**.
+
+Step 2 settling near B 75 while step 3 goes much darker means a **per-stroke
+ceiling equal to the Opacity slider** — the Photoshop model, and it would explain
+every result so far including round 3's apparent contradiction. Step 2 reaching 0
+means no ceiling at all. Steps 4 and 5 ask whether **Rendering style** is the
+control that switches between those, which has been the open question since
+round 3 and would mean our single Flow is one point on a scale Procreate exposes
+by name.
