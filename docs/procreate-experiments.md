@@ -280,6 +280,13 @@ is what the first version of this test lacked.
 
 ## D — the decisive result. Grain is a cap on coverage, not a threshold.
 
+> **Caveat added 2026-09-05, after the fact.** This round was run on a **double
+> brush** — two shape and two grain sources stacked into one stamp. The
+> conclusions below are coherent and one mechanism explains all of them, but they
+> were measured through a stamp with two grains in it, so they carry an asterisk
+> until round 4 repeats them on a single brush. Found by octolex, not by me, and
+> it is the kind of thing that quietly invalidates a whole conclusion.
+
 Three findings, and together they pick the model:
 
 1. **Profundidad controls how much the body is affected.** Turn it up and the
@@ -326,3 +333,60 @@ matching it needs no pigment model at all — and that beating it is available
 cheaply if we ever want it.
 
 See `docs/wet-mix-references.md` for the algorithms and papers.
+
+---
+
+# Round 4 — the script
+
+Published as a page to follow on the iPad:
+<https://claude.ai/code/artifact/aaeb1115-6ec1-4d96-93cd-b45cc1b38240>
+
+**Before anything:** check the brush is not a double. Brush Studio should list
+**one** Forma and **one** Grano. Every grain result in round 3 came off a double
+brush and needs repeating without one.
+
+Setup for all tests: white canvas, a fresh layer per step, every stroke drawn
+slowly in one pull with even pressure. The differences being looked for are large
+enough that hand wobble cannot fake them.
+
+## Test 1 — does tighter spacing darken a stroke? (replaces the void C)
+
+Brush **Inking → Studio Pen**. Grano → Profundidad **0%**. Renderizado → Flujo
+**100%**. Main-screen Opacity slider **10%** — low on purpose, because the
+uncompensated model saturates at higher values and hides the difference.
+
+Draw one straight stroke at each Espaciado, left to right: **20%, 10%, 5%, 2%**.
+
+| Espaciado | if compensated | if uncompensated |
+|---|---|---|
+| 20% | 10% grey | 47% |
+| 10% | 10% grey | 69% |
+| 5%  | 10% grey | 89% |
+| 2%  | 10% grey | 99% |
+
+Four identical pale strokes means Procreate compensates for dab overlap and the
+change in `stroke.cpp` stays. A ramp to near-black means it does not, and it gets
+reverted. There is no regime where these two look alike, which is exactly what
+the first version of this test lacked.
+
+## Test 2 — grain, on a single brush
+
+Brush **Sketching → 6B Pencil**. Opacity **100%**, Grano → Profundidad **100%**.
+
+1. Comportamiento **Texturizado**: one stroke, then scrub a patch ~20 times.
+2. Comportamiento **Movimiento**: one stroke, then scrub a patch ~20 times.
+3. Back to **Texturizado**: one stroke at Profundidad **50%**, one at **100%**.
+
+Steps 1 and 2 re-run round 3's finding without the double brush. Step 3 is new
+and checks what Profundidad is: if it only changes how dark the gaps go, it is a
+depth control and `mix(1, tooth, depth)` is the right shape. If it also changes
+the pattern's *shape or scale*, it is not, and the mechanism is wrong again.
+
+## Test 3 — optional. Does the brush run out of paint?
+
+Any wet-mix brush, Mezcla húmeda → Carga low, one very long stroke; then Carga at
+maximum, the same stroke. Does either weaken along its length?
+
+Nothing depends on this yet. It confirms whether Carga and Dilución are a
+paint-load model, which would be a whole axis the engine has no equivalent for,
+and is worth knowing before the brush editor is designed rather than after.

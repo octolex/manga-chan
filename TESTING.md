@@ -147,7 +147,7 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-05 | Procreate A — does one stroke accumulate against itself? | **Yes.** A single crossing darkens; many crossings go solid. Our model is right on this axis |
 | 2026-09-05 | Procreate B — Renderizado→Flujo at 100% vs 0% | Both strokes clearly present, second lighter and softer. Not a coverage alpha; do not map it to our Flow |
 | 2026-09-05 | Procreate C — does darkness move with Spacing? | **Invalid test, my design fault.** Ran from no-overlap to some-overlap, where both models predict the same thing. See C-redo |
-| 2026-09-05 | Procreate D — grain under repeated scrubbing | **Rolling fills in solid; Canvas persists forever.** Depth controls body coverage. Low opacity does **not** show more texture |
+| 2026-09-05 | Procreate D — grain under repeated scrubbing | **Rolling fills in solid; Canvas persists forever.** Depth controls body coverage. Low opacity does **not** show more texture. ⚠️ Run on a **double brush** — repeat on a single before acting |
 | 2026-09-05 | Procreate E — wet mix across a contrasting colour | Drags the underlying colour along. Mixed region reads grey, so the mixing looks like plain RGB |
 | 2026-09-03 | #76 Flow 50% with Depth 0 — is one pass half strength or solid? | **Solid.** Only ~10% reads as translucent. Answers bug 14 and opens bug 15 |
 | 2026-09-03 | #76 Flow 10%, self-crossing stroke | Translucent, and the crossing visibly darker — build-up works, the scale does not |
