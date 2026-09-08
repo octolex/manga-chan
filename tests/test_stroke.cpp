@@ -535,84 +535,78 @@ float accumulatedFlowAt(const std::vector<Dab>& dabs, float px, float py) {
     return acc;
 }
 
-/// Flow says what the finished stroke is worth, not what one dab deposits.
+/// Flow is what one dab deposits, and the dabs accumulate freely from there.
 ///
-/// This is the rule the device round broke: at 6% spacing about seventeen dabs
-/// cover every pixel, so an uncompensated per-dab alpha of 0.5 accumulated to
-/// 0.99999 and the stroke came out solid. Only around 10% was visibly
-/// translucent, which made the slider a switch with a very short throw.
-void testFlowIsWhatTheStrokeIsWorth() {
-    for (float wanted : {0.1f, 0.25f, 0.5f, 0.75f}) {
+/// The reverse of this was committed on 2026-09-03 and reverted on 2026-09-08,
+/// after Procreate was measured rather than reasoned about: four strokes at one
+/// Opacity across an 8x range of Spacing came out at 0.03, 0.06, 0.08 and 0.09
+/// ink. Compensation requires those four numbers to be equal.
+void testFlowIsWhatOneDabDeposits() {
+    for (float wanted : {0.1f, 0.25f, 0.5f, 0.75f, 1.0f}) {
         Brush brush = inkPen();
         brush.flow = wanted;
-        brush.hardness = 1.0f;
         const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
-        const float got = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
-        std::printf("  flow %.2f requested, stroke worth %.3f\n",
-                    static_cast<double>(wanted), static_cast<double>(got));
-        CHECK(std::fabs(got - wanted) < 0.06f);
+        for (const Dab& d : path.dabs()) {
+            CHECK(std::fabs(d.flow - wanted) < 1e-5f);
+        }
     }
 }
 
-/// And says it independently of Spacing.
+/// And a tighter spacing therefore lays down a darker stroke.
 ///
-/// The uncompensated version made the same brush twice as dark at half the
-/// spacing, so every spacing change silently rewrote every flow on the brush.
-/// That coupling is the part that could not be left in: it makes two settings
-/// that look independent secretly multiply.
-void testFlowDoesNotMoveWithSpacing() {
-    float darkest = 0.0f;
-    float lightest = 1.0f;
-    for (float spacing : {0.03f, 0.06f, 0.12f, 0.25f}) {
+/// Pinned as intended behaviour rather than left implicit, because it looks
+/// exactly like the bug it was once mistaken for. More dabs over a pixel is
+/// more pigment on it; that is the medium, and both references we have keep it.
+/// What stops it being a usability problem is Opacity, which caps the finished
+/// stroke however much it overlaps itself.
+void testTighterSpacingLaysDownMoreInk() {
+    float previous = 0.0f;
+    for (float spacing : {0.25f, 0.12f, 0.06f}) {
         Brush brush = inkPen();
-        brush.flow = 0.5f;
+        brush.flow = 0.1f;
         brush.hardness = 1.0f;
         brush.spacing = spacing;
         const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
         const float got = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
         std::printf("  spacing %.2f -> stroke worth %.3f\n",
                     static_cast<double>(spacing), static_cast<double>(got));
-        darkest = std::max(darkest, got);
-        lightest = std::min(lightest, got);
+        CHECK(got > previous + 0.05f);
+        previous = got;
     }
-    // Spread across a 8x range of spacings, not merely "each one is near 0.5":
-    // a compensation that drifted with spacing could still pass the per-case
-    // check while making the brush visibly different at the two ends.
-    std::printf("  spread across spacings: %.3f\n",
-                static_cast<double>(darkest - lightest));
-    CHECK(darkest - lightest < 0.08f);
 }
 
-/// Flow 100% is untouched. The default inking brush must not have moved.
-void testFullFlowStillSaturatesInOnePass() {
+/// Dabs never land closer than half a pixel however tight the spacing.
+///
+/// Procreate has the same floor, and finding it is what dissolved the anomaly
+/// that made both candidate models look wrong: at its two tightest settings its
+/// strokes were nearly equally dark, where the nominal dab counts said one
+/// should have been far darker.
+void testDabsHaveAMinimumSpacing() {
     Brush brush = inkPen();
-    brush.flow = 1.0f;
-    const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
-    for (const Dab& d : path.dabs()) {
-        CHECK(d.flow > 0.999f);
+    brush.size = 3.0f;        // small, so a tight fraction lands under half a pixel
+    brush.spacing = 0.02f;
+    const StrokePath path = straightLine(brush, 20.0f, 120.0f, 32);
+    const std::vector<Dab>& dabs = path.dabs();
+    CHECK(dabs.size() > 4);
+    for (size_t i = 0; i + 1 < dabs.size(); ++i) {
+        CHECK(dabGap(dabs, i) > 0.49f);
     }
 }
 
 /// Crossing the stroke over itself still darkens.
-///
-/// This is the behaviour the device round explicitly asked us to keep — at 10%
-/// flow the intersection reading darker than either line is the thing that
-/// showed flow was doing anything at all. Compensation must not flatten it into
-/// a stroke that cannot build.
 void testCrossingTheStrokeStillDarkens() {
     Brush brush = inkPen();
-    brush.flow = 0.4f;
+    brush.flow = 0.05f;
     brush.hardness = 1.0f;
     const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
     const float once = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
-
-    // A second pass over ground already at `once`, as a crossing stroke is.
-    const float twice = once + accumulatedFlowAt(path.dabs(), 160.0f, 100.0f) * (1.0f - once);
+    const float twice = once + once * (1.0f - once);
     std::printf("  one pass %.3f, crossed %.3f\n",
                 static_cast<double>(once), static_cast<double>(twice));
-    CHECK(twice > once + 0.15f);
+    CHECK(twice > once + 0.05f);
     CHECK(twice < 1.0f);
 }
+
 
 }  // namespace
 
@@ -635,9 +629,9 @@ int main() {
     testVelocityDynamicsThinAFastStroke();
     testIncrementalEmissionMatchesOneShot();
     testConsumeReportsOnlyNewDabs();
-    testFlowIsWhatTheStrokeIsWorth();
-    testFlowDoesNotMoveWithSpacing();
-    testFullFlowStillSaturatesInOnePass();
+    testFlowIsWhatOneDabDeposits();
+    testTighterSpacingLaysDownMoreInk();
+    testDabsHaveAMinimumSpacing();
     testCrossingTheStrokeStillDarkens();
     return check::report("stroke");
 }

@@ -514,3 +514,61 @@ means no ceiling at all. Steps 4 and 5 ask whether **Rendering style** is the
 control that switches between those, which has been the open question since
 round 3 and would mean our single Flow is one point on a scale Procreate exposes
 by name.
+
+---
+
+# Round 5 results — 2026-09-08. The model, settled.
+
+## Test 0 — the eyedropper is trustworthy, with a fixed offset
+
+Solid black reads **B = 1**, not 0. It is not area averaging: a large flat blob
+of pure black reads 1 as well. So there is a **fixed +1 offset**, and every
+earlier reading is one unit light.
+
+One quirk worth recording: picking a colour up and repainting with it drifts a
+further +1 each round trip, so a patch repainted from its own sampled colour
+climbs 1, 2, 3. That is a rounding loss in the pick-and-repaint cycle, not
+anything happening on the canvas. Read, never re-pick, when measuring.
+
+The four Test 1 readings therefore stand at 0.03 / 0.06 / 0.08 / 0.09 ink, which
+changes no conclusion.
+
+## Test 5 — Rendering style is the accumulation model, and Glaze is a ceiling
+
+Opacity 25%, Studio Pen, which was set to **Intense Blending**.
+
+| Rendering style | One continuous 20-pass scribble | Five more, lifting between |
+|---|---|---|
+| Intense Blending | B 1 — solid | B 0 |
+| Uniform Blending | B 5 | B 1 |
+| **Light Glaze** | **B 85** = 0.16 ink | **B 41** = 0.60 ink |
+
+**Light Glaze settles.** Twenty passes without lifting cannot take it past 0.16
+ink. Lift, and five more strokes reach 0.60 — and six strokes of 0.16
+composited alpha-over predict **0.65**, against 0.60 measured. That is a
+per-stroke ceiling, and it is exactly Photoshop's Opacity.
+
+**Both Blending styles saturate against themselves.** No ceiling at all; the
+dabs simply pile up. Which resolves the round 3 result that looked like a
+contradiction: that test used a textured brush in a Blending style, so of course
+its self-crossing darkened.
+
+## What this changed in the engine
+
+**The flow compensation is reverted.** Correcting Test 1 for a minimum dab
+spacing — which Procreate has, as we do — gives a per-dab alpha of 0.0051,
+0.0056, 0.0042 and 0.0047 across the whole spacing range. Constant. The engine
+is uncompensated, and so is Photoshop, and the change committed on 2026-09-03
+matched neither.
+
+**Nothing replaced it, because nothing needed to.** `opacity` already multiplies
+the finished stroke once at composite, which is a per-stroke ceiling, and it is
+already a slider in the brush panel. Flow is the build rate and Opacity is the
+strength, exactly as in Photoshop. Between them the two sliders reach both of
+Procreate's accumulation families without a mode switch — which is also why the
+Maximum/Buildup toggle is not coming back.
+
+The rule worth keeping from all of this: **a control whose useful range is
+bunched at one end is fixed by the curve on its slider, never by changing what
+the number means.** Two device rounds went into a symptom whose cause was a
+control we already had and were not treating as the one that does the job.

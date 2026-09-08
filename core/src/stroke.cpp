@@ -233,34 +233,35 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
     dab.radius = std::max(kMinimumRadius, diameter * 0.5f);
     dab.angle = angle;
 
-    // Flow is what the finished stroke is worth, not what one dab deposits.
+    // Flow is what ONE DAB deposits, and the dabs accumulate freely from there.
     //
-    // Those are wildly different numbers. Dabs land a fraction of a diameter
-    // apart, so at the default 6% spacing roughly seventeen of them cover any
-    // given pixel, and a per-dab alpha of 0.5 accumulates to 1 - 0.5^17, which
-    // is 0.99999. Measured on device: Flow 50% draws a solid line and only
-    // around 10% is visibly translucent. The slider was effectively a switch,
-    // and worse, its meaning moved with Spacing — the same brush at 3% spacing
-    // was twice as dark, which is not a property any painting app should have.
+    // This was briefly the opposite, and the reasoning that changed it was
+    // sound but aimed at the wrong control. The symptom was real — Flow 50%
+    // draws a solid line, because seventeen dabs cover every pixel at the
+    // default spacing and 1 - 0.5^17 is 0.99999 — and the conclusion drawn from
+    // it was that Flow should be inverted so a stroke finished at the value
+    // asked for. That made the slider literal at the cost of matching nothing:
     //
-    // So invert the accumulation. n dabs of alpha a compose to 1 - (1-a)^n, and
-    // n is one over the spacing fraction, so asking for the stroke to finish at
-    // `flow` means each dab deposits 1 - (1-flow)^spacing. Flow 100% still
-    // gives alpha 1 and nothing changes for the default inking brush.
+    //   * Photoshop's Flow is a per-dab alpha, uncompensated.
+    //   * Procreate's is too. Measured 2026-09-08: four strokes at one Opacity
+    //     over an 8x range of Spacing came out at 0.03, 0.06, 0.08 and 0.09 ink.
+    //     Compensation requires those to be equal. They are not.
     //
-    // Crossing the stroke over itself still darkens: that is a second pass of n
-    // dabs over ground already at `flow`, which composes to 1 - (1-flow)^2, and
-    // it is the behaviour the device round asked us to keep.
-    // The count is (diameter / step) + 1, not diameter / step: a probe point
-    // sees every dab whose centre lies within a radius either side, and that
-    // span has one more dab in it than it has gaps. The term is nothing at 6%
-    // spacing — seventeen dabs against sixteen and two thirds — and a quarter
-    // of the total at 25%, where four gaps carry five dabs. Dropping it made a
-    // wide-spaced brush come out at 0.58 for a requested 0.5.
-    const float step = std::max(kMinimumSpacing, brush_.spacing * dab.radius * 2.0f);
-    const float diameterHere = std::max(dab.radius * 2.0f, 1e-4f);
-    const float overlap = std::min(1.0f, step / (diameterHere + step));
-    dab.flow = flow >= 1.0f ? 1.0f : 1.0f - std::pow(1.0f - flow, overlap);
+    // What was actually missing was noticing that `opacity` already does the
+    // job. It multiplies the finished stroke once, at composite, so it caps
+    // what a stroke can reach however much it overlaps itself — a per-stroke
+    // ceiling, which is exactly Photoshop's Opacity and exactly what Procreate
+    // calls a Glaze rendering style. Flow and Opacity stopped being redundant
+    // when density got its own channel; the mistake was still treating Flow as
+    // the strength control after that.
+    //
+    // The consequence is worth stating rather than fixing: Flow's useful range
+    // is bunched at the bottom, because anything above roughly 20% saturates in
+    // one pass. That is true of Photoshop too, and it is why Procreate keeps
+    // Opacity on the main screen and Flow buried in Brush Studio. If the slider
+    // proves hard to use, the answer is a curve on the slider, not a change to
+    // what the number means.
+    dab.flow = flow;
     dab.roundness = clamp01(brush_.roundness);
     dab.hardness = clamp01(brush_.hardness);
 
@@ -280,10 +281,16 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
     noteTiles(dab);
 
     // Spacing is a fraction of *this* dab's diameter, so the stroke keeps its
-    // character as pressure changes the width. Already computed above, because
-    // the flow compensation needs the same number: the two must not drift
-    // apart, or a dab would be weighted for an overlap it does not have.
-    nextSpacing_ = step;
+    // character as pressure changes the width. Recomputed after placement
+    // rather than before, because the diameter is only known once dynamics and
+    // jitter have run.
+    //
+    // The half-pixel floor is not a detail. Procreate has one too: at 5% and 2%
+    // spacing its strokes came out almost equally dark, where the dab counts
+    // say the second should have been far darker. Correct for a floor and its
+    // per-dab alpha is constant across the whole range, which is what showed
+    // the engine is uncompensated rather than partially compensated.
+    nextSpacing_ = std::max(kMinimumSpacing, brush_.spacing * dab.radius * 2.0f);
 }
 
 void StrokePath::noteTiles(const Dab& dab) {

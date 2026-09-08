@@ -147,6 +147,11 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-06 | Procreate 1 — four spacings at Opacity 10%, single brush | Each stroke darker than the last, but **all four stay pale**. Neither prediction: uncompensated wanted a ramp into black |
 | 2026-09-06 | Procreate 1b — eyedropper brightness of those four strokes | **B = 98, 95, 93, 92.** Ink alpha 0.02 / 0.05 / 0.07 / 0.08. **Both models refuted**: compensated needs alpha constant (varies 4x), uncompensated needs alpha-per-dab constant (varies 2.8x) |
 | 2026-09-06 | Procreate 1b — implication | At Opacity 10% the darkest stroke reaches 8% ink. Either the slider is far from literal or the eyedropper dilutes thin strokes. Test 0 settles which |
+| 2026-09-08 | Procreate 0 — eyedropper on solid black | Reads **B = 1, not 0**. A fixed +1 offset, not area averaging: a large flat blob reads 1 too. Re-picking and repainting drifts +1 per round trip |
+| 2026-09-08 | Procreate 5 — Intense Blending, Opacity 25% | Continuous scribble **B = 1** (solid). Five separate strokes **B = 0**. No ceiling: a stroke saturates against itself |
+| 2026-09-08 | Procreate 5 — Uniform Blending, Opacity 25% | Continuous **B = 5**, separate **B = 1**. Same family, gentler |
+| 2026-09-08 | Procreate 5 — **Light Glaze, Opacity 25%** | Continuous **B = 85** (0.16 ink) — twenty passes cannot exceed it. Separate strokes **B = 41** (0.60 ink). Six strokes of 0.16 composited predict 0.65. **Per-stroke ceiling confirmed** |
+| 2026-09-08 | Procreate 1 — reinterpreted with a spacing floor | Correct for a minimum dab spacing and per-dab alpha is 0.0051 / 0.0056 / 0.0042 / 0.0047 — constant. **Uncompensated**, and bug 15's fix was wrong |
 | 2026-09-06 | Procreate 2 — grain scrub, Texture mode, single brush | Texture survives any amount of scrubbing. Never solid. **Confirms round 3 without the double brush** |
 | 2026-09-06 | Procreate 2 — grain scrub, Movement mode | Fills in to a solid stroke |
 | 2026-09-06 | Procreate 2 — Depth 50% vs 100% | Only how darkly the gaps are masked. Pattern static: no change of shape, scale or position |
@@ -280,7 +285,29 @@ they lived in the Swift shell rather than the engine:
     maximum blend makes canvas grain permanent and lets rolling grain fill in,
     and `grain_threshold` is gone. Awaiting device confirmation.
 
-15. **Flow was a per-dab alpha, not what the stroke is worth.** Dabs land a
+15. **Flow saturates in one pass, and the fix committed for it was wrong.**
+    ~~Flow was a per-dab alpha, not what the stroke is worth.~~ **Reverted
+    2026-09-08.** The symptom was real and the diagnosis was not.
+    What was measured: at the default 6% spacing about seventeen dabs cover
+    every pixel, so a per-dab alpha of 0.5 accumulates to 1 - 0.5^17, and Flow
+    50% draws solid black. All true. The conclusion drawn — that Flow should be
+    inverted so a stroke finishes at the value asked for — matched neither
+    reference. Photoshop's Flow is an uncompensated per-dab alpha, and so is
+    Procreate's: four strokes at one Opacity across an eight-fold range of
+    Spacing came out at 0.03, 0.06, 0.08 and 0.09 ink, where compensation
+    requires them to be equal.
+    The real gap was that `opacity` **already** does the job and was not being
+    treated as the control that does it. It multiplies the finished stroke once
+    at composite, so it caps what a stroke reaches however much it overlaps
+    itself. Flow is the build rate; Opacity is the strength. Procreate agrees
+    loudly by putting Opacity on the main screen and Flow inside Brush Studio.
+    Flow's useful range really is the bottom fifth of its slider. That is a
+    property of the medium, not a bug, and if it proves awkward the fix is a
+    curve on the slider rather than a change to the meaning of the number.
+    Two rounds of device testing went into a symptom whose cause was a control
+    we already had.
+
+16. ~~**Flow was a per-dab alpha, not what the stroke is worth.**~~ Dabs land a
     fraction of a diameter apart, so at the default 6% spacing about seventeen
     of them cover every pixel. A per-dab alpha of 0.5 therefore accumulated to
     `1 - 0.5^17` — 0.99999, solid black. Measured on device: Flow 50% and 75%

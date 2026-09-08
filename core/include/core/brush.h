@@ -124,21 +124,45 @@ struct Brush {
 
     // MARK: Ink
 
-    /// Ink laid down per dab. Density accumulates across dabs, so this decides
-    /// how fast a stroke reaches full strength — and therefore whether it
-    /// darkens where it crosses itself.
+    /// Ink laid down **per dab**, accumulating freely across them. This is the
+    /// rate at which a stroke builds, not the strength it ends at.
     ///
-    /// At 1 a single pass saturates immediately, so overlaps cannot darken and
-    /// the stroke reads as ink. Below 1 the passes build, which is what a
-    /// pencil or an airbrush does. There is deliberately no mode switch: the
-    /// two behaviours are the ends of this one control, as in Photoshop. A
-    /// switch made `flow` and `opacity` redundant at one end of it, since both
-    /// then scaled the same final alpha and only their product mattered.
+    /// Uncompensated, deliberately, and measured rather than argued: at one
+    /// Opacity across an eight-fold range of Spacing, Procreate produced 0.03,
+    /// 0.06, 0.08 and 0.09 ink (2026-09-08). Compensation requires those to be
+    /// equal. Photoshop's Flow is the same. More dabs over a pixel is more
+    /// pigment on it — that is the medium, not a defect.
+    ///
+    /// **The consequence, stated rather than fixed:** anything much above 20%
+    /// saturates in a single pass, because roughly seventeen dabs cover every
+    /// pixel at the default spacing and 1 - 0.8^17 is already 0.98. Flow's
+    /// useful range is the bottom of the slider. That is true of Photoshop, and
+    /// it is why Procreate keeps Opacity on the main screen and Flow inside
+    /// Brush Studio. If it proves awkward the answer is a curve on the slider,
+    /// never a change to what the number means.
     float flow = 1.0f;
 
-    /// Stroke-level alpha, applied once when the finished stroke is
-    /// composited. A ceiling on the whole stroke rather than a per-dab
-    /// multiplier, so lowering it never makes overlaps appear.
+    /// Stroke-level alpha, applied once when the finished stroke is composited.
+    /// A ceiling on the whole stroke rather than a per-dab multiplier, so
+    /// lowering it never makes overlaps appear.
+    ///
+    /// **This is the strength control**, and between them the two fields give
+    /// both of Procreate's accumulation families without a mode switch:
+    ///
+    ///   * Opacity 100% with a low Flow is a **Blending** style — dabs pile up
+    ///     freely and a stroke can saturate against itself. Measured: Intense
+    ///     Blending at 25% opacity scrubbed to solid black.
+    ///   * A lowered Opacity is a **Glaze** style — a stroke cannot exceed it
+    ///     however much it overlaps itself, while a *separate* stroke
+    ///     composites on top. Measured: Light Glaze at 25% opacity settled at
+    ///     0.16 ink under twenty passes without lifting, then reached 0.60
+    ///     after five more strokes. Six strokes of 0.16 composited alpha-over
+    ///     predict 0.65.
+    ///
+    /// Procreate spends six named rendering styles on that axis. Two
+    /// independent sliders reach the same places, which is why the
+    /// Maximum/Buildup switch removed earlier is not coming back — it was a
+    /// third control for something these two already span.
     float opacity = 1.0f;
 
     // MARK: Grain
