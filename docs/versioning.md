@@ -104,7 +104,18 @@ Everything so far is internal pre-alpha, and none of it is a public build.
    silently outlives that series: `v0.1.*` kept selecting `v0.1.72` for two
    releases after the series moved to 0.3, and both shipped changelogs listing a
    single commit.
-8. **The running build says which build it is.** The version and build number
+8. **The source is served from an endpoint that states its own cache policy.**
+   `raw.githubusercontent.com/octolex/manga-chan/main/source.json` — measured
+   2026-09-08 as sending `cache-control: max-age=300` and an ETag. Not a GitHub
+   release asset: those send no `Cache-Control` and no `Expires` at all, so
+   every client falls back to heuristic freshness and a stale copy can survive
+   for an unpredictable length of time. That is fine for an `.ipa`, which never
+   changes once published, and wrong for a file rewritten by every build. It
+   cost a real device round: SideStore went on offering an old version while
+   the origin was already current.
+   Checkable: `curl -sLD - <source URL> -o /dev/null | grep -i cache-control`
+   must print a `max-age`.
+9. **The running build says which build it is.** The version and build number
    are on screen in the HUD, in both its compact and detailed modes, and in the
    crash-log header. There is one device tester and no TestFlight build list to
    check against: on 2026-09-02 a device round came back with findings from the
@@ -113,10 +124,10 @@ Everything so far is internal pre-alpha, and none of it is a public build.
    a plausible number — an un-overridden version reads "local build, not from
    CI", and a build number that has drifted from its version reads "MISMATCH".
    Checkable: install a build and read the HUD against the release it came from.
-9. **Pre-1.0 versions promise nothing about compatibility.** Documents may break
+10. **Pre-1.0 versions promise nothing about compatibility.** Documents may break
    between builds, and that is allowed until 1.0 — but a release that does break
    them must say so at the top of its notes.
-10. **1.0.0 is not declared from a checklist.** See the two conditions above.
+11. **1.0.0 is not declared from a checklist.** See the two conditions above.
 
 ## Why not date-based, or just a build number
 

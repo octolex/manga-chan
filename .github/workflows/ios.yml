@@ -16,6 +16,9 @@ name: iOS build
 on:
   push:
     branches: [main]
+    # The build commits source.json back to main. Without this, that push
+    # would trigger another build, which would push again, forever.
+    paths-ignore: [source.json]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -286,7 +289,7 @@ jobs:
             echo "Through the SideStore source, which offers this as an update automatically:"
             echo
             echo '```'
-            echo "https://github.com/${{ github.repository }}/releases/download/sidestore-source/source.json"
+            echo "https://raw.githubusercontent.com/octolex/manga-chan/main/source.json"
             echo '```'
             echo
             echo "The \`.ipa\` below also installs directly. It is **unsigned** — SideStore"
@@ -350,7 +353,7 @@ jobs:
           {
             "name": "Manga-Chan (internal)",
             "identifier": "com.octolex.mangachan.source",
-            "sourceURL": "$BASE/sidestore-source/source.json",
+            "sourceURL": "https://raw.githubusercontent.com/octolex/manga-chan/main/source.json",
             "apps": [
               {
                 "name": "Manga-Chan",
@@ -394,4 +397,49 @@ jobs:
               --prerelease
 
           gh release upload sidestore-source source.json --clobber
-          echo "Source now points at $TAG"
+          echo "Release asset updated for $TAG"
+
+      # The endpoint SideStore should actually read.
+      #
+      # A release asset is the wrong shape for a file that changes. Measured on
+      # 2026-09-08, the release download sends **no Cache-Control and no
+      # Expires** — so every client, including SideStore's URLSession, falls
+      # back to heuristic freshness and holds a stale copy for an unpredictable
+      # length of time. The device saw an old version while the origin was
+      # already current; the same URL from here returned the new one. That is
+      # not a bug we can fix from the publishing side, because we do not
+      # control the headers GitHub sets on release assets.
+      #
+      # raw.githubusercontent.com sends `cache-control: max-age=300` and an
+      # ETag, measured the same day. Five minutes, bounded and predictable.
+      #
+      # The release asset is still updated above so the old URL does not start
+      # 404ing for anyone who added it.
+      - name: Commit the source where it can be cached sanely
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet --exit-code -- source.json 2>/dev/null; then
+            echo "source.json unchanged; nothing to commit"
+            exit 0
+          fi
+
+          git add source.json
+          git commit -m "SideStore source: ${{ steps.version.outputs.tag }}
+
+          Published by run ${{ github.run_number }}. This commit only moves the
+          source pointer; the workflow ignores pushes that touch nothing else."
+
+          # Another build could have landed while this one ran.
+          for attempt in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            echo "push attempt $attempt failed, retrying"
+            sleep $((attempt * 3))
+          done
+          echo "::error::could not push the source pointer after 3 attempts"
+          exit 1
