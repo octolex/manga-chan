@@ -100,6 +100,9 @@ targets:
       # very bytes the app uploads rather than against a second copy of the
       # upload path that would quietly drift from it.
       - path: Sources/GrainTexture.swift
+      # The version readout, so the rules docs/versioning.md states are
+      # checked rather than only written down.
+      - path: Sources/AppVersion.swift
       # The colour picker and the scroll view it lives in. Three bugs reached
       # the device here in one build, all of them visible in a screenshot and
       # invisible to every test we had.

@@ -56,6 +56,7 @@ final class HUDView: UIView {
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(cycleMode)))
 
         staticInfo = [
+            "app      \(AppVersion.short)",
             String(cString: core_build_info()),
             "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
         ]
@@ -91,7 +92,12 @@ final class HUDView: UIView {
 
         case .compact:
             alpha = 1.0
+            // The version rides along in compact too. Detailed is the mode that
+            // gets switched off while drawing, and "which build is this" is
+            // most often asked in the middle of a device round rather than
+            // before one.
             label.text = String(format: "%.0f fps   gpu %.2f ms", latest.fps, latest.gpuFrameMs)
+                + "   " + AppVersion.marketing
 
         case .detailed:
             alpha = 1.0

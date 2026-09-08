@@ -126,8 +126,7 @@ enum Diagnostics {
     private static func writeHeader() {
         let device = UIDevice.current
         log("Manga-Chan starting")
-        log("build: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] ?? "?")"
-            + " (\(Bundle.main.infoDictionary?["CFBundleVersion"] ?? "?"))")
+        log("build: \(AppVersion.short)")
         log("device: \(device.model), \(device.systemName) \(device.systemVersion)")
         log("engine: \(String(cString: core_build_info()))")
         log("processors: \(ProcessInfo.processInfo.processorCount)")

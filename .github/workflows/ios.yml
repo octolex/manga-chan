@@ -214,6 +214,16 @@ jobs:
           test "$STAMPED" = "${{ steps.version.outputs.version }}" \
             || { echo "::error::version not stamped — plist says '$STAMPED', expected '${{ steps.version.outputs.version }}'"; exit 1; }
 
+          # And the build number, which was NOT asserted until 2026-09-08. Both
+          # overrides ride the same xcodebuild command line, so either can be
+          # dropped by a renamed build setting independently of the other. The
+          # HUD now shows both and calls a disagreement a MISMATCH; this is the
+          # check that stops one ever reaching the device.
+          STAMPED_BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Info.plist")
+          echo "Info.plist reports build $STAMPED_BUILD"
+          test "$STAMPED_BUILD" = "${{ steps.version.outputs.build }}" \
+            || { echo "::error::build number not stamped — plist says '$STAMPED_BUILD', expected '${{ steps.version.outputs.build }}'"; exit 1; }
+
           lipo -info "$APP/MangaChan"
           echo "Bundle contents:"
           ls -la "$APP"

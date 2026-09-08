@@ -104,10 +104,19 @@ Everything so far is internal pre-alpha, and none of it is a public build.
    silently outlives that series: `v0.1.*` kept selecting `v0.1.72` for two
    releases after the series moved to 0.3, and both shipped changelogs listing a
    single commit.
-8. **Pre-1.0 versions promise nothing about compatibility.** Documents may break
+8. **The running build says which build it is.** The version and build number
+   are on screen in the HUD, in both its compact and detailed modes, and in the
+   crash-log header. There is one device tester and no TestFlight build list to
+   check against: on 2026-09-02 a device round came back with findings from the
+   *previous* build, caught only because a visual difference happened to exist
+   between the two. The readout also names its own failures rather than showing
+   a plausible number — an un-overridden version reads "local build, not from
+   CI", and a build number that has drifted from its version reads "MISMATCH".
+   Checkable: install a build and read the HUD against the release it came from.
+9. **Pre-1.0 versions promise nothing about compatibility.** Documents may break
    between builds, and that is allowed until 1.0 — but a release that does break
    them must say so at the top of its notes.
-9. **1.0.0 is not declared from a checklist.** See the two conditions above.
+10. **1.0.0 is not declared from a checklist.** See the two conditions above.
 
 ## Why not date-based, or just a build number
 
