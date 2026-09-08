@@ -7,6 +7,9 @@ name: Engine core
 on:
   push:
     branches: [main]
+    # The build commits source.json back to main. Without this, that push
+    # would trigger another build, which would push again, forever.
+    paths-ignore: [source.json]
   pull_request:
     branches: [main]
   workflow_dispatch:

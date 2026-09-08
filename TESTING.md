@@ -307,7 +307,24 @@ they lived in the Swift shell rather than the engine:
     Two rounds of device testing went into a symptom whose cause was a control
     we already had.
 
-16. ~~**Flow was a per-dab alpha, not what the stroke is worth.**~~ Dabs land a
+16. **SideStore kept offering an old version.** Reported on 2026-09-08 with
+    v0.3.78 already published: the source loaded and the app appeared, but at a
+    stale version. The origin was correct — the same URL fetched from CI's
+    network returned 0.3.78 — so nothing was wrong with what we published.
+    Measured cause: a GitHub **release asset sends no `Cache-Control` and no
+    `Expires`**. With neither header a client cannot know how long the file
+    stays fresh, so it applies *heuristic* freshness instead, and how long a
+    stale copy survives becomes unpredictable and can run to hours. The
+    response also came back `X-Cache: HIT` with an `Age` of 2984 seconds,
+    confirming a caching layer in the path. A release asset is built to be
+    immutable; using one as a file that changes every build was the error.
+    Fixed by publishing the source to `raw.githubusercontent.com`, measured the
+    same day as sending `cache-control: max-age=300` and an ETag. Bounded and
+    predictable. The release asset is still written so the old URL does not
+    start 404ing, but it is no longer what anything advertises.
+    **Requires one action: re-add the source in SideStore at the new URL.**
+
+17. ~~**Flow was a per-dab alpha, not what the stroke is worth.**~~ Dabs land a
     fraction of a diameter apart, so at the default 6% spacing about seventeen
     of them cover every pixel. A per-dab alpha of 0.5 therefore accumulated to
     `1 - 0.5^17` — 0.99999, solid black. Measured on device: Flow 50% and 75%

@@ -61,7 +61,7 @@ Every build publishes a release tagged `v0.1.<run number>`, with the unsigned
 unzipping or manual installing:
 
 ```
-https://github.com/octolex/manga-chan/releases/download/sidestore-source/source.json
+https://raw.githubusercontent.com/octolex/manga-chan/main/source.json
 ```
 
 That URL is a fixed tag whose `source.json` asset every build replaces, so it
