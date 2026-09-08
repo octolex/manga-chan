@@ -83,7 +83,7 @@ typedef struct {
     float flow;                /* ink per dab; density accumulates across them */
     float opacity;             /* ceiling on the finished stroke */
 
-    float grainDepth;          /* tooth height; ink is thresholded against it */
+    float grainDepth;          /* tooth height; caps where ink may sit */
     float grainScale;          /* canvas pixels per repeat of the map */
     int32_t grainMovement;     /* MCGrainMovement */
 

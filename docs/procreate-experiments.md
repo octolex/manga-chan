@@ -1,0 +1,574 @@
+# Procreate experiments — what to draw, and what each result would mean
+
+Written for octolex to run on the iPad, in Procreate, with this page open
+alongside. Every step says what to look for *and what the answer would tell us*,
+because a test whose outcomes all mean the same thing is not worth the time it
+takes to draw.
+
+**My prediction is stated for each one before the result is in.** That is the
+point. If I am right, we learn the model. If I am wrong, we learn something
+better, and we learn not to trust the reasoning that got me there — which has
+now been wrong three times about grain.
+
+## Why we are doing this instead of writing code
+
+Three attempts at grain have failed. The device round on 2026-09-03 showed why:
+Flow was a per-dab alpha, so with about seventeen dabs covering every pixel, a
+Flow of 50% accumulated to 0.99999 and the stroke body was solid at every
+setting anyone would use. A tooth can only bite into coverage below 1, and there
+was none.
+
+That is now fixed in the engine — but fixing it exposed a question the fix
+cannot answer: **what should a stroke do when it crosses itself?** Our answer is
+currently "darken, always". Procreate's answer appears to be "it depends which
+of six rendering styles you picked", and its Flow is typed as a *maximum level*
+rather than a plain amount. Those are different models, and building grain on
+the wrong one is how we get a fourth failure.
+
+`docs/procreate-brush-settings.md` is the taxonomy. This is the behaviour.
+
+## How to record it
+
+One canvas per lettered group, strokes left to right in the order listed, on a
+white background with black ink unless a step says otherwise. Tell me the order
+you drew them in and which brush you used — I would rather have four labelled
+strokes than twelve I have to guess at.
+
+Keep everything not named in a step at its default, and say if a control named
+here is missing on the brush you picked: *which* settings a brush exposes is
+itself information.
+
+---
+
+## A — Does a stroke accumulate against itself?
+
+Use a plain round brush with no grain and no wet mix. **Inking → Studio Pen** is
+the cleanest. Note which Rendering style it is set to before changing anything.
+
+**A1.** Set the top-level **Opacity slider to 30%**. In one continuous motion,
+without lifting the pencil, draw a loop that crosses over itself once.
+
+> Look at the crossing. Is it darker than the two lines running through it, or
+> exactly the same tone?
+
+**A2.** Now draw two **separate** strokes that cross, still at 30%, lifting the
+pencil between them.
+
+> Same question at that crossing.
+
+**What the pair means.** A1 flat and A2 darker is the Photoshop split: the
+Opacity slider is a *ceiling on one stroke*, and a stroke cannot exceed it no
+matter how much it overlaps itself, but a second stroke composites on top. Both
+darker means dabs simply accumulate and Opacity is a per-dab amount. Both flat
+would be surprising and would mean something I have not thought of.
+
+**My prediction:** A1 flat, A2 darker.
+
+**A3.** Repeat A1 once for each of the six Rendering styles — Brush Studio →
+Renderizado → Estilo de renderizado: Light Glaze, Uniform Glaze, Intense Glaze,
+Heavy Glaze, Uniform Blending, Intense Blending. Six loops, in that order.
+
+> Which of them darken at the crossing, and roughly how much? Is it a step
+> change between Glaze and Blending, or a gradual ramp through all six?
+
+**What it means.** This maps the entire enum onto one axis and tells us what our
+single Flow control has to be able to express. If Glaze never darkens and
+Blending always does, the six values are two behaviours with four intensities,
+and we need one control plus a mode — which is exactly the switch I removed for
+being redundant, and I would have removed it wrongly.
+
+**My prediction:** the four Glaze styles do not darken at the crossing and
+differ only in how strong one pass is; the two Blending styles darken.
+
+---
+
+## B — Opacity versus Flow
+
+The observation that prompted this: the always-visible slider is Opacity, but it
+behaves like flow, while Brush Studio has its own Flow that multiplies alpha.
+
+**B1.** Top Opacity **100%**. Brush Studio → Renderizado → **Flujo 50%**. One
+self-crossing loop.
+
+**B2.** Top Opacity **50%**. Flujo back to **100%**. One self-crossing loop.
+
+> Are B1 and B2 the same darkness as each other? Does either crossing darken
+> while the other stays flat?
+
+**What it means.** If B1 darkens at the crossing and B2 does not, they are
+genuinely different controls: Flow deposits per dab, Opacity caps the finished
+stroke. That is the Photoshop model, it is what "maximum level" in the settings
+list implies, and it means our two controls should stay independent. If they are
+indistinguishable, one of them is redundant in Procreate too and we can stop
+worrying about which we have.
+
+**My prediction:** B1 darkens at the crossing, B2 does not, and B2 is the
+cleaner-looking line.
+
+---
+
+## C — Does Spacing change how dark a stroke is?
+
+This one tests a change I have already pushed, so it is the one most likely to
+tell me I was wrong.
+
+**C1.** Opacity 50%, Flujo 100%. Note the current **Espaciado** value. Draw a
+straight stroke.
+
+**C2.** Halve the Espaciado. Draw an identical stroke next to it.
+
+> Are the two the same darkness, or is the second one noticeably darker?
+
+**What it means.** Same darkness means Procreate compensates for how many dabs
+overlap, which is exactly the fix now in the engine, and it is independent
+confirmation from a shipping product. Darker means they do not compensate — and
+that their model avoids the problem another way, most likely by capping the
+stroke as a unit, in which case the compensation is the wrong shape of fix even
+though the coupling it removes is real.
+
+**My prediction:** the same darkness. If they are visibly different, tell me and
+I will stop and rethink before writing any more of this.
+
+---
+
+## D — Grain
+
+Use a heavily grained brush: **Sketching → 6B Pencil**, or a Charcoal.
+
+**D1.** Top Opacity **100%**. One firm stroke.
+
+> Look at the middle of the stroke, not the edges. Is the paper texture visible
+> right through the body, or is the body solid with the texture only breaking up
+> the edges?
+
+**D2.** Same brush and settings. Scrub back and forth over one small patch
+fifteen or twenty times, as if shading it in hard.
+
+> Does the texture eventually fill in and go solid black, or does it persist no
+> matter how much you work it?
+
+**D3.** Opacity **20%**, one light stroke. Then Opacity **100%**, one firm
+stroke beside it.
+
+> Is the grain the *same pattern* in both, one simply lighter — or does the
+> light one show visibly more broken, more granular texture than the firm one?
+
+**What they mean, together.** These three separate the only models left:
+
+- Texture visible in the body (D1), persists forever (D2), same pattern at both
+  opacities (D3) → grain is a **hard cap on coverage**. Ink never fills the
+  tooth. This is arithmetically what our first attempt did, and what you called
+  a uniform veil — which would mean the veil was the right mechanism and wrong
+  in its contrast or scale, not in its concept.
+- Solid body (D1), fills in (D2), more texture at low opacity (D3) → grain
+  **competes with accumulated coverage**, and enough ink covers the paper. Then
+  the threshold belongs at composite time against the accumulated stroke.
+- Fills in (D2) but texture still visible in the body at 100% (D1) → both: grain
+  caps a single pass but repeated passes overcome it, which needs the tooth
+  applied per pass rather than per dab or per stroke.
+
+**My prediction:** D1 solid-ish body with a broken edge, D2 fills in, D3 more
+texture at low opacity. I have been wrong about grain three times, so treat this
+prediction as the least reliable one on the page.
+
+---
+
+## E — Wet mix
+
+The hypothesis worth testing: that what we read as a grain problem is really the
+absence of a paint-and-surface simulation, and that Mezcla húmeda is where
+Procreate puts it.
+
+**E1.** Fill an area with a solid mid-tone colour. Pick a brush that has wet mix
+settings — **Painting → Nikko Rull** or similar. Choose a clearly *different*
+colour and draw across the filled area.
+
+> Does the stroke stay the colour you picked, or does it drag the underlying
+> colour into itself and blend along the way?
+
+**E2.** Brush Studio → Mezcla húmeda → **Dilución** high. One long stroke.
+
+> Does the stroke fade along its length, as if the brush is running out of paint?
+
+**E3.** With wet mix active, does the brush's grain still show at all?
+
+**What it means.** If E1 smears the underlying colour, wet mix is a **colour**
+feature — the dab samples the canvas and mixes — and it does not answer the
+coverage question, though it is a large and separate thing we do not have. If E2
+fades along the stroke, there is a **load** model: paint depletes with distance,
+which is a third axis alongside flow and grain and would explain a lot about why
+Procreate's dry media reads the way it does. E3 tells us whether the two systems
+are independent or one overrides the other.
+
+**My prediction:** E1 smears — wet mix is colour, not coverage. E2 does fade,
+and that load model is real and missing from our engine. Which would make the
+hypothesis half right in a more interesting way than if it were simply right:
+not the answer to grain, but a real gap we had not named.
+
+---
+
+## What I will do with the answers
+
+A and B decide whether Flow stays one control or becomes a control plus a
+rendering style, and that decision governs what grain is even allowed to modulate.
+C says whether the compensation already pushed is the right shape. D picks the
+grain model from three candidates rather than from my reasoning, which has a
+three-for-three losing record here. E tells us whether there is a whole
+mechanism missing that we have been trying to fake with the two we have.
+
+None of this needs to be done in one sitting, and A, C and D are worth more than
+B and E if the time is short.
+
+---
+
+# Results — 2026-09-05
+
+Run by octolex. Screenshots in the session; not committed. Read by eye from the
+images, not measured off pixel values — the images were not saved to disk, and
+calling that a measurement would be exactly the confusion this project exists to
+avoid.
+
+## A — a stroke DOES accumulate against itself. Prediction wrong.
+
+One continuous self-crossing loop shows visible darkening at the crossing; a
+loop crossed several times at one point goes solid black there.
+
+So the Glaze hypothesis is dead for this brush: Procreate's default behaviour is
+dab-by-dab accumulation within a single stroke, which is what we already do.
+**The six rendering styles were not tested** — A3 was not run — so what the
+Glaze styles change is still unknown, and it is no longer the urgent question.
+
+Our current model is right on this axis. The Maximum/Buildup switch was correctly
+removed after all, for a reason different from the one given at the time.
+
+## B — Renderizado → Flujo is not our Flow. Inconclusive.
+
+At Flujo 100% and Flujo **0%**, both strokes are clearly present; the second is
+lighter and softer, not absent. A control that leaves a strong visible stroke at
+zero is not a coverage alpha. It reads as a density or edge-softness modifier
+with a floor.
+
+Whatever "maximum level" means in that settings list, it does not mean what
+`Brush::flow` means here. **Do not map the two onto each other.** Needs a
+better-designed test before it informs anything.
+
+## C — INVALID TEST. Not a result, and the design fault was mine.
+
+The spacing was widened until individual dabs were visible, then halved. That
+crosses from *no overlap* to *some overlap*, and overlap compensation does
+nothing until dabs overlap. Both models predict the second stroke is darker
+there:
+
+| spacing | compensated | uncompensated |
+|---|---|---|
+| 1.5 diameters | isolated dabs at 0.34, white gaps | isolated dabs at 0.50, white gaps |
+| 0.75 diameters | continuous 0.50 | continuous 0.60 |
+
+Which is what the picture shows, under either model. The test could not
+distinguish them and must be rerun in the regime where they diverge:
+
+**C-redo.** Top Opacity **10%** — low, so the uncompensated model does not
+saturate and hide the difference. Set Espaciado to about **10%** and draw a
+straight stroke. Set it to about **5%** and draw another beside it.
+
+> Are the two the same light grey, or is the second markedly darker?
+
+Compensated predicts **0.10 and 0.10** — indistinguishable. Uncompensated
+predicts **0.65 and 0.88** — both far darker than the 10% asked for, and clearly
+different from each other. There is no regime where these two look alike, which
+is what the first version of this test lacked.
+
+## D — the decisive result. Grain is a cap on coverage, not a threshold.
+
+> **Caveat added 2026-09-05, after the fact.** This round was run on a **double
+> brush** — two shape and two grain sources stacked into one stamp. The
+> conclusions below are coherent and one mechanism explains all of them, but they
+> were measured through a stamp with two grains in it, so they carry an asterisk
+> until round 4 repeats them on a single brush. Found by octolex, not by me, and
+> it is the kind of thing that quietly invalidates a whole conclusion.
+
+Three findings, and together they pick the model:
+
+1. **Profundidad controls how much the body is affected.** Turn it up and the
+   texture appears through the body of the stroke, not only at its edges.
+2. **Movimiento (Rolling): scrubbing repeatedly fills in to a completely solid
+   line.** Texturizado (Canvas): the texture persists in inked areas no matter
+   how many times you scrub over them.
+3. **Lower opacity does not show more texture.**
+
+Finding 3 kills thresholding against accumulated coverage outright — that model
+predicts grain gets dramatically stronger as opacity falls, and it does not.
+
+Findings 1 and 2 are the useful part, because **one mechanism produces both**
+with no mode-specific code. If the tooth multiplies the dab's coverage *before*
+the maximum blend that builds the stroke's silhouette:
+
+- **Canvas**: the tooth is identical for every dab at a given pixel, so
+  `max(tooth x shape)` is `tooth x geometry`. The pits never receive ink however
+  many passes go over them. Persists forever. ✓
+- **Rolling**: the tooth shifts with arc length, so each pass puts its pits
+  somewhere else and the maximum climbs toward 1. Fills in to solid. ✓
+
+That is **exactly what attempt #1 did** — the version rejected on device as "a
+uniform veil". The mechanism was right and it was abandoned on an aesthetic
+objection that this experiment has now falsified: Procreate's canvas-anchored
+grain genuinely does keep texture across the whole inked area, forever. What was
+wrong was most likely the *map*, not the maths — our grain is smooth four-octave
+fractal noise with most of its mass near mid-grey, which reads as a flat wash
+rather than as tooth. Procreate exposes **Brillo** and **Contraste** on the grain
+for precisely this.
+
+## E — wet mix is colour pickup, and Procreate appears to mix in RGB.
+
+Green drawn across magenta drags magenta into itself, and a green blob painted
+inside the magenta stays contaminated. So the brush carries a colour that is
+updated from the canvas as it travels — a smudge or pickup model, not a fluid
+solver.
+
+One detail in the screenshot is worth more than the confirmation: **where the two
+colours mix, the result reads grey/olive.** Green and magenta are complementary
+in RGB and average to grey; real pigments would go dark and muddy, not neutral.
+So Procreate's wet mix looks like straightforward RGB interpolation, which means
+matching it needs no pigment model at all — and that beating it is available
+cheaply if we ever want it.
+
+See `docs/wet-mix-references.md` for the algorithms and papers.
+
+---
+
+# Round 4 — the script
+
+Published as a page to follow on the iPad:
+<https://claude.ai/code/artifact/aaeb1115-6ec1-4d96-93cd-b45cc1b38240>
+
+**Before anything:** check the brush is not a double. Brush Studio should list
+**one** Forma and **one** Grano. Every grain result in round 3 came off a double
+brush and needs repeating without one.
+
+Setup for all tests: white canvas, a fresh layer per step, every stroke drawn
+slowly in one pull with even pressure. The differences being looked for are large
+enough that hand wobble cannot fake them.
+
+## Test 1 — does tighter spacing darken a stroke? (replaces the void C)
+
+Brush **Inking → Studio Pen**. Grano → Profundidad **0%**. Renderizado → Flujo
+**100%**. Main-screen Opacity slider **10%** — low on purpose, because the
+uncompensated model saturates at higher values and hides the difference.
+
+Draw one straight stroke at each Espaciado, left to right: **20%, 10%, 5%, 2%**.
+
+| Espaciado | if compensated | if uncompensated |
+|---|---|---|
+| 20% | 10% grey | 47% |
+| 10% | 10% grey | 69% |
+| 5%  | 10% grey | 89% |
+| 2%  | 10% grey | 99% |
+
+Four identical pale strokes means Procreate compensates for dab overlap and the
+change in `stroke.cpp` stays. A ramp to near-black means it does not, and it gets
+reverted. There is no regime where these two look alike, which is exactly what
+the first version of this test lacked.
+
+## Test 2 — grain, on a single brush
+
+Brush **Sketching → 6B Pencil**. Opacity **100%**, Grano → Profundidad **100%**.
+
+1. Comportamiento **Texturizado**: one stroke, then scrub a patch ~20 times.
+2. Comportamiento **Movimiento**: one stroke, then scrub a patch ~20 times.
+3. Back to **Texturizado**: one stroke at Profundidad **50%**, one at **100%**.
+
+Steps 1 and 2 re-run round 3's finding without the double brush. Step 3 is new
+and checks what Profundidad is: if it only changes how dark the gaps go, it is a
+depth control and `mix(1, tooth, depth)` is the right shape. If it also changes
+the pattern's *shape or scale*, it is not, and the mechanism is wrong again.
+
+## Test 3 — optional. Does the brush run out of paint?
+
+Any wet-mix brush, Mezcla húmeda → Carga low, one very long stroke; then Carga at
+maximum, the same stroke. Does either weaken along its length?
+
+Nothing depends on this yet. It confirms whether Carga and Dilución are a
+paint-load model, which would be a whole axis the engine has no equivalent for,
+and is worth knowing before the brush editor is designed rather than after.
+
+---
+
+# Round 4 results — 2026-09-06
+
+Run on single brushes, with the iPad switched to English. Read by eye: the
+images were not saved to disk and there is no image tooling in the session, so
+nothing below is a measurement of pixel values.
+
+## Test 1 — unresolved, and neither prediction fits
+
+Four strokes, each darker than the last — **but all four stay pale.** The
+uncompensated model predicted a ramp to 47%, 69%, 89% and 99%, ending
+essentially black. Nothing in the image is remotely near black.
+
+So the direction says "not compensated" and the magnitude says "very nearly
+compensated", and those cannot both be read off a JPEG by eye. **This needs
+numbers**, and Procreate can give them: the eyedropper reads a colour, and the
+colour panel shows brightness as a percentage.
+
+> **Test 1b.** With the four strokes still on the canvas, hold a finger on each
+> one until the eyedropper picks it up, then open the colour panel and read the
+> **B** (brightness) value in HSB. Four numbers, in order.
+>
+> Compensated predicts about **90, 90, 90, 90**. Uncompensated predicts about
+> **53, 31, 11, 1**. Anything in between is a third model and more interesting
+> than either.
+
+Until those numbers arrive the flow compensation in `stroke.cpp` stays, on the
+grounds that its *user-facing* behaviour — a slider that means roughly what it
+says, barely moved by spacing — is what the pale strokes show, whatever
+mechanism Procreate uses to get there.
+
+## Test 2 — confirmed on a single brush. Grain implemented.
+
+All three round 3 findings reproduced without the double brush:
+
+1. **Texture mode never fills in.** No amount of scrubbing makes it solid.
+2. **Movement mode fills in** to a solid stroke.
+3. **Depth changes only how darkly the gaps are masked.** The pattern is static
+   — it does not mutate, move or change scale. More depth, more masking.
+
+Finding 3 is the new one and it pins Depth as a plain interpolation toward the
+map, `mix(1, grain, depth)`, with nothing near the sampling coordinate.
+
+Implemented the same day: the tooth multiplies a dab's coverage into the
+geometry channel, and the maximum blend that builds the silhouette does the
+rest. Canvas grain is permanent because every dab finds the same tooth; rolling
+grain fills because each pass puts its pits somewhere new. One mechanism, both
+modes, no special case — which is the reason to believe it after three failures.
+
+## Test 3 — Load is a ceiling, not a reservoir. The published documentation is wrong.
+
+Neither the 1% nor the 100% stroke weakens along its length, over strokes long
+enough that a reservoir would have run dry several times. Instead Load behaves
+as a **maximum**: press lightly and less paint lands, press hard and it reaches
+whatever Load allows.
+
+This contradicts the community documentation quoted in
+`docs/wet-mix-references.md` — "as the brush runs out of paint, the trail of
+colour it leaves will become less intense". The device says otherwise, and the
+device wins. Corrected there.
+
+So there is no depletion model to copy, and the paint-load axis this was meant
+to uncover does not exist in the form expected. Load is closer to our
+`flowDynamics` maximum than to anything new.
+
+---
+
+# Round 4b — the eyedropper numbers, 2026-09-06
+
+Brightness read with the eyedropper on each of the four Test 1 strokes, drawn at
+Opacity 10%. `alpha = 1 - B/100`; `n` is dabs covering a point, `1/spacing + 1`.
+
+| Spacing | B | alpha | n | alpha per dab |
+|---|---|---|---|---|
+| 20% | 98 | 0.020 | 6  | 0.0034 |
+| 10% | 95 | 0.050 | 11 | 0.0047 |
+| 5%  | 93 | 0.070 | 21 | 0.0034 |
+| 2%  | 92 | 0.080 | 51 | 0.0016 |
+
+**Both candidate models are refuted.** Compensation requires the `alpha` column
+to be constant; it varies four-fold. No compensation requires `alpha per dab` to
+be constant; it varies 2.8-fold and collapses at the tightest spacing.
+
+Relative to the widest spacing, alpha goes 1 : 2.5 : 3.5 : 4.0 while the dab
+count goes 1 : 1.83 : 3.5 : 8.5. So the stroke tracks the dab count up to 5%
+spacing and then falls a long way behind it. A minimum-spacing floor like our own
+half-pixel clamp would produce exactly that shape, by making 2% and 5% land at
+nearly the same real spacing — but so would a ceiling on accumulation, and these
+four numbers cannot tell those apart.
+
+**The larger problem is the scale.** At an Opacity of 10% the darkest of the four
+reaches 8% ink and the lightest reaches 2%. Either Procreate's Opacity slider is
+nothing like literal, or the eyedropper averages over an area and diluted four
+thin strokes by four different amounts. Those point in opposite directions, so
+round 5 validates the instrument before measuring anything else with it.
+
+## Round 5 — the script
+
+<https://claude.ai/code/artifact/aaeb1115-6ec1-4d96-93cd-b45cc1b38240>
+
+**Test 0.** Studio Pen, large, Opacity 100%, grain off. Scribble a fat solid
+patch and eyedropper its middle, well clear of any edge. **B = 0** means the
+instrument is faithful and the numbers above stand. Above about 3 means it
+samples an area, the four strokes were diluted by the white around them, and
+Test 1 needs redoing with a much fatter brush.
+
+**Test 5 — the model neither of us has tested.** Studio Pen, large, Opacity 25%,
+grain off.
+
+1. Note the brush's current **Rendering style**.
+2. One continuous twenty-pass scribble over a patch, never lifting. Read **B**.
+3. Five more scribbles over the same patch, lifting between each. Read **B**.
+4. Fresh patch, Rendering style **Uniform Blending**, repeat step 2. Read **B**.
+5. Fresh patch, Rendering style **Light Glaze**, repeat step 2. Read **B**.
+
+Step 2 settling near B 75 while step 3 goes much darker means a **per-stroke
+ceiling equal to the Opacity slider** — the Photoshop model, and it would explain
+every result so far including round 3's apparent contradiction. Step 2 reaching 0
+means no ceiling at all. Steps 4 and 5 ask whether **Rendering style** is the
+control that switches between those, which has been the open question since
+round 3 and would mean our single Flow is one point on a scale Procreate exposes
+by name.
+
+---
+
+# Round 5 results — 2026-09-08. The model, settled.
+
+## Test 0 — the eyedropper is trustworthy, with a fixed offset
+
+Solid black reads **B = 1**, not 0. It is not area averaging: a large flat blob
+of pure black reads 1 as well. So there is a **fixed +1 offset**, and every
+earlier reading is one unit light.
+
+One quirk worth recording: picking a colour up and repainting with it drifts a
+further +1 each round trip, so a patch repainted from its own sampled colour
+climbs 1, 2, 3. That is a rounding loss in the pick-and-repaint cycle, not
+anything happening on the canvas. Read, never re-pick, when measuring.
+
+The four Test 1 readings therefore stand at 0.03 / 0.06 / 0.08 / 0.09 ink, which
+changes no conclusion.
+
+## Test 5 — Rendering style is the accumulation model, and Glaze is a ceiling
+
+Opacity 25%, Studio Pen, which was set to **Intense Blending**.
+
+| Rendering style | One continuous 20-pass scribble | Five more, lifting between |
+|---|---|---|
+| Intense Blending | B 1 — solid | B 0 |
+| Uniform Blending | B 5 | B 1 |
+| **Light Glaze** | **B 85** = 0.16 ink | **B 41** = 0.60 ink |
+
+**Light Glaze settles.** Twenty passes without lifting cannot take it past 0.16
+ink. Lift, and five more strokes reach 0.60 — and six strokes of 0.16
+composited alpha-over predict **0.65**, against 0.60 measured. That is a
+per-stroke ceiling, and it is exactly Photoshop's Opacity.
+
+**Both Blending styles saturate against themselves.** No ceiling at all; the
+dabs simply pile up. Which resolves the round 3 result that looked like a
+contradiction: that test used a textured brush in a Blending style, so of course
+its self-crossing darkened.
+
+## What this changed in the engine
+
+**The flow compensation is reverted.** Correcting Test 1 for a minimum dab
+spacing — which Procreate has, as we do — gives a per-dab alpha of 0.0051,
+0.0056, 0.0042 and 0.0047 across the whole spacing range. Constant. The engine
+is uncompensated, and so is Photoshop, and the change committed on 2026-09-03
+matched neither.
+
+**Nothing replaced it, because nothing needed to.** `opacity` already multiplies
+the finished stroke once at composite, which is a per-stroke ceiling, and it is
+already a slider in the brush panel. Flow is the build rate and Opacity is the
+strength, exactly as in Photoshop. Between them the two sliders reach both of
+Procreate's accumulation families without a mode switch — which is also why the
+Maximum/Buildup toggle is not coming back.
+
+The rule worth keeping from all of this: **a control whose useful range is
+bunched at one end is fixed by the curve on its slider, never by changing what
+the number means.** Two device rounds went into a symptom whose cause was a
+control we already had and were not treating as the one that does the job.

@@ -57,36 +57,55 @@ struct DabRasterData {
     float  hardness;
 };
 
-//  Grain is a height field the ink has to climb, not a filter laid over it.
+//  Grain is a ceiling on how much of a pixel the ink is allowed to reach — the
+//  paper's high points — not a filter over the stroke and not a threshold
+//  against how much ink has landed.
 //
-//  Multiplying was the first attempt and it looked wrong on the device: it
-//  lightened the whole stroke uniformly, a veil, where real media leaves a
-//  solid body and a broken edge. Pigment catches the high points of paper and
-//  misses the low ones, so ink sticks where it has more to give than the tooth
-//  takes — a threshold, and the renormalisation keeps full coverage fully
-//  covered so a heavy pass still reads as solid.
+//  Three attempts got this wrong before it was measured rather than reasoned
+//  about. Procreate, on device, 2026-09-05:
 //
-//  Where the coordinate comes from is the other half. Canvas grain takes it
-//  from the pixel, so two passes over one spot break against the same tooth
-//  and the texture belongs to the paper. Rolling grain takes it from the dab's
-//  own frame offset by arc length, so it travels with the brush and overlaps
-//  show. Correct for dry media, wrong for paper, which is why it is a mode.
-inline float grain_threshold(texture2d<float> grain, float2 uv,
-                             float depth, float coverage)
+//    * Canvas-anchored grain NEVER fills in. Scrubbed twenty times over one
+//      patch, the texture is exactly as present as after one pass.
+//    * Rolling grain fills to solid under the same scrubbing.
+//    * Depth changes only how darkly the gaps are masked. The pattern itself
+//      does not move, change scale, or change shape.
+//    * Lower opacity does NOT show more texture.
+//
+//  The last of those kills thresholding against accumulated coverage, which
+//  would make grain strengthen dramatically as opacity falls. The first two are
+//  the interesting part, because one mechanism gives both and neither mode
+//  needs a special case: multiply the dab's coverage by the tooth and let the
+//  maximum blend that builds the silhouette do the rest.
+//
+//    * Canvas: the tooth is the same for every dab over a given pixel, so
+//      max(tooth * shape) is tooth * silhouette however many passes cross it.
+//      The pits never receive ink. Permanent, which is what paper does.
+//    * Rolling: the tooth is offset by arc length, so each pass puts its pits
+//      somewhere new and the running maximum climbs to 1. Fills to solid.
+//
+//  So the answer really was the multiply this started with. It was abandoned in
+//  1f89bd7 on the objection that it "veiled the whole stroke uniformly", and
+//  that objection is now falsified: a canvas-anchored grain veils the whole
+//  inked area, permanently, on purpose. What likely looked wrong was the map —
+//  our fractal noise clusters near mid-grey and reads as a wash rather than as
+//  tooth, which is what Procreate's grain Brightness and Contrast exist to fix.
+inline float grain_tooth(texture2d<float> grain, float2 uv, float depth)
 {
     // Uniform across the draw, so this branch costs nothing beyond the compare
     // and it skips the texture fetch entirely on every brush that has no grain
     // — which is all of them by default.
-    if (depth <= 0.0) { return coverage; }
+    if (depth <= 0.0) { return 1.0; }
 
     // Repeat and linear, matching mc::sampleAlpha in the engine. Those two
     // choices are what let the CPU reference and this sampler be compared at
     // all; a mismatch in either is invisible on screen.
     constexpr sampler grainSampler(filter::linear, address::repeat);
-    float tooth = grain.sample(grainSampler, uv).r * saturate(depth);
+    float g = grain.sample(grainSampler, uv).r;
 
-    // Guarded against a tooth of exactly 1, where the division is 0/0.
-    return saturate((coverage - tooth) / max(1.0 - tooth, 1e-3));
+    // Depth interpolates between no mask at all and the full map. Measured
+    // behaviour: it changes how dark the gaps go and nothing else, so it
+    // belongs here as a lerp and not anywhere near the sampling coordinate.
+    return mix(1.0, g, saturate(depth));
 }
 
 vertex DabRasterData dab_vertex(uint vertexID [[vertex_id]],
@@ -149,14 +168,21 @@ fragment float4 dab_coverage_fragment(DabRasterData in [[stage_in]],
     // which is undefined rather than merely ugly.
     float inner = min(in.hardness, 1.0 - w);
 
-    // The dab's silhouette. This is the geometry channel, untouched by flow or
-    // grain: it says where the stroke *is*, and the maximum blend keeps it the
-    // true antialiased edge no matter how many dabs cross this pixel.
-    float geometry = 1.0 - smoothstep(inner, 1.0, d);
+    // The dab's silhouette, before the paper gets a say.
+    float shape = 1.0 - smoothstep(inner, 1.0, d);
+
+    // The geometry channel: where the stroke is allowed to reach. The maximum
+    // blend keeps it the true antialiased edge however many dabs cross this
+    // pixel, and multiplying the tooth in here — rather than into the density
+    // below — is what makes canvas grain permanent and rolling grain fill in.
+    float geometry = shape * grain_tooth(grain, in.grainUV, uniforms.grainDepth);
 
     // The ink this dab lays down, which the alpha-over blend accumulates.
-    float density = grain_threshold(grain, in.grainUV, uniforms.grainDepth,
-                                    geometry * in.flow);
+    // Deliberately ungrained: density is how much pigment arrived, and the
+    // paper limits where it can sit, not how much of it there is. Graining
+    // both channels would make the tooth deepen with every pass, which is the
+    // one behaviour the device round ruled out.
+    float density = shape * in.flow;
 
     return float4(density, 0.0, 0.0, geometry);
 }
@@ -174,16 +200,16 @@ fragment float4 dab_ink_fragment(DabRasterData in [[stage_in]],
     float d = length(in.local);
     float w = max(fwidth(d), 1e-4);
     float inner = min(in.hardness, 1.0 - w);
-    float geometry = 1.0 - smoothstep(inner, 1.0, d);
+    float shape = 1.0 - smoothstep(inner, 1.0, d);
 
     // The prediction has to be grained too. It is drawn a frame ahead of the
     // committed stroke and replaced by it, so an ungrained lookahead would show
     // as a smooth tip that turns textured as the real dabs catch up.
     //
-    // No min() against geometry here: nothing accumulates in a single pass, so
-    // density is already the smaller of the two.
-    float coverage = grain_threshold(grain, in.grainUV, uniforms.grainDepth,
-                                     geometry * in.flow);
+    // One pass, so the two channels the committed path keeps apart collapse to
+    // their minimum here: ink laid down, capped by what the paper allows.
+    float tooth = grain_tooth(grain, in.grainUV, uniforms.grainDepth);
+    float coverage = shape * min(in.flow, tooth);
 
     float alpha = inkColor.a * coverage;
     return float4(inkColor.rgb * alpha, alpha); // premultiplied

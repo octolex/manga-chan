@@ -521,6 +521,93 @@ void testConsumeReportsOnlyNewDabs() {
                 static_cast<long long>(total));
 }
 
+
+/// What a stroke is worth where it overlaps itself, at a point the brush has
+/// walked straight over. Alpha-over, exactly as the coverage target blends it.
+float accumulatedFlowAt(const std::vector<Dab>& dabs, float px, float py) {
+    float acc = 0.0f;
+    for (const Dab& d : dabs) {
+        const float dx = d.x - px;
+        const float dy = d.y - py;
+        if (std::sqrt(dx * dx + dy * dy) > d.radius) { continue; }
+        acc += d.flow * (1.0f - acc);
+    }
+    return acc;
+}
+
+/// Flow is what one dab deposits, and the dabs accumulate freely from there.
+///
+/// The reverse of this was committed on 2026-09-03 and reverted on 2026-09-08,
+/// after Procreate was measured rather than reasoned about: four strokes at one
+/// Opacity across an 8x range of Spacing came out at 0.03, 0.06, 0.08 and 0.09
+/// ink. Compensation requires those four numbers to be equal.
+void testFlowIsWhatOneDabDeposits() {
+    for (float wanted : {0.1f, 0.25f, 0.5f, 0.75f, 1.0f}) {
+        Brush brush = inkPen();
+        brush.flow = wanted;
+        const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+        for (const Dab& d : path.dabs()) {
+            CHECK(std::fabs(d.flow - wanted) < 1e-5f);
+        }
+    }
+}
+
+/// And a tighter spacing therefore lays down a darker stroke.
+///
+/// Pinned as intended behaviour rather than left implicit, because it looks
+/// exactly like the bug it was once mistaken for. More dabs over a pixel is
+/// more pigment on it; that is the medium, and both references we have keep it.
+/// What stops it being a usability problem is Opacity, which caps the finished
+/// stroke however much it overlaps itself.
+void testTighterSpacingLaysDownMoreInk() {
+    float previous = 0.0f;
+    for (float spacing : {0.25f, 0.12f, 0.06f}) {
+        Brush brush = inkPen();
+        brush.flow = 0.1f;
+        brush.hardness = 1.0f;
+        brush.spacing = spacing;
+        const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+        const float got = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
+        std::printf("  spacing %.2f -> stroke worth %.3f\n",
+                    static_cast<double>(spacing), static_cast<double>(got));
+        CHECK(got > previous + 0.05f);
+        previous = got;
+    }
+}
+
+/// Dabs never land closer than half a pixel however tight the spacing.
+///
+/// Procreate has the same floor, and finding it is what dissolved the anomaly
+/// that made both candidate models look wrong: at its two tightest settings its
+/// strokes were nearly equally dark, where the nominal dab counts said one
+/// should have been far darker.
+void testDabsHaveAMinimumSpacing() {
+    Brush brush = inkPen();
+    brush.size = 3.0f;        // small, so a tight fraction lands under half a pixel
+    brush.spacing = 0.02f;
+    const StrokePath path = straightLine(brush, 20.0f, 120.0f, 32);
+    const std::vector<Dab>& dabs = path.dabs();
+    CHECK(dabs.size() > 4);
+    for (size_t i = 0; i + 1 < dabs.size(); ++i) {
+        CHECK(dabGap(dabs, i) > 0.49f);
+    }
+}
+
+/// Crossing the stroke over itself still darkens.
+void testCrossingTheStrokeStillDarkens() {
+    Brush brush = inkPen();
+    brush.flow = 0.05f;
+    brush.hardness = 1.0f;
+    const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+    const float once = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
+    const float twice = once + once * (1.0f - once);
+    std::printf("  one pass %.3f, crossed %.3f\n",
+                static_cast<double>(once), static_cast<double>(twice));
+    CHECK(twice > once + 0.05f);
+    CHECK(twice < 1.0f);
+}
+
+
 }  // namespace
 
 int main() {
@@ -542,5 +629,9 @@ int main() {
     testVelocityDynamicsThinAFastStroke();
     testIncrementalEmissionMatchesOneShot();
     testConsumeReportsOnlyNewDabs();
+    testFlowIsWhatOneDabDeposits();
+    testTighterSpacingLaysDownMoreInk();
+    testDabsHaveAMinimumSpacing();
+    testCrossingTheStrokeStillDarkens();
     return check::report("stroke");
 }

@@ -53,8 +53,12 @@ whether it costs a frame.
 | # | What | How | Expected |
 |---|---|---|---|
 | 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Was invisible at 1, barely visible at 2. Density now accumulates across the ~2 dabs that land per pixel, which may resolve it with no special case |
-| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line. **Failing** — see bug 14 |
-| 76 | How opaque is a Flow-50% pass? | Flow 50%, Depth 0, one slow stroke, no crossing | Needed to settle bug 14. Is the line about half strength, or effectively solid? |
+| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line. **Failing** — see bug 14. Blocked behind #77: there is nothing for a tooth to bite into until Flow leaves a stroke partly transparent |
+| ~~76~~ | ~~How opaque is a Flow-50% pass?~~ | — | **Answered 2026-09-03: effectively solid.** Only ~10% was visibly translucent. That is bug 15, and it is why every grain attempt failed |
+| 77 | Flow means what it says | Depth 0. Draw single non-crossing strokes at Flow 25%, 50%, 75% | Three clearly different strengths, roughly a quarter, half and three quarters. Before this change 50% and 75% were both solid black |
+| 78 | Flow no longer moves with Spacing | Flow 50%, draw. Set Spacing to about half what it was, draw again | The two strokes are the same darkness. Previously halving the spacing made the same brush markedly darker |
+| 79 | Crossings still build | Flow 25%, draw a loop that crosses itself once | The crossing is clearly darker than either line through it — the behaviour the 10% panel showed, kept |
+| 80 | Full flow is unchanged | Flow 100%, draw and cross | Solid, and the crossing exactly as dark as the line. This is the default inking brush and it must not have moved |
 
 ## Pending — UI regressions to confirm
 
@@ -75,8 +79,10 @@ Not bugs; do not report these until the milestone that addresses them.
   Scale are the whole of the control surface.
 - **Grain does not currently work.** It is thresholded per dab, which at Flow
   100% does nothing and at 50% masks the stroke away. This *was* listed here as
-  deliberate; it is not, it is bug 14, and the third attempt is blocked on #76.
-  Leave Depth at 0 until then and nothing else is affected.
+  deliberate; it is not, it is bug 14. #76 has now answered why, and the answer
+  was not what the entry assumed: the fault is not only *where* the threshold
+  is applied but that Flow left nothing partly transparent to threshold. See
+  bug 15. Leave Depth at 0; nothing else is affected.
 - **No Maximum/Buildup switch.** Flow is the control: at 100% a pass saturates
   and crossings do not darken; below that they build. The switch made Flow and
   Opacity redundant at one end, which is what it was removed for.
@@ -138,6 +144,25 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | Install straight onto the iPad, no computer in the loop | Works. Method not yet recorded — the budgeting rule at the top of this file may be stale |
 | 2026-09-02 | #50 Brush panel opens | Pass, but with three rendering/gesture bugs — see 7-9 |
 | 2026-09-02 | #58 Panel does not leak touches to the canvas | Pass |
+| 2026-09-06 | Procreate 1 — four spacings at Opacity 10%, single brush | Each stroke darker than the last, but **all four stay pale**. Neither prediction: uncompensated wanted a ramp into black |
+| 2026-09-06 | Procreate 1b — eyedropper brightness of those four strokes | **B = 98, 95, 93, 92.** Ink alpha 0.02 / 0.05 / 0.07 / 0.08. **Both models refuted**: compensated needs alpha constant (varies 4x), uncompensated needs alpha-per-dab constant (varies 2.8x) |
+| 2026-09-06 | Procreate 1b — implication | At Opacity 10% the darkest stroke reaches 8% ink. Either the slider is far from literal or the eyedropper dilutes thin strokes. Test 0 settles which |
+| 2026-09-08 | Procreate 0 — eyedropper on solid black | Reads **B = 1, not 0**. A fixed +1 offset, not area averaging: a large flat blob reads 1 too. Re-picking and repainting drifts +1 per round trip |
+| 2026-09-08 | Procreate 5 — Intense Blending, Opacity 25% | Continuous scribble **B = 1** (solid). Five separate strokes **B = 0**. No ceiling: a stroke saturates against itself |
+| 2026-09-08 | Procreate 5 — Uniform Blending, Opacity 25% | Continuous **B = 5**, separate **B = 1**. Same family, gentler |
+| 2026-09-08 | Procreate 5 — **Light Glaze, Opacity 25%** | Continuous **B = 85** (0.16 ink) — twenty passes cannot exceed it. Separate strokes **B = 41** (0.60 ink). Six strokes of 0.16 composited predict 0.65. **Per-stroke ceiling confirmed** |
+| 2026-09-08 | Procreate 1 — reinterpreted with a spacing floor | Correct for a minimum dab spacing and per-dab alpha is 0.0051 / 0.0056 / 0.0042 / 0.0047 — constant. **Uncompensated**, and bug 15's fix was wrong |
+| 2026-09-06 | Procreate 2 — grain scrub, Texture mode, single brush | Texture survives any amount of scrubbing. Never solid. **Confirms round 3 without the double brush** |
+| 2026-09-06 | Procreate 2 — grain scrub, Movement mode | Fills in to a solid stroke |
+| 2026-09-06 | Procreate 2 — Depth 50% vs 100% | Only how darkly the gaps are masked. Pattern static: no change of shape, scale or position |
+| 2026-09-06 | Procreate 3 — Load at 1% vs 100%, long strokes | **Neither fades along its length.** Load is a per-dab ceiling scaled by pressure, not a depleting reservoir |
+| 2026-09-05 | Procreate A — does one stroke accumulate against itself? | **Yes.** A single crossing darkens; many crossings go solid. Our model is right on this axis |
+| 2026-09-05 | Procreate B — Renderizado→Flujo at 100% vs 0% | Both strokes clearly present, second lighter and softer. Not a coverage alpha; do not map it to our Flow |
+| 2026-09-05 | Procreate C — does darkness move with Spacing? | **Invalid test, my design fault.** Ran from no-overlap to some-overlap, where both models predict the same thing. See C-redo |
+| 2026-09-05 | Procreate D — grain under repeated scrubbing | **Rolling fills in solid; Canvas persists forever.** Depth controls body coverage. Low opacity does **not** show more texture. ⚠️ Run on a **double brush** — repeat on a single before acting |
+| 2026-09-05 | Procreate E — wet mix across a contrasting colour | Drags the underlying colour along. Mixed region reads grey, so the mixing looks like plain RGB |
+| 2026-09-03 | #76 Flow 50% with Depth 0 — is one pass half strength or solid? | **Solid.** Only ~10% reads as translucent. Answers bug 14 and opens bug 15 |
+| 2026-09-03 | #76 Flow 10%, self-crossing stroke | Translucent, and the crossing visibly darker — build-up works, the scale does not |
 | 2026-09-02 | #60 Grain Depth at 0 is indistinguishable from before grain | Pass |
 | 2026-09-02 | #61 Depth ~70% textures the stroke and lightens it | Pass, but see bug 10 — it veils rather than bites |
 | 2026-09-02 | #62 Scale sweep 24-600 px, no repeating grid at any setting | Pass — the seam maths holds on device |
@@ -237,18 +262,90 @@ they lived in the Swift shell rather than the engine:
     toggle in Rendering, not the grain mechanism, and it is *off* by default;
     grain there composites through a blend mode in the Grano section. That was
     a misread of docs/procreate-brush-settings.md, not a subtlety.
-    Blocked on #76 before the third attempt — see the note there.
+    **#76 answered this on 2026-09-03**, and the Procreate experiments on
+    2026-09-05 answered the rest. The threshold is wrong at every level: grain
+    does not vary with opacity in Procreate at all, which a threshold against
+    accumulated coverage would make it do dramatically.
+    What grain actually is: the tooth **multiplies** a dab's coverage before the
+    maximum blend that builds the silhouette. Canvas-anchored, the tooth is the
+    same for every dab, so the pits never fill however many passes cross them.
+    Rolling, it shifts with arc length, so each pass puts its pits elsewhere and
+    the stroke fills to solid. Both behaviours were observed in Procreate, and
+    one mechanism gives both with no mode-specific code.
+    That is what **attempt #1 already did**. It was rejected on device as "a
+    uniform veil", and that objection is now falsified: Procreate's canvas grain
+    does keep texture across the whole inked area, permanently. The fault was
+    most likely the map rather than the maths — our four-octave fractal noise
+    sits near mid-grey and reads as a wash. Procreate exposes Brightness and
+    Contrast on the grain for exactly this reason.
+    **Fixed 2026-09-06**, after the same three findings were reproduced on a
+    single brush — the round 3 results came off a double brush, which stacks two
+    grain sources into one stamp and could have produced them artificially. The
+    tooth now multiplies a dab's coverage into the geometry channel, where the
+    maximum blend makes canvas grain permanent and lets rolling grain fill in,
+    and `grain_threshold` is gone. Awaiting device confirmation.
 
-The engine was correct throughout. Every one of these lived in how the shell
-drove it — layout and view lifecycle, not logic — which is the argument for
+15. **Flow saturates in one pass, and the fix committed for it was wrong.**
+    ~~Flow was a per-dab alpha, not what the stroke is worth.~~ **Reverted
+    2026-09-08.** The symptom was real and the diagnosis was not.
+    What was measured: at the default 6% spacing about seventeen dabs cover
+    every pixel, so a per-dab alpha of 0.5 accumulates to 1 - 0.5^17, and Flow
+    50% draws solid black. All true. The conclusion drawn — that Flow should be
+    inverted so a stroke finishes at the value asked for — matched neither
+    reference. Photoshop's Flow is an uncompensated per-dab alpha, and so is
+    Procreate's: four strokes at one Opacity across an eight-fold range of
+    Spacing came out at 0.03, 0.06, 0.08 and 0.09 ink, where compensation
+    requires them to be equal.
+    The real gap was that `opacity` **already** does the job and was not being
+    treated as the control that does it. It multiplies the finished stroke once
+    at composite, so it caps what a stroke reaches however much it overlaps
+    itself. Flow is the build rate; Opacity is the strength. Procreate agrees
+    loudly by putting Opacity on the main screen and Flow inside Brush Studio.
+    Flow's useful range really is the bottom fifth of its slider. That is a
+    property of the medium, not a bug, and if it proves awkward the fix is a
+    curve on the slider rather than a change to the meaning of the number.
+    Two rounds of device testing went into a symptom whose cause was a control
+    we already had.
+
+16. ~~**Flow was a per-dab alpha, not what the stroke is worth.**~~ Dabs land a
+    fraction of a diameter apart, so at the default 6% spacing about seventeen
+    of them cover every pixel. A per-dab alpha of 0.5 therefore accumulated to
+    `1 - 0.5^17` — 0.99999, solid black. Measured on device: Flow 50% and 75%
+    are indistinguishable from 100%, and only around 10% is visibly
+    translucent. The slider was a switch with a very short throw.
+    Worse, its meaning moved with Spacing. The same brush at 3% spacing was
+    about twice as dark, so two settings that look independent secretly
+    multiplied, and no brush preset could survive a spacing change.
+    Fixed by inverting the accumulation: a dab deposits
+    `1 - (1-flow)^overlap`, where overlap is one over the number of dabs
+    covering a point, so *n* of them compose to exactly `flow`. Flow 100% still
+    gives alpha 1, so the default inking brush is untouched. Crossings still
+    darken, which the device round explicitly asked to keep.
+    Pinned by four tests in `test_stroke.cpp`, including one that holds the
+    result flat across an eight-fold spread of spacings.
+    **This is also the whole reason grain never worked.** Bugs 10 and 14 were
+    both read as grain problems and neither was: a tooth can only bite into
+    coverage that is less than 1, and Flow was not producing any.
+
+Every one of these but 15 lived in how the shell drove the engine — layout and view lifecycle, not logic — which is the argument for
 pushing more behind the C ABI where CI can reach it. Note the shape they share:
 none are arithmetic, all are UIKit rebuilding, sizing or re-orienting something
 at the wrong moment.
 
 12 is the same shape as the rest — a frame computed against the wrong thing.
-10, 11 and 13 are not: they are design errors in what the brush *means*, which
-is a category this project had not hit before and which no amount of UIKit
-discipline would have caught.
+10, 11, 13 and 15 are not: they are design errors in what the brush *means*,
+which is a category this project had not hit before and which no amount of
+UIKit discipline would have caught.
+
+15 breaks the pattern in a way worth keeping visible, because the old claim
+here was that the engine had been correct throughout and every device bug had
+lived in the Swift shell. That is no longer true. It is also the least
+surprising place for it to stop being true: the engine's tests all checked
+*geometry* — where dabs land, how big they are, which tiles they touch — and
+none of them checked what a stroke was worth once the dabs were composited.
+A property no test asserts is a property nobody is defending, and the
+arithmetic that broke it is four lines long and was never wrong on its own
+terms. It answered a question nobody had asked out loud.
 
 7 and 9 are now assertions in `ColorPickerTests`: the picker is rendered into a
 bitmap and read back, so an inverted axis or a banded strip fails in CI. 8 is

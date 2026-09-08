@@ -86,10 +86,28 @@ Everything so far is internal pre-alpha, and none of it is a public build.
 5. **Release notes say what changed and what is known broken**, and link the
    roadmap and the test backlog. A release nobody can interpret six months later
    is not documentation.
-6. **Pre-1.0 versions promise nothing about compatibility.** Documents may break
+6. **A release tag points at a commit that is reachable from a branch.** On a
+   `pull_request` event `github.sha` is a merge commit GitHub invents to test the
+   PR and then discards, so tagging it produces a release whose target no branch
+   can reach — you cannot check it out, and "what changed since the last
+   release" cannot be computed against it. CI tags the PR head instead, and the
+   notes say the build came from that head merged into its base, because that is
+   what was compiled. Checkable: `git merge-base --is-ancestor <tag> origin/main`
+   succeeds for every release tag once its work is merged — except `v0.1.72` and
+   `v0.3.73`, which predate the rule and will always fail it. They are left
+   alone rather than retagged: moving a published tag breaks the download anyone
+   already has, and the record of the mistake is worth more than a tidy list.
+7. **"Since the previous release" means the previous release, in any series.**
+   The tag search matches every `vX.Y.Z`, sorted by version rather than by name
+   so a two-digit series orders correctly, and excludes the tag being written so
+   a re-run does not diff a build against itself. A glob pinned to one series
+   silently outlives that series: `v0.1.*` kept selecting `v0.1.72` for two
+   releases after the series moved to 0.3, and both shipped changelogs listing a
+   single commit.
+8. **Pre-1.0 versions promise nothing about compatibility.** Documents may break
    between builds, and that is allowed until 1.0 — but a release that does break
    them must say so at the top of its notes.
-7. **1.0.0 is not declared from a checklist.** See the two conditions above.
+9. **1.0.0 is not declared from a checklist.** See the two conditions above.
 
 ## Why not date-based, or just a build number
 
