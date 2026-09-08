@@ -62,6 +62,13 @@ Stated directly, so it does not have to be restated each session.
 - **Short-lived branches, merged when green.** Not per-milestone — a branch that
   lives a milestone becomes a fork. CI only builds on `main` pushes and PRs to
   `main`, so a branch is how a build gets tested before it becomes mainline.
+- **Branches, pull requests and versioning are Claude's to run** (octolex,
+  2026-09-08). Open the PR, drive it to green, merge it, bump the series when a
+  milestone closes — without asking each time. This is delegation of the
+  mechanics, not of the decisions: a design choice, a reverted behaviour, or
+  anything that changes what the app does still gets explained and put to them.
+  The rules in `docs/versioning.md` are what this authority is exercised
+  against; if a case is not covered, add a rule rather than deciding it once.
 
 ## Releases
 
