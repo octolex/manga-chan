@@ -174,10 +174,13 @@ disc.
 | ↪️ | Maximum and Buildup accumulation — **replaced by the ink model, see below** |
 | ✅ | Colour picker — blocking several kinds of test, not just a feature |
 | ✅ | Grain: a seamless procedural map, anchored to the canvas or to the stroke |
-| ✅ | Grain as a threshold, not a multiply |
+| ↪️ | ~~Grain as a threshold, not a multiply~~ — **wrong, reverted.** Grain is a cap on where ink may sit; see the grain section below |
+| ✅ | Grain measured against Procreate and re-implemented as a coverage cap |
 | ✅ | Accumulation re-cut as one Flow control, with the mode switch removed |
 | ⬜ | Textured dab shapes on the same sampler |
+| ⬜ | **Close the structural taxonomy gaps** — see *How complete is the brush definition* below. These change the shape of the data and get more expensive the later they land |
 | ⬜ | Brush editor UI, and a starter set of manga brushes |
+| ⬜ | Additive taxonomy gaps: the settings that are only more fields |
 | ⬜ | Per-tile dab culling once the canvas is larger than the screen |
 
 **Verified on device, 2026-09-01.** Round caps, curve smoothness at speed,
@@ -254,10 +257,18 @@ any test:
 
 **Grain veils rather than bites.** Coverage is multiplied by the grain, so a
 solid stroke becomes a uniformly mottled wash: the whole stroke goes lighter
-instead of its edges going broken. Real media does the opposite — pigment
-catches the high points of the paper and misses the low ones, which is a
-*threshold* against the grain, not a scaling by it. Multiplying is why it reads
-as a filter laid over the stroke rather than as the surface underneath it.
+instead of its edges going broken.
+
+That observation was accurate and is left standing. ~~Real media does the
+opposite — pigment catches the high points of the paper and misses the low ones,
+which is a *threshold* against the grain, not a scaling by it.~~ **The inference
+was wrong**, and it cost three implementations. Procreate was measured on
+2026-09-08: canvas-anchored grain keeps its texture across the whole inked area,
+permanently, however hard it is scrubbed — it veils, deliberately. The multiply
+was the right mechanism and the objection to it was a mis-expectation. What
+probably looked wrong was the *map*: fractal noise clustered near mid-grey reads
+as a wash rather than as tooth, which is what Procreate's grain Brightness and
+Contrast exist to fix, and which we still do not have.
 
 **Flow and Opacity are redundant under Maximum.** Both scale the same final
 alpha, so only their product matters, and getting build-up needs a mode switch
@@ -269,8 +280,12 @@ mechanisms:
 
 - Grain composites through a **blend mode**, with brightness, contrast and a
   minimum depth. Multiply is one mode of many.
-- **Umbral alfa** (alpha threshold) with a threshold amount, in the Rendering
-  section. That is the tooth-versus-veil control.
+- ~~**Umbral alfa** (alpha threshold) with a threshold amount, in the Rendering
+  section. That is the tooth-versus-veil control.~~ **Misread.** It is a toggle
+  under Rendering, *off by default* in the very brush these settings were
+  transcribed from, and it is not the grain mechanism at all. Building on this
+  reading produced bug 14. Grain composites through the blend mode in its own
+  section.
 - There is **no Maximum/Buildup toggle**. Accumulation is a **rendering style**
   with six named values, and Flow is a "maximum level" rather than a slider.
 - Our two grain anchoring modes match Procreate's exactly
@@ -287,12 +302,24 @@ before a brush editor exposes it. It is no longer a maybe.
 Both findings from the 2026-09-02 round are fixed, and the fix for the second
 was not the obvious one.
 
-**Flow is now the whole accumulation control.** The Maximum/Buildup switch is
-gone. At Flow 100% a single pass saturates, so a self-crossing cannot darken —
-what Maximum did. Below 100% the passes build — what Buildup did. Neither
-Photoshop nor Procreate asks for a mode here, and the switch was what made Flow
-and Opacity redundant at one end, since both then scaled the same final alpha
-and only their product mattered.
+**Flow is the build rate; Opacity is the strength.** The Maximum/Buildup switch
+is gone, and it is not coming back — but the reasoning recorded here when it was
+removed was only half right, so both halves are kept.
+
+Right: the switch made Flow and Opacity redundant at one end, since both scaled
+the same final alpha and only their product mattered. Wrong: ~~neither Photoshop
+nor Procreate asks for a mode here.~~ Procreate asks for six — Light, Uniform,
+Intense and Heavy **Glaze**, plus Uniform and Intense **Blending** — and
+measurement on 2026-09-08 showed the distinction is real and large. At Opacity
+25%, Light Glaze settles at 0.16 ink under twenty passes without lifting and
+cannot be pushed past it, while both Blending styles saturate to solid black
+against themselves.
+
+What saves the decision is that **two independent sliders already span that
+space.** Opacity multiplies the finished stroke once at composite, which is a
+per-stroke ceiling — a Glaze. Flow accumulates per dab with no ceiling — a
+Blending. So the switch really was redundant, for a reason that had not been
+found yet when it was deleted.
 
 **The obvious implementation of that destroys the antialiasing.** Simply always
 accumulating means a pixel just outside the stroke's true edge picks up partial
@@ -366,6 +393,81 @@ look independent must not secretly multiply, or no brush preset survives being
 edited. Flow 100% still yields alpha 1, so the default inking brush is
 bit-identical to before.
 
+### How complete is the brush definition
+
+The goal is a brush definition that can express what Procreate's can. This
+section exists because that goal was previously implied by one checklist line —
+"brush editor UI, and a starter set of manga brushes" — which gives no sense of
+the distance involved.
+
+Measured against
+[docs/procreate-brush-settings.md](docs/procreate-brush-settings.md), which is a
+transcription of one real brush's studio:
+
+| Section | Have | Partial | Missing | Total |
+|---|---:|---:|---:|---:|
+| Stroke path | 2 | 0 | 3 | 5 |
+| Stabilization | 0 | 1 | 3 | 4 |
+| Taper | 0 | 2 | 7 | 9 |
+| Shape | 2 | 0 | 11 | 13 |
+| Grain | 2 | 2 | 10 | 14 |
+| Rendering | 0 | 1 | 8 | 9 |
+| Dynamics | 3 | 1 | 1 | 5 |
+| Apple Pencil | 1 | 1 | 7 | 9 |
+| Properties | 1 | 1 | 3 | 5 |
+| **Total** | **11** | **9** | **53** | **73** |
+
+**15% complete, 12% partial, 73% missing.**
+
+Read that number carefully, because it flatters us in one direction and is
+unfair in another. Unfair: what exists is the load-bearing half — dab emission,
+spacing, dynamics, jitter, the ink model and grain are the parts everything else
+attaches to, and a brush with none of the missing settings still draws. Flatters
+us: the count excludes **Wet mix** and **Colour dynamics** entirely, because
+neither was tabulated, and together they are two whole subsystems we have not
+started. And it is one brush — Procreate shows settings conditionally, so the
+real surface is larger than 73.
+
+#### Structural gaps versus additive ones
+
+The distinction that matters for sequencing, and the reason this section is not
+just a list. `core/include/core/brush.h` already says the taxonomy is the
+expensive thing to change and the individual fields are cheap. So:
+
+**Structural — these change the shape of the data or the pipeline, and every
+one of them is cheaper before the brush editor exists than after, because an
+editor is a UI built on top of whatever shape the data has:**
+
+| Gap | Why it is structural |
+|---|---|
+| Pressure response as a **spline**, not an exponent | Procreate's is a graph widget. Four bytes of exponent cannot express a graph, and an editor exposing a curve control needs the real thing underneath |
+| **Taper as a Vector2D**, split pressure versus touch | We have three scalars and no touch/pressure split. Two axes where we assumed one |
+| Shape **Count** — N stamps per dab | Changes dab emission itself, not a field on a dab |
+| **Per-dab colour**, for colour dynamics | `MCDab` carries no colour. Adding it is an ABI change and widens the GPU vertex struct |
+| **Wet mix** — colour pickup | The dab must *read* the canvas under it. Nothing in the pipeline does that today; see docs/wet-mix-references.md |
+| Grain **blend mode** | Grain currently caps coverage. A mode enum means the compositing step becomes a choice rather than a constant |
+
+**Additive — more fields on structures that already exist, safe to land any
+time, including after the editor:** spacing jitter, linear jitter, fade, the two
+stabilisation mechanisms beyond StreamLine, grain brightness / contrast /
+minimum depth / zoom / rotation, roundness by pressure and by tilt, speed →
+spacing, and maximum / minimum opacity.
+
+Grain brightness and contrast are additive but wanted early for a different
+reason: the grain mechanism is now correct and the map probably is not, and
+those two controls are how that gets judged at all.
+
+#### The rule
+
+**Structural gaps close before the brush editor ships. Additive ones may land
+after it.** An editor is a view onto the data model; building it against a model
+we already know is the wrong shape means building it twice, and the second time
+is worse because presets will exist by then.
+
+Checkable: re-run the count against `docs/procreate-brush-settings.md` and the
+table above must match. When a setting lands, its marker moves there first and
+this table follows.
+
 ### Decisions worth revisiting
 
 - **Spacing is a fraction of dab diameter**, not an absolute distance, so a
@@ -382,9 +484,12 @@ bit-identical to before.
   The sampler that shape textures will use now exists, built for grain — what
   is left is the shape map itself and the tile capture, which has to widen from
   the dab's radius to its corner once a stamp can put ink outside the disc.
-- **Grain thresholds coverage per dab, not the finished stroke.** Tinting the
-  whole stroke once would be cheaper, but it cannot express rolling grain at
-  all, and per-dab is the general mechanism a shape texture needs anyway.
+- **Grain caps coverage per dab, not the finished stroke.** ~~Thresholds~~ —
+  corrected 2026-09-08; the tooth multiplies a dab's coverage into the geometry
+  channel and the maximum blend does the rest. Tinting the whole stroke once
+  would be cheaper, but it cannot express rolling grain at all, and per-dab is
+  the general mechanism a shape texture needs anyway. The per-dab choice was
+  right throughout; only what it computed was wrong.
 - **Coverage is two channels, not one.** Ink density and stroke geometry
   accumulate differently and cannot share a number — see below.
 - **The response curve is an exponent, not a spline.** It covers ease-in,
