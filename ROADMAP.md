@@ -174,7 +174,8 @@ disc.
 | ↪️ | Maximum and Buildup accumulation — **replaced by the ink model, see below** |
 | ✅ | Colour picker — blocking several kinds of test, not just a feature |
 | ✅ | Grain: a seamless procedural map, anchored to the canvas or to the stroke |
-| ✅ | Grain as a threshold, not a multiply |
+| ↪️ | ~~Grain as a threshold, not a multiply~~ — **wrong, reverted.** Grain is a cap on where ink may sit; see the grain section below |
+| ✅ | Grain measured against Procreate and re-implemented as a coverage cap |
 | ✅ | Accumulation re-cut as one Flow control, with the mode switch removed |
 | ⬜ | Textured dab shapes on the same sampler |
 | ⬜ | Brush editor UI, and a starter set of manga brushes |

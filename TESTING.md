@@ -40,7 +40,7 @@ whether it costs a frame.
 | # | What | How | Expected |
 |---|---|---|---|
 | 60 | Depth off is off | Grain Depth at 0, draw | Identical to a stroke before grain existed — flat, no lightening |
-| 61 | Depth reads as tooth | Depth ~70%, **Flow ~50%**, draw slowly | Tooth showing through the body of the stroke, and a broken edge. At Flow 100% only the edges break — see #74 |
+| 61 | Depth reads as tooth | Depth ~70%, Flow 100%, draw slowly | Tooth showing through the **body** of the stroke, not only its edges. Rewritten 2026-09-08: grain is now a cap on coverage, so it no longer depends on Flow being below 100% |
 | 62 | Scale | Scale from 24 px to 600 px, draw at each | Fine tooth through to coarse blotches. No repeating grid at any setting |
 | 63 | Canvas grain ignores the stroke | Canvas mode, cross a stroke back over itself | The texture in the crossing matches its surroundings — it belongs to the paper |
 | 64 | Rolling grain follows the stroke | Rolling mode, same crossing | The crossing **does** show. Both directions carry their own grain |
@@ -53,7 +53,11 @@ whether it costs a frame.
 | # | What | How | Expected |
 |---|---|---|---|
 | 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Was invisible at 1, barely visible at 2. Density now accumulates across the ~2 dabs that land per pixel, which may resolve it with no special case |
-| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line. **Failing** — see bug 14. Blocked behind #77: there is nothing for a tooth to bite into until Flow leaves a stroke partly transparent |
+| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line, at **every** Flow. Reimplemented 2026-09-08 as a coverage cap; first device round on v0.3.80 |
+| 81 | Canvas grain never fills in | Grain Behaviour **Texture**, Depth 100%, scrub one patch ~20 times | Texture survives however hard it is worked. Matches Procreate |
+| 82 | Rolling grain does fill in | Grain Behaviour **Movement**, same scrub | Goes solid. The only difference from #81 is arc-length offset, and one mechanism produces both |
+| 83 | Depth only changes the gaps | Depth 50% then 100%, one stroke each | Gaps darker at 50%, lighter at 100%. The pattern must not move, rescale or change shape |
+| 84 | The build says which build it is | Open the HUD | `app 0.3.80 (80)`. Never `MISMATCH`, never `local build` |
 | ~~76~~ | ~~How opaque is a Flow-50% pass?~~ | — | **Answered 2026-09-03: effectively solid.** Only ~10% was visibly translucent. That is bug 15, and it is why every grain attempt failed |
 | 77 | Flow means what it says | Depth 0. Draw single non-crossing strokes at Flow 25%, 50%, 75% | Three clearly different strengths, roughly a quarter, half and three quarters. Before this change 50% and 75% were both solid black |
 | 78 | Flow no longer moves with Spacing | Flow 50%, draw. Set Spacing to about half what it was, draw again | The two strokes are the same darkness. Previously halving the spacing made the same brush markedly darker |
