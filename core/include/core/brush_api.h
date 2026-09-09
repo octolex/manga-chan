@@ -50,11 +50,25 @@ typedef enum {
     MC_GRAIN_ROLLING = 1,  /* travels with the stroke, like dry media dragged */
 } MCGrainMovement;
 
+/* Matches mc::ResponseCurve. Six interior points; the curve always runs from
+ * (0,0) to (1,1), so `count` of 0 is linear and needs no points at all.
+ *
+ * Fixed capacity rather than a pointer because MCBrush is passed by value, and
+ * a struct that owns memory cannot be. Revising the capacity is an ABI change,
+ * which is why it is a named constant on both sides rather than a literal. */
+#define MC_RESPONSE_CURVE_MAX_POINTS 6
+
+typedef struct {
+    int32_t count;
+    float x[MC_RESPONSE_CURVE_MAX_POINTS];
+    float y[MC_RESPONSE_CURVE_MAX_POINTS];
+} MCResponseCurve;
+
 /* Matches mc::Response. */
 typedef struct {
     float minimum;
     float maximum;
-    float curve;
+    MCResponseCurve curve;
     int32_t enabled;   /* int rather than bool: C and C++ bool need not agree */
 } MCResponse;
 

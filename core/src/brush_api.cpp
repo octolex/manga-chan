@@ -25,6 +25,15 @@ static_assert(offsetof(MCDab, hardness) == offsetof(Dab, hardness), "dab hardnes
 static_assert(offsetof(MCDab, grainOffset) == offsetof(Dab, grainOffset), "dab grainOffset offset");
 static_assert(std::is_trivially_copyable<Dab>::value, "dabs must be memcpy-able to the GPU");
 
+// The two capacities are declared in two files and can drift apart silently:
+// the ABI header is plain C and cannot see the C++ constant. A mismatch would
+// copy the wrong number of points across the boundary and be visible only as a
+// response curve that goes slightly wrong at one end.
+static_assert(MC_RESPONSE_CURVE_MAX_POINTS == ResponseCurve::kMaxPoints,
+              "the C and C++ curve capacities must agree");
+static_assert(sizeof(MCResponseCurve) == sizeof(ResponseCurve),
+              "MCResponseCurve must match mc::ResponseCurve");
+
 struct MCStrokePath {
     explicit MCStrokePath(const Brush& brush, uint64_t seed) : path(brush, seed) {}
     StrokePath path;
@@ -36,11 +45,31 @@ struct MCStrokePath {
 
 namespace {
 
+ResponseCurve fromC(const MCResponseCurve& c) {
+    ResponseCurve out;
+    out.count = c.count;
+    for (int i = 0; i < ResponseCurve::kMaxPoints; ++i) {
+        out.x[i] = c.x[i];
+        out.y[i] = c.y[i];
+    }
+    return out;
+}
+
+MCResponseCurve toC(const ResponseCurve& c) {
+    MCResponseCurve out{};
+    out.count = c.count;
+    for (int i = 0; i < ResponseCurve::kMaxPoints; ++i) {
+        out.x[i] = c.x[i];
+        out.y[i] = c.y[i];
+    }
+    return out;
+}
+
 Response fromC(const MCResponse& r) {
     Response out;
     out.minimum = r.minimum;
     out.maximum = r.maximum;
-    out.curve = r.curve;
+    out.curve = fromC(r.curve);
     out.enabled = r.enabled != 0;
     return out;
 }
@@ -49,7 +78,7 @@ MCResponse toC(const Response& r) {
     MCResponse out;
     out.minimum = r.minimum;
     out.maximum = r.maximum;
-    out.curve = r.curve;
+    out.curve = toC(r.curve);
     out.enabled = r.enabled ? 1 : 0;
     return out;
 }
