@@ -470,6 +470,23 @@ Checkable: re-run the count against `docs/procreate-brush-settings.md` and the
 table above must match. When a setting lands, its marker moves there first and
 this table follows.
 
+### Deferred, and why
+
+Kept here rather than in a commit message, because a delayed task that lives
+only in a commit message is a task nobody will find.
+
+| Deferred | Why, and what it costs to wait |
+|---|---|
+| **Wet mix** — colour pickup | A subsystem, not a setting: the dab must *read* the canvas beneath it, which nothing in the pipeline does. `docs/wet-mix-references.md` has the algorithm. Deserves its own milestone rather than riding along with a UI change |
+| **Per-dab colour**, for colour dynamics | An ABI change that widens the GPU vertex struct. Cheap to do, but only worth doing with colour dynamics, which is a feature not a field |
+| **Grain blend mode** | Compositing becomes a choice rather than a constant. Blocked behind knowing which modes matter, which is a device question |
+| **Grain brightness and contrast** | Additive, and the last thing between "grain is mechanically right" and "grain looks like paper". Wanted early: our map is fractal noise clustered near mid-grey, and these two controls are how that gets judged at all |
+| **Rendering styles** as named values | Procreate has six; Opacity and Flow already span the space they cover. Revisit only if the two sliders prove not to reach somewhere a style does |
+| **1 px stroke is invisible** (#68) | Open since 2026-09-02. May already be fixed by density accumulation; needs a device round to say |
+| **A left/right toggle for the quick bar** | `BrushQuickBar.edge` exists and is honoured; nothing exposes it. Procreate defaults to the left because a right-handed palm rests on the right edge, and which default suits this app is a device question, not a code one |
+| **Showing the scrubbing gain while dragging** | `PrecisionSlider.currentGain` is published and unused. A "1/4" next to the readout would tell a person the slowdown is deliberate rather than the app struggling. Cosmetic until someone reports the confusion |
+| **A curve editor for the pressure response** | The curve exists in the model and is tested; nothing exposes it, which is why that setting is marked partial rather than complete in the table above |
+
 ### Decisions worth revisiting
 
 - **Spacing is a fraction of dab diameter**, not an absolute distance, so a
