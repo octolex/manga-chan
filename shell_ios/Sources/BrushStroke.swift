@@ -48,7 +48,8 @@ final class BrushStroke {
                                  point.tilt,
                                  point.azimuth,
                                  point.roll,
-                                 point.timestamp)
+                                 point.timestamp,
+                                 point.fromPressureDevice ? 1 : 0)
             lastPoint = point
             sampleCount += 1
         }

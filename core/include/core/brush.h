@@ -100,6 +100,35 @@ struct ResponseCurve {
     static ResponseCurve exponent(float e);
 };
 
+/// One end of a stroke taper.
+struct TaperEnd {
+    /// Arc length in canvas pixels over which the ramp runs. Zero disables
+    /// this end, which is how a taper on only one end is expressed.
+    float length = 0.0f;
+
+    /// Size multiplier at the very tip. 0 is a point, 1 is no narrowing.
+    float scale = 0.0f;
+};
+
+/// A taper is its two ends. Procreate presents this as one Vector2D control.
+///
+/// The end taper is why a stroke cannot be finalised until it is finished: the
+/// last `end.length` pixels change once we know where the end is.
+struct Taper {
+    TaperEnd start;
+    TaperEnd end;
+};
+
+/// The tapers a brush carries, one per kind of input.
+///
+/// Named rather than two loose members so the C ABI can mirror it as one
+/// struct, and so a future third input — a stylus that is neither — is a field
+/// here rather than a change at every call site.
+struct StrokeTapers {
+    Taper pressure;
+    Taper touch;
+};
+
 /// Maps one normalised input channel onto a multiplier.
 struct Response {
     /// Multiplier when the input reads 0.
@@ -277,16 +306,23 @@ struct Brush {
 
     // MARK: Taper
 
-    /// Arc length in canvas pixels over which the stroke ramps up at the start
-    /// and down at the end. Zero disables tapering.
+    /// How the stroke narrows at its two ends, chosen by what drew it.
     ///
-    /// The end taper is why a stroke cannot be finalised until it is finished:
-    /// the last `taperLength` pixels change once we know where the end is.
-    float taperLength = 0.0f;
-
-    /// Size multiplier at the very start and very end of the taper.
-    float taperStartScale = 0.0f;
-    float taperEndScale = 0.0f;
+    /// Two changes from the three scalars this replaced on 2026-09-09, both
+    /// structural rather than cosmetic.
+    ///
+    /// **The ends became independent.** One shared length could not express the
+    /// shape a brush pen actually makes — a long lead-in and an abrupt stop, or
+    /// the reverse. Procreate presents each taper as a **Vector2D**, which is
+    /// the same statement: the ends are two values of one control, not one
+    /// value applied twice.
+    ///
+    /// **Pressure and touch got their own.** Procreate splits them, and the
+    /// reason is not cosmetic: a finger reports no real pressure, so a brush
+    /// whose character comes from pressure produces nothing recognisable from a
+    /// fingertip and needs a taper of its own to look like anything at all. One
+    /// shared taper cannot serve both without being wrong for one of them.
+    StrokeTapers taper;
 
     // MARK: Path
 

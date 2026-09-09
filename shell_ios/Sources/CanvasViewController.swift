@@ -288,7 +288,8 @@ final class CanvasViewController: UIViewController {
                            tilt: Float(touch.altitudeAngle),
                            azimuth: Float(touch.azimuthAngle(in: view)),
                            roll: roll,
-                           timestamp: touch.timestamp)
+                           timestamp: touch.timestamp,
+                           fromPressureDevice: touch.type == .pencil)
     }
 
     /// Mirrors every Pencil channel into the HUD. Reading a live value on

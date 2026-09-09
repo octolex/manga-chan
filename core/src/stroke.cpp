@@ -65,6 +65,11 @@ float StrokePath::nextRandom() noexcept {
 void StrokePath::addSample(const StrokeSample& sample) {
     if (finished_) return;
 
+    // Latched from the first sample; see the field's note for why not the last.
+    if (nodes_.empty()) {
+        fromPressureDevice_ = sample.fromPressureDevice;
+    }
+
     Node node;
     node.pressure = clamp01(sample.pressure);
     node.tilt = sample.tilt;
@@ -203,9 +208,10 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
 
     // Start taper. The end taper cannot be applied here because it depends on
     // where the stroke stops, which is not yet known — see applyEndTaper().
-    if (brush_.taperLength > 0.0f && travelled_ < brush_.taperLength) {
-        const float t = travelled_ / brush_.taperLength;
-        diameter *= lerp(clamp01(brush_.taperStartScale), 1.0f, t);
+    const TaperEnd& startTaper = activeTaper().start;
+    if (startTaper.length > 0.0f && travelled_ < startTaper.length) {
+        const float t = travelled_ / startTaper.length;
+        diameter *= lerp(clamp01(startTaper.scale), 1.0f, t);
     }
 
     if (brush_.sizeJitter > 0.0f) {
@@ -309,8 +315,16 @@ void StrokePath::noteTiles(const Dab& dab) {
     }
 }
 
+const Taper& StrokePath::activeTaper() const {
+    // A finger reports no real pressure, so a brush whose character comes from
+    // pressure makes nothing recognisable from one. Which taper applies is
+    // therefore a property of the input, not of the brush alone.
+    return fromPressureDevice_ ? brush_.taper.pressure : brush_.taper.touch;
+}
+
 void StrokePath::applyEndTaper() {
-    if (brush_.taperLength <= 0.0f || dabs_.size() < 2) return;
+    const TaperEnd& endTaper = activeTaper().end;
+    if (endTaper.length <= 0.0f || dabs_.size() < 2) return;
 
     // Walk backwards from the final dab, scaling by how close each one is to
     // the end. Tiles were noted at the untapered radius, which is a superset
@@ -322,12 +336,12 @@ void StrokePath::applyEndTaper() {
             const float dy = dabs_[i + 1].y - dabs_[i].y;
             distance += std::sqrt(dx * dx + dy * dy);
         }
-        if (distance >= brush_.taperLength) break;
+        if (distance >= endTaper.length) break;
 
-        const float t = distance / brush_.taperLength;
+        const float t = distance / endTaper.length;
         dabs_[i].radius = std::max(
             kMinimumRadius,
-            dabs_[i].radius * lerp(clamp01(brush_.taperEndScale), 1.0f, t));
+            dabs_[i].radius * lerp(clamp01(endTaper.scale), 1.0f, t));
     }
 }
 

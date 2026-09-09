@@ -35,6 +35,12 @@ struct StrokePoint {
     var roll: Float = -1
 
     var timestamp: TimeInterval
+
+    /// True for a Pencil, false for a finger. Selects which of the brush's two
+    /// tapers applies, and cannot be inferred downstream: a finger reports a
+    /// synthesised pressure and an upright tilt, and so does a Pencil held
+    /// perpendicular. Only the first sample of a stroke is read.
+    var fromPressureDevice: Bool = true
 }
 
 /// Live readout of every input channel the Pencil exposes.

@@ -65,6 +65,19 @@ MCResponseCurve toC(const ResponseCurve& c) {
     return out;
 }
 
+TaperEnd convert(const MCTaperEnd& e) { return TaperEnd{e.length, e.scale}; }
+MCTaperEnd convert(const TaperEnd& e) { return MCTaperEnd{e.length, e.scale}; }
+
+Taper convert(const MCTaper& t) { return Taper{convert(t.start), convert(t.end)}; }
+MCTaper convert(const Taper& t) { return MCTaper{convert(t.start), convert(t.end)}; }
+
+StrokeTapers convert(const MCStrokeTapers& t) {
+    return StrokeTapers{convert(t.pressure), convert(t.touch)};
+}
+MCStrokeTapers convert(const StrokeTapers& t) {
+    return MCStrokeTapers{convert(t.pressure), convert(t.touch)};
+}
+
 Response fromC(const MCResponse& r) {
     Response out;
     out.minimum = r.minimum;
@@ -120,9 +133,7 @@ Brush fromC(const MCBrush& b) {
     out.angleJitter = b.angleJitter;
     out.scatter = b.scatter;
     out.flowJitter = b.flowJitter;
-    out.taperLength = b.taperLength;
-    out.taperStartScale = b.taperStartScale;
-    out.taperEndScale = b.taperEndScale;
+    out.taper = convert(b.taper);
     out.smoothing = b.smoothing;
     out.minimumSizeFraction = b.minimumSizeFraction;
     return out;
@@ -149,9 +160,7 @@ MCBrush toC(const Brush& b) {
     out.angleJitter = b.angleJitter;
     out.scatter = b.scatter;
     out.flowJitter = b.flowJitter;
-    out.taperLength = b.taperLength;
-    out.taperStartScale = b.taperStartScale;
-    out.taperEndScale = b.taperEndScale;
+    out.taper = convert(b.taper);
     out.smoothing = b.smoothing;
     out.minimumSizeFraction = b.minimumSizeFraction;
     return out;
@@ -202,9 +211,11 @@ void mc_stroke_add_sample(MCStrokePath* path,
                           float tilt,
                           float azimuth,
                           float roll,
-                          double timestamp) {
+                          double timestamp,
+                          int32_t fromPressureDevice) {
     if (path == nullptr) return;
     StrokeSample sample;
+    sample.fromPressureDevice = fromPressureDevice != 0;
     sample.x = x;
     sample.y = y;
     sample.pressure = pressure;
