@@ -120,6 +120,8 @@ Brush fromC(const MCBrush& b) {
     out.roundness = b.roundness;
     out.angle = b.angle;
     out.angleFollowsDirection = b.angleFollowsDirection != 0;
+    out.shapeCount = b.shapeCount;
+    out.shapeCountJitter = b.shapeCountJitter;
     out.flow = b.flow;
     out.opacity = b.opacity;
     out.grainDepth = b.grainDepth;
@@ -147,6 +149,8 @@ MCBrush toC(const Brush& b) {
     out.roundness = b.roundness;
     out.angle = b.angle;
     out.angleFollowsDirection = b.angleFollowsDirection ? 1 : 0;
+    out.shapeCount = b.shapeCount;
+    out.shapeCountJitter = b.shapeCountJitter;
     out.flow = b.flow;
     out.opacity = b.opacity;
     out.grainDepth = b.grainDepth;

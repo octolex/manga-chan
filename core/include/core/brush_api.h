@@ -113,6 +113,9 @@ typedef struct {
     float angle;
     int32_t angleFollowsDirection;
 
+    int32_t shapeCount;        /* stamps per dab position; 1 is one stamp */
+    float shapeCountJitter;    /* 0...1, only ever removes stamps */
+
     float flow;                /* ink per dab; density accumulates across them */
     float opacity;             /* ceiling on the finished stroke */
 

@@ -387,6 +387,75 @@ void testTheInputKindIsLatchedAtTheStart() {
     CHECK(dabs.front().radius < middle * 0.5f);
 }
 
+/// Count multiplies the stamps at each position. The third structural gap:
+/// one dab position stops meaning one dab, which is why it could not be a
+/// field on a dab.
+void testShapeCountStampsSeveralTimesPerPosition() {
+    std::printf("shape count lays several stamps per dab position\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.25f;
+    brush.smoothing = 0.0f;
+
+    const size_t single = straightLine(brush, 0.0f, 400.0f, 20).dabs().size();
+
+    brush.shapeCount = 4;
+    brush.scatter = 0.5f;   // Count without scatter stacks; see brush.h
+    const size_t quadruple = straightLine(brush, 0.0f, 400.0f, 20).dabs().size();
+
+    std::printf("  count 1 -> %zu dabs, count 4 -> %zu\n", single, quadruple);
+    CHECK_EQ(static_cast<long long>(quadruple), static_cast<long long>(single * 4));
+}
+
+/// Every stamp is scattered on its own draw. Sharing one would put them all in
+/// the same place, which is the bug this arrangement exists to avoid.
+void testEachStampScattersIndependently() {
+    std::printf("each stamp gets its own scatter\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.25f;
+    brush.smoothing = 0.0f;
+    brush.shapeCount = 5;
+    brush.scatter = 0.6f;
+
+    const auto dabs = straightLine(brush, 0.0f, 400.0f, 20).dabs();
+    CHECK(dabs.size() >= 20);
+
+    // The first five dabs share one position before scatter. If they shared a
+    // draw they would be identical afterwards too.
+    int distinct = 0;
+    for (size_t i = 1; i < 5 && i < dabs.size(); ++i) {
+        if (dabs[i].x != dabs[0].x || dabs[i].y != dabs[0].y) ++distinct;
+    }
+    std::printf("  %d of 4 sibling stamps moved independently\n", distinct);
+    CHECK_EQ(static_cast<long long>(distinct), 4LL);
+}
+
+/// Jitter only ever removes, so the count the panel shows is a real ceiling
+/// and the cost of a brush is bounded by what it advertises.
+void testCountJitterOnlyRemovesStamps() {
+    std::printf("count jitter never exceeds the count\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.25f;
+    brush.smoothing = 0.0f;
+    brush.scatter = 0.4f;
+    brush.shapeCount = 6;
+    brush.shapeCountJitter = 0.8f;
+
+    const size_t jittered = straightLine(brush, 0.0f, 400.0f, 20).dabs().size();
+
+    brush.shapeCountJitter = 0.0f;
+    const size_t full = straightLine(brush, 0.0f, 400.0f, 20).dabs().size();
+
+    std::printf("  jittered %zu, full %zu\n", jittered, full);
+    CHECK(jittered <= full);
+    CHECK(jittered > 0);
+}
+
 void testGrainOffsetTracksArcLength() {
     std::printf("each dab records how far along the stroke it sits\n");
 
@@ -717,6 +786,9 @@ int main() {
     testTheInputKindIsLatchedAtTheStart();
     testGrainOffsetTracksArcLength();
     testScatterDoesNotDisturbTheGrainOffset();
+    testShapeCountStampsSeveralTimesPerPosition();
+    testEachStampScattersIndependently();
+    testCountJitterOnlyRemovesStamps();
     testJitterIsDeterministic();
     testAngleFollowsDirection();
     testATapStillLeavesAMark();

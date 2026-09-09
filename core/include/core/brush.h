@@ -192,6 +192,21 @@ struct Brush {
     /// stroke direction.
     float angle = 0.0f;
 
+    /// How many stamps of the shape land at each dab position. Procreate calls
+    /// this Count, and it is the third structural gap rather than a field
+    /// because it changes *emission*: one position stops meaning one dab.
+    ///
+    /// Only meaningful together with `scatter` or `angleJitter`. With neither,
+    /// the stamps land exactly on top of one another. It is how a spray, a
+    /// stipple or a foliage brush is built, and it is why the tile capture
+    /// notes each stamp where it lands rather than trusting the dab position.
+    int32_t shapeCount = 1;
+
+    /// Varies the count, 0...1. Like every other jitter here it only ever
+    /// *removes*, so `shapeCount` stays the honest upper bound the panel shows
+    /// and the cost of a brush is bounded by what it advertises.
+    float shapeCountJitter = 0.0f;
+
     /// Rotate each dab to follow the direction of travel. This is what makes
     /// a flat nib behave like a real one through a curve.
     bool angleFollowsDirection = false;
