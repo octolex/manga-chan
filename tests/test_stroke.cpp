@@ -753,6 +753,93 @@ void testDabsHaveAMinimumSpacing() {
     }
 }
 
+/// Blending puts Opacity on the dab, so a stroke builds toward solid.
+///
+/// This is the correction of 2026-09-09. The engine applied Opacity only at
+/// composite, for every brush — a Glaze — so the always-visible slider capped a
+/// stroke instead of thinning it, and scrubbing one patch at 25% could never
+/// reach solid however long you worked at it. Procreate's stock brushes are
+/// Blending, so that is what the word means to the hand holding the pen.
+void testBlendingPutsOpacityOnTheDab() {
+    Brush brush = inkPen();
+    brush.renderingStyle = RenderingStyle::Blending;
+    brush.flow = 0.4f;
+    brush.opacity = 0.5f;
+    const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+    CHECK(!path.dabs().empty());
+    for (const Dab& d : path.dabs()) {
+        CHECK(std::fabs(d.flow - 0.2f) < 1e-5f);
+    }
+}
+
+/// Glaze leaves Opacity off the dab entirely; the shell tints once at composite.
+///
+/// That is the whole difference between the two families, and it is why the
+/// branch lives in the engine: what a dab deposits is something a test can
+/// count, and the ceiling that follows from it is arithmetic rather than a
+/// second mechanism.
+void testGlazeLeavesOpacityOffTheDab() {
+    Brush brush = inkPen();
+    brush.renderingStyle = RenderingStyle::Glaze;
+    brush.flow = 0.4f;
+    brush.opacity = 0.5f;
+    const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+    CHECK(!path.dabs().empty());
+    for (const Dab& d : path.dabs()) {
+        CHECK(std::fabs(d.flow - 0.4f) < 1e-5f);
+    }
+}
+
+/// At full Opacity the two families are the same brush.
+///
+/// The claim that made changing the default safe: 1.0 on the dab and 1.0 at
+/// composite are the same nothing, so every brush that never touches the
+/// Opacity slider draws exactly as it did before. Asserted rather than trusted,
+/// because it is the reason nothing else in this file had to change.
+void testTheTwoFamiliesAgreeAtFullOpacity() {
+    Brush blending = inkPen();
+    blending.renderingStyle = RenderingStyle::Blending;
+    Brush glaze = inkPen();
+    glaze.renderingStyle = RenderingStyle::Glaze;
+
+    const StrokePath a = straightLine(blending, 20.0f, 300.0f, 32);
+    const StrokePath b = straightLine(glaze, 20.0f, 300.0f, 32);
+    CHECK(a.dabs().size() == b.dabs().size());
+    for (size_t i = 0; i < a.dabs().size() && i < b.dabs().size(); ++i) {
+        CHECK(std::fabs(a.dabs()[i].flow - b.dabs()[i].flow) < 1e-6f);
+    }
+}
+
+/// A Blending stroke passes its own Opacity value, which a Glaze cannot.
+///
+/// The measurable consequence, and the one the device reported: at Opacity 25%
+/// a twenty-pass scribble reached B 1 — solid — in Intense Blending, while
+/// Light Glaze settled at 0.16 ink and stayed there. One pass of ours already
+/// carries more ink than the slider reads, because roughly seventeen dabs cover
+/// every pixel at this spacing and they accumulate freely.
+void testABlendingStrokeExceedsItsOpacity() {
+    Brush brush = inkPen();
+    brush.renderingStyle = RenderingStyle::Blending;
+    brush.hardness = 1.0f;
+    brush.opacity = 0.25f;
+    const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+    const float once = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
+    std::printf("  one pass at opacity 0.25 -> %.3f ink\n",
+                static_cast<double>(once));
+    CHECK(once > 0.25f);
+
+    // And a Glaze at the same setting deposits the *same* ink and is then
+    // capped by the tint, so it can never pass 0.25 however many times it
+    // crosses itself. The cap is the shell's; what the engine owes it is a
+    // coverage value that does not already carry the opacity.
+    Brush glaze = brush;
+    glaze.renderingStyle = RenderingStyle::Glaze;
+    const StrokePath glazed = straightLine(glaze, 20.0f, 300.0f, 32);
+    const float coverage = accumulatedFlowAt(glazed.dabs(), 160.0f, 100.0f);
+    CHECK(coverage * glaze.opacity <= glaze.opacity + 1e-6f);
+    CHECK(coverage > once);
+}
+
 /// Crossing the stroke over itself still darkens.
 void testCrossingTheStrokeStillDarkens() {
     Brush brush = inkPen();
@@ -798,6 +885,10 @@ int main() {
     testFlowIsWhatOneDabDeposits();
     testTighterSpacingLaysDownMoreInk();
     testDabsHaveAMinimumSpacing();
+    testBlendingPutsOpacityOnTheDab();
+    testGlazeLeavesOpacityOffTheDab();
+    testTheTwoFamiliesAgreeAtFullOpacity();
+    testABlendingStrokeExceedsItsOpacity();
     testCrossingTheStrokeStillDarkens();
     return check::report("stroke");
 }

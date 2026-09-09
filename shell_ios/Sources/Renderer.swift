@@ -256,16 +256,30 @@ final class Renderer: NSObject {
     /// The brush the next stroke will use. A value, so changing it mid-stroke
     /// cannot alter a stroke already in progress.
     ///
-    /// Stroke opacity is carried in the ink colour rather than applied per dab:
-    /// the coverage buffer is tinted once when the stroke is composited, which
-    /// is exactly what stops a stroke darkening where it crosses itself.
+    /// Where stroke opacity is applied depends on the brush's rendering style,
+    /// and this is the only place the shell knows about it.
+    ///
+    /// **Glaze** tints the coverage buffer once at composite, which is what
+    /// stops a stroke darkening where it crosses itself — a ceiling on the
+    /// whole stroke. **Blending** puts opacity on each dab instead, back in the
+    /// engine where the dab is built, so the coverage arrives already carrying
+    /// it and the tint has to be 1 or it would be applied twice.
+    ///
+    /// The double-application is the bug this shape exists to make impossible:
+    /// one place decides, and the other reads `strokeTint` rather than
+    /// `brush.opacity`.
     var brush: MCBrush = mc_brush_ink_pen() {
-        didSet { inkColor.w = brush.opacity }
+        didSet { inkColor.w = strokeTint }
     }
 
-    /// Ink colour without its alpha, which `brush.opacity` owns.
+    /// 1 in a Blending style, because the dabs already carry the opacity.
+    private var strokeTint: Float {
+        brush.renderingStyle == Int32(MC_RENDER_GLAZE.rawValue) ? brush.opacity : 1
+    }
+
+    /// Ink colour without its alpha, which the rendering style owns.
     func setInkRGB(_ rgb: simd_float3) {
-        inkColor = simd_float4(rgb.x, rgb.y, rgb.z, brush.opacity)
+        inkColor = simd_float4(rgb.x, rgb.y, rgb.z, strokeTint)
     }
 
     func setStroke(_ stroke: BrushStroke?, sampleCount: Int) {

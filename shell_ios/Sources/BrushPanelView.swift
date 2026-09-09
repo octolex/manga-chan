@@ -150,13 +150,17 @@ final class BrushPanelView: UIView {
         ]))
 
         stack.addArrangedSubview(section("Rendering", rows: [
-            slider("Opacity", key: "opacity", value: brush.opacity, range: 0.02...1,
-                   format: { "\(Int($0 * 100))%" },
+            renderingStyleControl(),
+            slider("Opacity", key: "opacity", value: brush.opacity, range: 0.01...1,
+                   format: { $0 < 0.0995 ? String(format: "%.1f%%", $0 * 100)
+                                         : "\(Int($0 * 100))%" },
                    apply: { $0.opacity = $1 }),
-            // The two are not two opacities, and the readouts say which is
-            // which: Opacity is the ceiling a stroke cannot pass however much
-            // it overlaps itself, Flow is how fast it gets there.
-            slider("Flow", key: "flow", value: brush.flow, range: 0.02...1,
+            // Not two opacities. Flow is a property of the brush — how wet the
+            // pen is — and Opacity is what the hand changes between strokes,
+            // which is why one lives here and the other is on the canvas edge.
+            // In a Blending style they multiply; in a Glaze, Opacity comes off
+            // the dab and caps the finished stroke instead.
+            slider("Flow", key: "flow", value: brush.flow, range: 0.01...1,
                    format: { $0 > 0.995 ? "100% — one pass is solid" : "\(Int($0 * 100))%" },
                    apply: { $0.flow = $1 }),
             slider("Flow jitter", key: "flowJitter", value: brush.flowJitter, range: 0...1,
@@ -409,6 +413,42 @@ final class BrushPanelView: UIView {
         let row = UIStackView(arrangedSubviews: [header, control])
         row.axis = .vertical
         row.spacing = 2
+        return row
+    }
+
+    /// Which accumulation family the brush is in — the axis Procreate spends
+    /// six named rendering styles on, and the one whose absence made Opacity
+    /// behave wrongly for every brush until 2026-09-09.
+    ///
+    /// Two, not six. Light / Uniform / Intense scales *how much* within each
+    /// family and we have measured one point in three of the six styles, which
+    /// is not enough to name a factor. Two honest families beat six invented
+    /// ones.
+    private func renderingStyleControl() -> UIView {
+        let control = UISegmentedControl(items: ["Blending", "Glaze"])
+        control.selectedSegmentIndex =
+            brush.renderingStyle == Int32(MC_RENDER_GLAZE.rawValue) ? 1 : 0
+        control.selectedSegmentTintColor = UIColor(red: 0.16, green: 0.42, blue: 0.85, alpha: 1)
+        control.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        control.addAction(UIAction { [weak self] act in
+            guard let self, let segmented = act.sender as? UISegmentedControl else { return }
+            brush.renderingStyle = segmented.selectedSegmentIndex == 1
+                ? Int32(MC_RENDER_GLAZE.rawValue) : Int32(MC_RENDER_BLENDING.rawValue)
+            delegate?.brushPanel(self, didChange: brush)
+        }, for: .valueChanged)
+
+        let note = UILabel()
+        note.numberOfLines = 0
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = UIColor(white: 1, alpha: 0.45)
+        // Says what to do to tell them apart, because at full Opacity they are
+        // the same brush and the difference only appears once Opacity moves.
+        note.text = "Lower Opacity, then scrub one patch. Blending builds to "
+                  + "solid; Glaze settles and stops. Identical at 100%."
+
+        let row = UIStackView(arrangedSubviews: [control, note])
+        row.axis = .vertical
+        row.spacing = 6
         return row
     }
 

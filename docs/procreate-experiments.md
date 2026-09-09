@@ -572,3 +572,66 @@ The rule worth keeping from all of this: **a control whose useful range is
 bunched at one end is fixed by the curve on its slider, never by changing what
 the number means.** Two device rounds went into a symptom whose cause was a
 control we already had and were not treating as the one that does the job.
+
+---
+
+# Correction to Round 5 — 2026-09-09. The conclusion was half wrong.
+
+The table above is right and what was drawn from it was not, so the table stays
+and this is written under it rather than over it.
+
+## What was concluded
+
+> Flow is the build rate and Opacity is the strength, exactly as in Photoshop.
+> Between them the two sliders reach both of Procreate's accumulation families
+> without a mode switch.
+
+## What was wrong with it
+
+The first sentence is fine. The second is true of the arithmetic and false of
+the person using it, and only the second one shipped.
+
+Both families *are* reachable: set Opacity to 100% and lower Flow, and you have
+Blending. But the engine applied Opacity only at composite, for every brush,
+which is a **Glaze** — and Glaze is one of six styles and not one anybody meets.
+Procreate's stock brushes are Blending. So the slider an artist reaches for
+every few strokes, the one on the canvas edge labelled Opacity, capped a stroke
+where Procreate's builds it, and no setting in our brush panel could make it
+behave the other way.
+
+octolex put it in one line on 2026-09-09, having drawn with it: *"opacity
+basically acts like flow in procreate"*. The measurement was already here and
+said so — Intense Blending at Opacity 25% reaching B 1 under twenty passes is
+not a ceiling of any kind.
+
+**The reasoning error is worth naming, because it is not arithmetic.** The
+question asked was "can the two controls express both families", and the answer
+to that was yes. The question that decides whether the app is right is "does the
+control the hand lands on do what the hand expects", and that was never asked.
+A spanning set is not a user interface.
+
+## What changed
+
+`Brush::renderingStyle`, with two values, defaulting to **Blending**:
+
+* **Blending** — Opacity multiplies each dab alongside Flow, and the dabs pile
+  up with no ceiling. One pass at Opacity 25% now measures **0.992 ink** in the
+  engine's own test, against the device's B 1 for Intense Blending.
+* **Glaze** — Opacity comes off the dab and tints the finished stroke once, as
+  before. Light Glaze's 0.16 ink under twenty passes.
+
+At Opacity 100% the two are the same brush, which is asserted in
+`tests/test_stroke.cpp` and is why changing the default was safe.
+
+## What is still missing, and honestly
+
+Light / Uniform / Intense / Heavy scales *how much* within each family. Light
+Glaze settling at 0.16 for an Opacity of 25% means the ceiling is not literally
+the slider value — there is a factor of about 0.64 in there — but that is one
+point in one style, and three of the six styles have ever been measured.
+
+**The measurement that would settle it**, whenever there is an appetite for
+another round: the same twenty-pass scribble at one Opacity across all six
+named styles, on one brush, reading B each time. Six numbers would give both the
+family split and the intensity ladder in a single pass, which is what should
+have been asked for in round 5 instead of three.

@@ -70,9 +70,23 @@ final class PrecisionSlider: UIControl, ScrollDragImmune {
 
     // MARK: - Appearance
 
-    var trackColor: UIColor = UIColor.white.withAlphaComponent(0.18) { didSet { restyle() } }
-    var fillColor: UIColor = UIColor.white.withAlphaComponent(0.85) { didSet { restyle() } }
+    /// **A control floating over the canvas has no known background**, so no
+    /// single colour can be relied on to show. White-on-white was bug 16: on a
+    /// white canvas the track vanished entirely and the thumb read as a faint
+    /// smudge, which is how a slider becomes invisible without ever looking
+    /// broken in a screenshot taken over dark paint.
+    ///
+    /// The fix is contrast in both directions rather than a darker or a
+    /// lighter palette: every layer is a light fill carrying a dark outline, so
+    /// the outline holds it against white and the fill holds it against black.
+    /// A drop shadow alone does not do this — it is a dark blur, invisible over
+    /// dark paint and too soft to define a 6-point track over light.
+    var trackColor: UIColor = UIColor.black.withAlphaComponent(0.28) { didSet { restyle() } }
+    var fillColor: UIColor = UIColor.white.withAlphaComponent(0.92) { didSet { restyle() } }
     var thumbColor: UIColor = .white { didSet { restyle() } }
+
+    /// The outline that survives a white canvas.
+    var outlineColor: UIColor = UIColor.black.withAlphaComponent(0.55) { didSet { restyle() } }
 
     private let axis: Axis
     private let trackThickness: CGFloat
@@ -102,10 +116,19 @@ final class PrecisionSlider: UIControl, ScrollDragImmune {
                              "backgroundColor": NSNull(), "cornerRadius": NSNull()]
             self.layer.addSublayer(layer)
         }
+        // The shadow lifts the thumb off busy artwork; the border is what makes
+        // it visible at all on flat white. Both, because either alone fails on
+        // some canvas the artist is entitled to paint.
         thumbLayer.shadowColor = UIColor.black.cgColor
-        thumbLayer.shadowOpacity = 0.35
-        thumbLayer.shadowRadius = 3
+        thumbLayer.shadowOpacity = 0.45
+        thumbLayer.shadowRadius = 4
         thumbLayer.shadowOffset = CGSize(width: 0, height: 1)
+        // Weight in proportion to what it outlines: a hairline on a 6-point
+        // track, a full point on a 28-point thumb. One width for all three
+        // would either lose the thumb or turn the track into a bar.
+        trackLayer.borderWidth = 0.5
+        fillLayer.borderWidth = 0.5
+        thumbLayer.borderWidth = 1
         restyle()
     }
 
@@ -173,6 +196,12 @@ final class PrecisionSlider: UIControl, ScrollDragImmune {
         trackLayer.backgroundColor = trackColor.cgColor
         fillLayer.backgroundColor = fillColor.cgColor
         thumbLayer.backgroundColor = thumbColor.cgColor
+        // The track's own outline is lighter: it is already a dark fill, so a
+        // dark border would only thicken it, and what it needs against dark
+        // paint is a light edge.
+        trackLayer.borderColor = UIColor.white.withAlphaComponent(0.35).cgColor
+        fillLayer.borderColor = outlineColor.cgColor
+        thumbLayer.borderColor = outlineColor.cgColor
     }
 
     // MARK: - Value plumbing

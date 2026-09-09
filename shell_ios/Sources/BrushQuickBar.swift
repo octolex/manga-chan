@@ -9,11 +9,18 @@
 //  the rest behind Brush Studio — and it is the right one: a control you reach
 //  for every few strokes should never cost a panel open.
 //
-//  On the **right** edge, as asked for. Worth recording that Procreate defaults
-//  to the left, and the reason is handedness: a right-handed artist's palm
-//  rests along the right edge of the glass, so controls there sit under the
-//  hand. `edge` exists so that is a preference rather than a rebuild, and the
-//  device round is what should settle which default is right for this app.
+//  On the **leading** edge by default, and that is a device finding rather than
+//  a guess. It was built on the right, as asked for; drawing with it there
+//  showed the reason Procreate defaults to the left, which is handedness — a
+//  right-handed artist's palm rests along the right edge of the glass, so
+//  controls there sit under the hand holding the pen.
+//
+//  The rule this settles, which is the useful part: **the controls belong on
+//  the side of the hand that is not holding the pen.** That makes the default a
+//  statement about the majority and the swap a necessity rather than a nicety —
+//  a left-handed artist has the mirror-image problem, exactly as badly. The
+//  side is CanvasViewController's, since it owns the constraints; see
+//  `controlSide` there.
 //
 //  Both sliders inherit variable-gain scrubbing from PrecisionSlider, which is
 //  the point of having built that first: brush size is a value people want
@@ -29,16 +36,19 @@ protocol BrushQuickBarDelegate: AnyObject {
 
 final class BrushQuickBar: UIView {
 
+    /// Which side of the canvas the controls live on.
+    ///
+    /// Declared here because this is the control the choice is *about*, but
+    /// deliberately not stored here: the bar is symmetric and draws the same
+    /// either way, so the side is purely a layout fact and belongs to whoever
+    /// owns the constraints. A copy kept in here would be a second source of
+    /// truth for something only one place can act on.
     enum Edge {
         case leading
         case trailing
     }
 
     weak var delegate: BrushQuickBarDelegate?
-
-    /// Which side of the canvas the bar sits on. A preference, not a rebuild —
-    /// see the note at the top about handedness.
-    let edge: Edge
 
     private let sizeSlider = PrecisionSlider(axis: .vertical)
     private let opacitySlider = PrecisionSlider(axis: .vertical)
@@ -49,8 +59,7 @@ final class BrushQuickBar: UIView {
     /// the slider is not linear in it — see `sizeFromPosition`.
     private let sizeRange: ClosedRange<Float> = 1...400
 
-    init(edge: Edge = .trailing) {
-        self.edge = edge
+    init() {
         super.init(frame: .zero)
         build()
     }
@@ -71,7 +80,7 @@ final class BrushQuickBar: UIView {
     var opacity: Float = 1 {
         didSet {
             opacitySlider.value = opacity
-            opacityReadout.text = "\(Int((opacity * 100).rounded()))%"
+            opacityReadout.text = format(opacity: opacity)
         }
     }
 
@@ -96,6 +105,16 @@ final class BrushQuickBar: UIView {
         let normalised = (min(max(size, sizeRange.lowerBound), sizeRange.upperBound)
                           - sizeRange.lowerBound) / span
         return normalised.squareRoot()
+    }
+
+    /// Below 10% the readout carries a decimal, for the same reason the size
+    /// readout does: the bottom of this range is where the values are chosen
+    /// carefully, and "3%" for anything between 2.5 and 3.5 hides exactly the
+    /// distinction the precision scrubbing was built to let a person make.
+    private func format(opacity: Float) -> String {
+        let percent = opacity * 100
+        return percent < 9.95 ? String(format: "%.1f%%", percent)
+                              : "\(Int(percent.rounded()))%"
     }
 
     private func format(size: Float) -> String {
@@ -136,16 +155,23 @@ final class BrushQuickBar: UIView {
             delegate?.quickBar(self, didChangeSize: newSize)
         }
 
-        opacitySlider.range = 0.02...1
+        // Down to 1%, not 2%. The old floor was set when Opacity was a ceiling
+        // on the finished stroke, where anything under a few percent was an
+        // invisible stroke and the floor was a kindness. It is a per-dab
+        // multiplier now, so 1% is a real working value — the thinnest glaze
+        // the brush can lay, built up over passes — and the floor was in the
+        // way. It stops above zero because a 0% brush is a brush that draws
+        // nothing, which reads as the app being broken.
+        opacitySlider.range = 0.01...1
         opacitySlider.value = opacity
         opacitySlider.onChange = { [weak self] newValue, _ in
             guard let self else { return }
-            opacityReadout.text = "\(Int((newValue * 100).rounded()))%"
+            opacityReadout.text = format(opacity: newValue)
             delegate?.quickBar(self, didChangeOpacity: newValue)
         }
 
         sizeReadout.text = format(size: size)
-        opacityReadout.text = "\(Int((opacity * 100).rounded()))%"
+        opacityReadout.text = format(opacity: opacity)
     }
 
     private func column(slider: PrecisionSlider,

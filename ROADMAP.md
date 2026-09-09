@@ -411,15 +411,24 @@ transcription of one real brush's studio:
 | Taper | 2 | 1 | 6 | 9 |
 | Shape | 4 | 0 | 9 | 13 |
 | Grain | 2 | 2 | 10 | 14 |
-| Rendering | 0 | 1 | 8 | 9 |
+| Rendering | 0 | 2 | 7 | 9 |
 | Dynamics | 3 | 1 | 1 | 5 |
 | Apple Pencil | 1 | 2 | 6 | 9 |
 | Properties | 1 | 1 | 3 | 5 |
-| **Total** | **15** | **9** | **49** | **73** |
+| **Total** | **15** | **10** | **48** | **73** |
 
-**21% complete, 12% partial, 67% missing.** Was 15/12/73 when this section was
+**21% complete, 14% partial, 66% missing.** Was 15/12/73 when this section was
 written on 2026-09-08; the three structural gaps closed the next day moved four
-settings to complete and one to partial.
+settings to complete and one to partial, and Rendering style moved to partial on
+2026-09-09 when the Glaze/Blending split landed.
+
+Rendering style is *partial* and not complete on purpose, and the reason is the
+one this table exists to enforce: we have two of Procreate's six named styles.
+The axis that matters is there — Glaze versus Blending decides what Opacity
+means — but Light / Uniform / Intense / Heavy scales how much within each
+family, and three of the six have ever been measured. Counting it complete
+because the important half is done is exactly how a completeness table stops
+being worth reading.
 
 Read that number carefully, because it flatters us in one direction and is
 unfair in another. Unfair: what exists is the load-bearing half — dab emission,
@@ -481,10 +490,11 @@ only in a commit message is a task nobody will find.
 | **Per-dab colour**, for colour dynamics | An ABI change that widens the GPU vertex struct. Cheap to do, but only worth doing with colour dynamics, which is a feature not a field |
 | **Grain blend mode** | Compositing becomes a choice rather than a constant. Blocked behind knowing which modes matter, which is a device question |
 | **Grain brightness and contrast** | Additive, and the last thing between "grain is mechanically right" and "grain looks like paper". Wanted early: our map is fractal noise clustered near mid-grey, and these two controls are how that gets judged at all |
-| **Rendering styles** as named values | Procreate has six; Opacity and Flow already span the space they cover. Revisit only if the two sliders prove not to reach somewhere a style does |
+| ~~**Rendering styles** as named values~~ | **Closed 2026-09-09, and the reason it was deferred was wrong.** "Opacity and Flow already span the space" was true of the arithmetic and false of the control: our Opacity was a Glaze for every brush while Procreate's stock brushes are Blending, so the always-visible slider capped strokes where Procreate's builds them. Two families now exist as a brush field. See bug 18 |
+| **The intensity ladder within each family** | Light / Uniform / Intense / Heavy. Light Glaze settling at 0.16 ink for an Opacity of 25% says there is a factor of roughly 0.64 in there, but that is one point in one style. Costs nothing to wait: the family split is what changes behaviour, this only trims it. **One device round settles it** — the same twenty-pass scribble at one Opacity across all six named styles, six numbers |
 | **1 px stroke is invisible** (#68) | Open since 2026-09-02. May already be fixed by density accumulation; needs a device round to say |
-| **A left/right toggle for the quick bar** | `BrushQuickBar.edge` exists and is honoured; nothing exposes it. Procreate defaults to the left because a right-handed palm rests on the right edge, and which default suits this app is a device question, not a code one |
-| **Showing the scrubbing gain while dragging** | `PrecisionSlider.currentGain` is published and unused. A "1/4" next to the readout would tell a person the slowdown is deliberate rather than the app struggling. Cosmetic until someone reports the confusion |
+| ~~**A left/right toggle for the quick bar**~~ | **Closed 2026-09-09.** The device answered the question: the palm covers them. The whole chrome now moves together from a toolbar button and the choice persists. `edge` turned out to be written and never read — dead state pretending to be a feature — so it was deleted rather than exposed. See bug 20 |
+| **Showing the scrubbing gain while dragging** | `PrecisionSlider.currentGain` is published and unused. A "1/4" next to the readout would tell a person the slowdown is deliberate rather than the app struggling. Reported as *"the slider behavior is perfect"* on 2026-09-09, so the confusion it guards against did not happen — this now needs a reason to exist, not just an absence of one |
 | **A curve editor for the pressure response** | The curve exists in the model and is tested; nothing exposes it, which is why that setting is marked partial rather than complete in the table above |
 
 ### Decisions worth revisiting

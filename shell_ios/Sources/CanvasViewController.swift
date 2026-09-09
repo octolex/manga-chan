@@ -45,6 +45,31 @@ final class CanvasViewController: UIViewController {
     private let layersPanel = LayersPanelView()
     private let layersButton = UIButton(type: .system)
     private let brushButton = UIButton(type: .system)
+    private let swapSideButton = UIButton(type: .system)
+
+    /// Which edge the whole control chrome lives on — toolbar, quick bar and
+    /// both panels together, not just the sliders.
+    ///
+    /// **The rule this encodes:** the controls belong on the side of the hand
+    /// that is *not* holding the pen. That came off the device: built on the
+    /// right as asked for, a right-handed artist's palm rests over them, which
+    /// is the reason Procreate defaults to the left and not a style choice.
+    ///
+    /// So leading is the default and the swap is a necessity rather than a
+    /// nicety — a left-handed artist has the mirror-image problem, exactly as
+    /// badly. It persists, because being asked every launch would be worse
+    /// than being wrong once.
+    private var controlSide: BrushQuickBar.Edge = .leading {
+        didSet { applyControlSide() }
+    }
+
+    private static let controlSideKey = "controlSideIsTrailing"
+
+    /// The two constraint sets, both built once and toggled. Rebuilding
+    /// constraints on a swap is how a layout ends up with two of them fighting;
+    /// activating one set and deactivating the other cannot drift.
+    private var leadingSideConstraints: [NSLayoutConstraint] = []
+    private var trailingSideConstraints: [NSLayoutConstraint] = []
 
     /// Both buttons in one column, so a panel can hang below the *toolbar*
     /// rather than below whichever button opened it.
@@ -58,7 +83,7 @@ final class CanvasViewController: UIViewController {
 
     /// Size and Opacity, always visible on the canvas edge. See BrushQuickBar
     /// for why those two and not others, and for the note on handedness.
-    private let quickBar = BrushQuickBar(edge: .trailing)
+    private let quickBar = BrushQuickBar()
     private let brushPanel = BrushPanelView()
 
     override func loadView() {
@@ -72,9 +97,11 @@ final class CanvasViewController: UIViewController {
 
         hud.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(hud)
+        // Pinned to the top only here. Which *side* it takes is decided with
+        // the controls: the HUD goes to whichever edge they are not on, or it
+        // would sit under the quick bar the moment the controls moved left.
         NSLayoutConstraint.activate([
             hud.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            hud.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
         ])
 
         // Run the engine self-test before touching Metal. If the C++ core did
@@ -112,6 +139,9 @@ final class CanvasViewController: UIViewController {
         setUpToolbar()
         setUpLayersPanel()
         setUpBrushPanel()
+        // Last, because the sets span every one of the above and one of them is
+        // anchored to the quick bar rather than to the view.
+        buildSideConstraints()
 
         // Squeeze (Pencil Pro) and double-tap (Pencil 2 and later). Both are
         // only wired to counters for now — the point is to confirm they arrive
@@ -170,7 +200,7 @@ final class CanvasViewController: UIViewController {
     // MARK: - Toolbar
 
     private func setUpToolbar() {
-        for button in [layersButton, brushButton] {
+        for button in [layersButton, brushButton, swapSideButton] {
             button.tintColor = .white
             button.backgroundColor = UIColor(white: 0.13, alpha: 0.9)
             button.layer.cornerRadius = 10
@@ -180,12 +210,18 @@ final class CanvasViewController: UIViewController {
         layersButton.addTarget(self, action: #selector(toggleLayersPanel), for: .touchUpInside)
         brushButton.setImage(UIImage(systemName: "paintbrush.pointed"), for: .normal)
         brushButton.addTarget(self, action: #selector(toggleBrushPanel), for: .touchUpInside)
+        // A button rather than a gesture, because handedness is not something
+        // to discover. It is in the toolbar and not in the brush panel because
+        // it is a property of the person, not of the brush.
+        swapSideButton.setImage(UIImage(systemName: "arrow.left.arrow.right"), for: .normal)
+        swapSideButton.addTarget(self, action: #selector(swapControlSide), for: .touchUpInside)
+        swapSideButton.accessibilityLabel = "Move controls to the other side"
 
         toolbar.axis = .vertical
         toolbar.spacing = 10
-        toolbar.alignment = .trailing
         toolbar.addArrangedSubview(layersButton)
         toolbar.addArrangedSubview(brushButton)
+        toolbar.addArrangedSubview(swapSideButton)
 
         view.addSubview(toolbar)
         toolbar.translatesAutoresizingMaskIntoConstraints = false
@@ -193,24 +229,73 @@ final class CanvasViewController: UIViewController {
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor,
                                          constant: 12),
-            toolbar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                                              constant: -12),
         ])
 
         setUpQuickBar()
     }
 
-    /// The quick bar takes the trailing edge, so the panels move inboard of it
-    /// rather than opening on top. Both fit side by side on an iPad: the panel
-    /// is 330 points and the bar about 60.
+    // MARK: - Handedness
+
+    @objc private func swapControlSide() {
+        controlSide = (controlSide == .leading) ? .trailing : .leading
+        UserDefaults.standard.set(controlSide == .trailing,
+                                  forKey: Self.controlSideKey)
+    }
+
+    /// Build both constraint sets once, then let `applyControlSide` pick one.
+    ///
+    /// Called after every control exists, because each set spans four views
+    /// and one panel is anchored to the quick bar rather than to the view.
+    private func buildSideConstraints() {
+        let guide = view.safeAreaLayoutGuide
+        let inset: CGFloat = 12
+        let gap: CGFloat = 10
+
+        leadingSideConstraints = [
+            toolbar.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: inset),
+            quickBar.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: gap),
+            layersPanel.leadingAnchor.constraint(equalTo: quickBar.trailingAnchor, constant: gap),
+            brushPanel.leadingAnchor.constraint(equalTo: quickBar.trailingAnchor, constant: gap),
+            hud.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -inset),
+        ]
+        trailingSideConstraints = [
+            toolbar.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -inset),
+            quickBar.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -gap),
+            layersPanel.trailingAnchor.constraint(equalTo: quickBar.leadingAnchor, constant: -gap),
+            brushPanel.trailingAnchor.constraint(equalTo: quickBar.leadingAnchor, constant: -gap),
+            hud.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: inset),
+        ]
+
+        controlSide = UserDefaults.standard.bool(forKey: Self.controlSideKey)
+            ? .trailing : .leading
+    }
+
+    private func applyControlSide() {
+        let onLeading = controlSide == .leading
+        // Deactivate first, always. Both sets active for even one layout pass
+        // is an unsatisfiable constraint and a console full of breakage.
+        NSLayoutConstraint.deactivate(onLeading ? trailingSideConstraints
+                                                : leadingSideConstraints)
+        NSLayoutConstraint.activate(onLeading ? leadingSideConstraints
+                                              : trailingSideConstraints)
+
+        toolbar.alignment = onLeading ? .leading : .trailing
+        // Points at where the controls would go, not at where they are, so the
+        // button says what tapping it does.
+        swapSideButton.setImage(
+            UIImage(systemName: onLeading ? "arrow.right.to.line" : "arrow.left.to.line"),
+            for: .normal)
+    }
+
+    /// The quick bar takes one edge and the panels open inboard of it rather
+    /// than on top. Both fit side by side on an iPad: the panel is 330 points
+    /// and the bar about 60. Which edge is `controlSide`'s to say.
     private func setUpQuickBar() {
         quickBar.delegate = self
         view.addSubview(quickBar)
         quickBar.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            quickBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                                               constant: -10),
             // Centred rather than hung from the toolbar: these are reached for
             // mid-stroke, and the middle of the edge is where the hand already
             // is.
@@ -229,9 +314,8 @@ final class CanvasViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             layersPanel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
-            // Inboard of the quick bar, not over it.
-            layersPanel.trailingAnchor.constraint(equalTo: quickBar.leadingAnchor,
-                                                  constant: -10),
+            // The side it opens toward is in buildSideConstraints, inboard of
+            // the quick bar either way.
             layersPanel.widthAnchor.constraint(equalToConstant: 330),
             // Capped rather than pinned to the bottom: a long stack scrolls
             // inside the panel instead of the panel swallowing the canvas.
@@ -253,9 +337,7 @@ final class CanvasViewController: UIViewController {
             // Below the whole toolbar, exactly as the layers panel is. Only one
             // panel is ever visible, so they can share the position.
             brushPanel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
-            // Inboard of the quick bar, not over it.
-            brushPanel.trailingAnchor.constraint(equalTo: quickBar.leadingAnchor,
-                                                 constant: -10),
+            // As the layers panel: the side is buildSideConstraints' to set.
             brushPanel.widthAnchor.constraint(equalToConstant: 330),
             brushPanel.heightAnchor.constraint(lessThanOrEqualTo: view.heightAnchor,
                                                multiplier: 0.75),

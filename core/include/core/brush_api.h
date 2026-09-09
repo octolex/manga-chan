@@ -50,6 +50,14 @@ typedef enum {
     MC_GRAIN_ROLLING = 1,  /* travels with the stroke, like dry media dragged */
 } MCGrainMovement;
 
+/* Matches mc::RenderingStyle. Decides what `opacity` below means: in a
+ * Blending style it multiplies each dab and the dabs pile up with no ceiling;
+ * in a Glaze it is left off the dab and caps the finished stroke instead. */
+typedef enum {
+    MC_RENDER_BLENDING = 0,  /* opacity per dab, accumulates — Procreate's default */
+    MC_RENDER_GLAZE = 1,     /* opacity caps the whole stroke, once at composite */
+} MCRenderingStyle;
+
 /* Matches mc::ResponseCurve. Six interior points; the curve always runs from
  * (0,0) to (1,1), so `count` of 0 is linear and needs no points at all.
  *
@@ -117,7 +125,8 @@ typedef struct {
     float shapeCountJitter;    /* 0...1, only ever removes stamps */
 
     float flow;                /* ink per dab; density accumulates across them */
-    float opacity;             /* ceiling on the finished stroke */
+    float opacity;             /* strength; per-dab in Blending, a cap in Glaze */
+    int32_t renderingStyle;    /* MCRenderingStyle */
 
     float grainDepth;          /* tooth height; caps where ink may sit */
     float grainScale;          /* canvas pixels per repeat of the map */
