@@ -64,6 +64,18 @@ struct StrokeSample {
 
     /// Seconds. Only differences matter, so any monotonic clock will do.
     double timestamp = 0.0;
+
+    /// True when a pressure-capable device drew this — a Pencil rather than a
+    /// finger. It selects which of the brush's two tapers applies.
+    ///
+    /// Carried per sample rather than per stroke because that is where every
+    /// other device fact already lives, and because the shell reads it from
+    /// the same UITouch it reads pressure and tilt from. In practice it is
+    /// constant across a stroke: one stroke is one touch.
+    ///
+    /// It cannot be inferred. A finger reports a synthesised pressure and an
+    /// upright tilt, and so does a Pencil held perpendicular.
+    bool fromPressureDevice = true;
 };
 
 /// One stamp of the brush shape. This is the entire contract with the GPU:
@@ -112,6 +124,9 @@ public:
     /// are dropped: a zero-length tangent would NaN its way through the whole
     /// spline.
     void addSample(const StrokeSample& sample);
+
+    /// Which taper applies, given what drew the stroke.
+    const Taper& activeTaper() const;
 
     /// Flushes the segments still waiting on a lookahead sample that will
     /// never arrive, then applies the end taper.
@@ -184,6 +199,13 @@ private:
     float travelled_ = 0.0f;  // total arc length
     double lastTimestamp_ = 0.0;
     bool finished_ = false;
+
+    /// Latched from the first sample. One stroke is one touch, so a stroke
+    /// that changed device mid-way would be a bug in the shell rather than a
+    /// case to handle; taking the first is both correct and stable, where
+    /// taking the latest would let a stray sample re-taper the whole stroke
+    /// at the moment it finishes.
+    bool fromPressureDevice_ = true;
 };
 
 }  // namespace mc

@@ -18,11 +18,13 @@ namespace {
 /// point of resampling is that the result should depend on the *path*, not on
 /// how densely the hardware happened to report it.
 StrokePath straightLine(const Brush& brush, float fromX, float toX, int count,
-                        float pressure = 1.0f, double duration = 1.0) {
+                        float pressure = 1.0f, double duration = 1.0,
+                        bool fromPressureDevice = true) {
     StrokePath path(brush);
     for (int i = 0; i < count; ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(count - 1);
         StrokeSample s;
+        s.fromPressureDevice = fromPressureDevice;
         s.x = fromX + (toX - fromX) * t;
         s.y = 100.0f;
         s.pressure = pressure;
@@ -283,9 +285,8 @@ void testTaperThinsBothEnds() {
     brush.size = 20.0f;
     brush.spacing = 0.2f;
     brush.smoothing = 0.0f;
-    brush.taperLength = 60.0f;
-    brush.taperStartScale = 0.0f;
-    brush.taperEndScale = 0.0f;
+    brush.taper.pressure.start = {60.0f, 0.0f};
+    brush.taper.pressure.end = {60.0f, 0.0f};
 
     const auto dabs = straightLine(brush, 0.0f, 600.0f, 30).dabs();
     CHECK(dabs.size() > 20);
@@ -294,6 +295,165 @@ void testTaperThinsBothEnds() {
     CHECK(dabs.front().radius < middle * 0.5f);
     CHECK(dabs.back().radius < middle * 0.5f);
     CHECK(std::fabs(middle - 10.0f) < 0.01f);
+}
+
+/// The reason the ends stopped sharing a length: a brush pen makes a long
+/// lead-in and an abrupt stop, and one number cannot say that.
+void testTaperEndsAreIndependent() {
+    std::printf("the two taper ends are set separately\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.2f;
+    brush.smoothing = 0.0f;
+    // Long ramp in, nothing out.
+    brush.taper.pressure.start = {120.0f, 0.0f};
+    brush.taper.pressure.end = {0.0f, 0.0f};
+
+    const auto dabs = straightLine(brush, 0.0f, 600.0f, 30).dabs();
+    CHECK(dabs.size() > 20);
+    const float middle = dabs[dabs.size() / 2].radius;
+
+    std::printf("  first %.2f  middle %.2f  last %.2f\n",
+                static_cast<double>(dabs.front().radius),
+                static_cast<double>(middle),
+                static_cast<double>(dabs.back().radius));
+    CHECK(dabs.front().radius < middle * 0.5f);
+    // The end must be untouched, not merely less tapered.
+    CHECK(std::fabs(dabs.back().radius - middle) < 0.01f);
+}
+
+/// A finger reports no real pressure, so it gets its own taper. Same brush,
+/// same path, different input: the shapes must differ.
+void testAFingerGetsTheTouchTaper() {
+    std::printf("a finger is tapered by the touch taper, not the pressure one\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.2f;
+    brush.smoothing = 0.0f;
+    brush.taper.pressure.start = {120.0f, 0.0f};   // pencil: long ramp
+    brush.taper.touch.start = {0.0f, 0.0f};        // finger: none
+
+    const auto pencil = straightLine(brush, 0.0f, 600.0f, 30, 1.0f, 1.0, true).dabs();
+    const auto finger = straightLine(brush, 0.0f, 600.0f, 30, 1.0f, 1.0, false).dabs();
+
+    // The two strokes do NOT have the same number of dabs, and asserting that
+    // they did was the first version of this test. Spacing is a fraction of
+    // *this dab's* diameter, so a tapered start lays smaller dabs, which sit
+    // closer together, so a tapered stroke carries more of them. That falls
+    // out of the spacing rule rather than being a separate decision, and it is
+    // why each stroke is compared against its own middle rather than against
+    // the other.
+    CHECK(pencil.size() > finger.size());
+
+    const float middle = finger[finger.size() / 2].radius;
+    std::printf("  pencil first %.2f  finger first %.2f  middle %.2f\n",
+                static_cast<double>(pencil.front().radius),
+                static_cast<double>(finger.front().radius),
+                static_cast<double>(middle));
+    CHECK(pencil.front().radius < middle * 0.5f);
+    CHECK(std::fabs(finger.front().radius - middle) < 0.01f);
+}
+
+/// The kind is taken from the first sample and held. Taking the latest would
+/// let one stray sample re-taper a whole stroke at the moment it finishes.
+void testTheInputKindIsLatchedAtTheStart() {
+    std::printf("the input kind is latched from the first sample\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.2f;
+    brush.smoothing = 0.0f;
+    brush.taper.pressure.start = {120.0f, 0.0f};
+    brush.taper.touch.start = {0.0f, 0.0f};
+
+    StrokePath path(brush);
+    for (int i = 0; i < 30; ++i) {
+        StrokeSample s;
+        // First sample says pencil; every later one claims finger.
+        s.fromPressureDevice = (i == 0);
+        s.x = static_cast<float>(i) * 20.0f;
+        s.y = 100.0f;
+        s.pressure = 1.0f;
+        s.timestamp = static_cast<double>(i) / 30.0;
+        path.addSample(s);
+    }
+    path.finish();
+
+    const auto& dabs = path.dabs();
+    CHECK(dabs.size() > 20);
+    const float middle = dabs[dabs.size() / 2].radius;
+    CHECK(dabs.front().radius < middle * 0.5f);
+}
+
+/// Count multiplies the stamps at each position. The third structural gap:
+/// one dab position stops meaning one dab, which is why it could not be a
+/// field on a dab.
+void testShapeCountStampsSeveralTimesPerPosition() {
+    std::printf("shape count lays several stamps per dab position\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.25f;
+    brush.smoothing = 0.0f;
+
+    const size_t single = straightLine(brush, 0.0f, 400.0f, 20).dabs().size();
+
+    brush.shapeCount = 4;
+    brush.scatter = 0.5f;   // Count without scatter stacks; see brush.h
+    const size_t quadruple = straightLine(brush, 0.0f, 400.0f, 20).dabs().size();
+
+    std::printf("  count 1 -> %zu dabs, count 4 -> %zu\n", single, quadruple);
+    CHECK_EQ(static_cast<long long>(quadruple), static_cast<long long>(single * 4));
+}
+
+/// Every stamp is scattered on its own draw. Sharing one would put them all in
+/// the same place, which is the bug this arrangement exists to avoid.
+void testEachStampScattersIndependently() {
+    std::printf("each stamp gets its own scatter\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.25f;
+    brush.smoothing = 0.0f;
+    brush.shapeCount = 5;
+    brush.scatter = 0.6f;
+
+    const auto dabs = straightLine(brush, 0.0f, 400.0f, 20).dabs();
+    CHECK(dabs.size() >= 20);
+
+    // The first five dabs share one position before scatter. If they shared a
+    // draw they would be identical afterwards too.
+    int distinct = 0;
+    for (size_t i = 1; i < 5 && i < dabs.size(); ++i) {
+        if (dabs[i].x != dabs[0].x || dabs[i].y != dabs[0].y) ++distinct;
+    }
+    std::printf("  %d of 4 sibling stamps moved independently\n", distinct);
+    CHECK_EQ(static_cast<long long>(distinct), 4LL);
+}
+
+/// Jitter only ever removes, so the count the panel shows is a real ceiling
+/// and the cost of a brush is bounded by what it advertises.
+void testCountJitterOnlyRemovesStamps() {
+    std::printf("count jitter never exceeds the count\n");
+
+    Brush brush;
+    brush.size = 20.0f;
+    brush.spacing = 0.25f;
+    brush.smoothing = 0.0f;
+    brush.scatter = 0.4f;
+    brush.shapeCount = 6;
+    brush.shapeCountJitter = 0.8f;
+
+    const size_t jittered = straightLine(brush, 0.0f, 400.0f, 20).dabs().size();
+
+    brush.shapeCountJitter = 0.0f;
+    const size_t full = straightLine(brush, 0.0f, 400.0f, 20).dabs().size();
+
+    std::printf("  jittered %zu, full %zu\n", jittered, full);
+    CHECK(jittered <= full);
+    CHECK(jittered > 0);
 }
 
 void testGrainOffsetTracksArcLength() {
@@ -472,7 +632,7 @@ void testIncrementalEmissionMatchesOneShot() {
     std::printf("dabs are emitted once and never revised\n");
 
     Brush brush = inkPen();
-    brush.taperLength = 0.0f;
+    brush.taper = {};
 
     StrokePath path(brush);
     std::vector<Dab> snapshot;
@@ -621,8 +781,14 @@ int main() {
     testNegativeCoordinatesUseFloorDivision();
     testSmoothingPullsThePathIn();
     testTaperThinsBothEnds();
+    testTaperEndsAreIndependent();
+    testAFingerGetsTheTouchTaper();
+    testTheInputKindIsLatchedAtTheStart();
     testGrainOffsetTracksArcLength();
     testScatterDoesNotDisturbTheGrainOffset();
+    testShapeCountStampsSeveralTimesPerPosition();
+    testEachStampScattersIndependently();
+    testCountJitterOnlyRemovesStamps();
     testJitterIsDeterministic();
     testAngleFollowsDirection();
     testATapStillLeavesAMark();

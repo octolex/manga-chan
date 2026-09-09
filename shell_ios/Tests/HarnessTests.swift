@@ -87,7 +87,7 @@ final class HarnessTests: XCTestCase {
         defer { mc_stroke_end(path) }
 
         for i in 0...10 {
-            mc_stroke_add_sample(path, Float(i) * 12, 40, 1, 1.2, 0, -1, Double(i) * 0.01)
+            mc_stroke_add_sample(path, Float(i) * 12, 40, 1, 1.2, 0, -1, Double(i) * 0.01, 1)
         }
         mc_stroke_finish(path)
 

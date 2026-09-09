@@ -48,12 +48,88 @@ enum class GrainMovement : int32_t {
     Rolling = 1,
 };
 
-/// Maps one normalised input channel onto a multiplier.
+/// The shape of a response, as a set of points — the way Procreate's is a
+/// graph rather than a slider.
 ///
-/// `curve` is an exponent rather than a spline. A spline is what a brush
-/// editor eventually wants, but an exponent covers the shapes that matter
-/// (ease-in, linear, ease-out) in four bytes with no allocation, and a spline
-/// can replace it later without changing a single call site.
+/// This replaced an exponent on 2026-09-09. The exponent covered ease-in,
+/// linear and ease-out in four bytes and every call site survived the swap,
+/// exactly as the note here predicted it would. What it could not cover is a
+/// curve that is flat, then steep, then flat again — the shape an artist draws
+/// when they want the middle of the pressure range to carry the control — and
+/// that is a shape, not a parameter, so no amount of exponent reaches it.
+///
+/// **The curve always passes through (0,0) and (1,1).** `count` interior
+/// points bend it in between, so a count of 0 is exactly linear and is the
+/// default. The endpoints are fixed rather than draggable because moving them
+/// is what `minimum` and `maximum` already do, and two controls for one effect
+/// is how a brush editor becomes confusing.
+///
+/// **Fixed capacity, no allocation.** `Brush` crosses the C ABI by value, so a
+/// curve cannot own a pointer. Six interior points is a guess at "enough" —
+/// generous for a response, cheap at 52 bytes — and it is the one number here
+/// that would cost an ABI change to revise, so it is called out rather than
+/// buried.
+///
+/// **Interpolation is piecewise linear, and that is a safety property rather
+/// than laziness.** A Catmull-Rom or Bézier through the same points can
+/// overshoot, and an overshooting *size* response produces a radius outside
+/// the range the UI showed — at best a surprise, at worst a negative number.
+/// Linear cannot. Smoothing the drawn curve is an evaluation detail that can
+/// change later without touching the taxonomy, which is the distinction this
+/// file exists to protect.
+struct ResponseCurve {
+    /// Revising this costs an ABI change; see above.
+    static constexpr int kMaxPoints = 6;
+
+    /// Interior points in use. 0 is linear.
+    int32_t count = 0;
+
+    /// Interior control points, ascending in x, both coordinates in 0...1.
+    /// Points that do not increase in x are ignored rather than rejected: a
+    /// curve arriving from a UI mid-drag, or from a file written by an older
+    /// build, must still draw something sane.
+    float x[kMaxPoints] = {};
+    float y[kMaxPoints] = {};
+
+    /// Maps 0...1 to 0...1.
+    float evaluate(float t) const;
+
+    /// The curve `pow(t, e)` used to be, sampled. Kept because it is how the
+    /// existing presets were expressed, and because a migration nobody can
+    /// check against the old behaviour is a migration nobody should trust.
+    static ResponseCurve exponent(float e);
+};
+
+/// One end of a stroke taper.
+struct TaperEnd {
+    /// Arc length in canvas pixels over which the ramp runs. Zero disables
+    /// this end, which is how a taper on only one end is expressed.
+    float length = 0.0f;
+
+    /// Size multiplier at the very tip. 0 is a point, 1 is no narrowing.
+    float scale = 0.0f;
+};
+
+/// A taper is its two ends. Procreate presents this as one Vector2D control.
+///
+/// The end taper is why a stroke cannot be finalised until it is finished: the
+/// last `end.length` pixels change once we know where the end is.
+struct Taper {
+    TaperEnd start;
+    TaperEnd end;
+};
+
+/// The tapers a brush carries, one per kind of input.
+///
+/// Named rather than two loose members so the C ABI can mirror it as one
+/// struct, and so a future third input — a stylus that is neither — is a field
+/// here rather than a change at every call site.
+struct StrokeTapers {
+    Taper pressure;
+    Taper touch;
+};
+
+/// Maps one normalised input channel onto a multiplier.
 struct Response {
     /// Multiplier when the input reads 0.
     float minimum = 1.0f;
@@ -61,10 +137,8 @@ struct Response {
     /// Multiplier when the input reads 1.
     float maximum = 1.0f;
 
-    /// Exponent applied to the input before the interpolation. Above 1 the
-    /// response stays near `minimum` for longer, which is how a pen that only
-    /// opens up under real pressure is expressed.
-    float curve = 1.0f;
+    /// The shape between them. Linear by default.
+    ResponseCurve curve;
 
     /// Disabled responses are skipped entirely rather than evaluating to 1,
     /// so a brush that ignores tilt costs nothing per dab for the privilege.
@@ -117,6 +191,21 @@ struct Brush {
     /// Dab rotation in radians, used when the angle is not taken from the
     /// stroke direction.
     float angle = 0.0f;
+
+    /// How many stamps of the shape land at each dab position. Procreate calls
+    /// this Count, and it is the third structural gap rather than a field
+    /// because it changes *emission*: one position stops meaning one dab.
+    ///
+    /// Only meaningful together with `scatter` or `angleJitter`. With neither,
+    /// the stamps land exactly on top of one another. It is how a spray, a
+    /// stipple or a foliage brush is built, and it is why the tile capture
+    /// notes each stamp where it lands rather than trusting the dab position.
+    int32_t shapeCount = 1;
+
+    /// Varies the count, 0...1. Like every other jitter here it only ever
+    /// *removes*, so `shapeCount` stays the honest upper bound the panel shows
+    /// and the cost of a brush is bounded by what it advertises.
+    float shapeCountJitter = 0.0f;
 
     /// Rotate each dab to follow the direction of travel. This is what makes
     /// a flat nib behave like a real one through a curve.
@@ -232,16 +321,23 @@ struct Brush {
 
     // MARK: Taper
 
-    /// Arc length in canvas pixels over which the stroke ramps up at the start
-    /// and down at the end. Zero disables tapering.
+    /// How the stroke narrows at its two ends, chosen by what drew it.
     ///
-    /// The end taper is why a stroke cannot be finalised until it is finished:
-    /// the last `taperLength` pixels change once we know where the end is.
-    float taperLength = 0.0f;
-
-    /// Size multiplier at the very start and very end of the taper.
-    float taperStartScale = 0.0f;
-    float taperEndScale = 0.0f;
+    /// Two changes from the three scalars this replaced on 2026-09-09, both
+    /// structural rather than cosmetic.
+    ///
+    /// **The ends became independent.** One shared length could not express the
+    /// shape a brush pen actually makes — a long lead-in and an abrupt stop, or
+    /// the reverse. Procreate presents each taper as a **Vector2D**, which is
+    /// the same statement: the ends are two values of one control, not one
+    /// value applied twice.
+    ///
+    /// **Pressure and touch got their own.** Procreate splits them, and the
+    /// reason is not cosmetic: a finger reports no real pressure, so a brush
+    /// whose character comes from pressure produces nothing recognisable from a
+    /// fingertip and needs a taper of its own to look like anything at all. One
+    /// shared taper cannot serve both without being wrong for one of them.
+    StrokeTapers taper;
 
     // MARK: Path
 

@@ -333,11 +333,16 @@ private class LayerRowView: UIView {
         opacityLabel.font = .systemFont(ofSize: 13)
         opacityLabel.textColor = UIColor(white: 1, alpha: 0.75)
 
-        let slider = UISlider()
-        slider.minimumValue = 0
-        slider.maximumValue = 1
+        // The same slider the brush panel uses, for the same reason: layer
+        // opacity is a value people set exactly, and a 1:1 slider loses it on
+        // the way to lifting the finger.
+        let slider = PrecisionSlider(axis: .horizontal)
+        slider.range = 0...1
         slider.value = properties.opacity
-        slider.addTarget(self, action: #selector(opacityChanged(_:)), for: .valueChanged)
+        slider.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        slider.onChange = { [weak self] newValue, isFinal in
+            self?.opacityChanged(newValue, isFinal: isFinal)
+        }
 
         let percent = UILabel()
         percent.text = "\(Int(properties.opacity * 100))%"
@@ -455,11 +460,13 @@ private class LayerRowView: UIView {
         onUpdate?(properties, true)
     }
 
-    @objc private func opacityChanged(_ slider: UISlider) {
-        properties.opacity = slider.value
+    private func opacityChanged(_ newValue: Float, isFinal: Bool) {
+        properties.opacity = newValue
         // Updated in place rather than by rebuilding: the slider has to
         // survive its own drag.
-        percentLabel?.text = "\(Int(slider.value * 100))%"
+        percentLabel?.text = "\(Int(newValue * 100))%"
+        // `isFinal` marks the end of the drag, which is where a caller can
+        // commit an undo step rather than one per touch event.
         onUpdate?(properties, false)
     }
 

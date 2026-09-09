@@ -50,13 +50,46 @@ typedef enum {
     MC_GRAIN_ROLLING = 1,  /* travels with the stroke, like dry media dragged */
 } MCGrainMovement;
 
+/* Matches mc::ResponseCurve. Six interior points; the curve always runs from
+ * (0,0) to (1,1), so `count` of 0 is linear and needs no points at all.
+ *
+ * Fixed capacity rather than a pointer because MCBrush is passed by value, and
+ * a struct that owns memory cannot be. Revising the capacity is an ABI change,
+ * which is why it is a named constant on both sides rather than a literal. */
+#define MC_RESPONSE_CURVE_MAX_POINTS 6
+
+typedef struct {
+    int32_t count;
+    float x[MC_RESPONSE_CURVE_MAX_POINTS];
+    float y[MC_RESPONSE_CURVE_MAX_POINTS];
+} MCResponseCurve;
+
 /* Matches mc::Response. */
 typedef struct {
     float minimum;
     float maximum;
-    float curve;
+    MCResponseCurve curve;
     int32_t enabled;   /* int rather than bool: C and C++ bool need not agree */
 } MCResponse;
+
+/* Matches mc::TaperEnd. */
+typedef struct {
+    float length;   /* canvas pixels the ramp runs over; 0 disables this end */
+    float scale;    /* size multiplier at the very tip */
+} MCTaperEnd;
+
+/* Matches mc::Taper. Procreate presents this as one Vector2D control. */
+typedef struct {
+    MCTaperEnd start;
+    MCTaperEnd end;
+} MCTaper;
+
+/* Matches mc::StrokeTapers. A finger reports no real pressure, so it needs a
+ * taper of its own or a pressure-driven brush makes nothing from it. */
+typedef struct {
+    MCTaper pressure;
+    MCTaper touch;
+} MCStrokeTapers;
 
 /* Matches mc::Modulation. */
 typedef struct {
@@ -80,6 +113,9 @@ typedef struct {
     float angle;
     int32_t angleFollowsDirection;
 
+    int32_t shapeCount;        /* stamps per dab position; 1 is one stamp */
+    float shapeCountJitter;    /* 0...1, only ever removes stamps */
+
     float flow;                /* ink per dab; density accumulates across them */
     float opacity;             /* ceiling on the finished stroke */
 
@@ -96,9 +132,7 @@ typedef struct {
     float scatter;
     float flowJitter;
 
-    float taperLength;
-    float taperStartScale;
-    float taperEndScale;
+    MCStrokeTapers taper;
 
     float smoothing;
     float minimumSizeFraction;
@@ -145,13 +179,18 @@ void mc_stroke_end(MCStrokePath* path);
 /* Samples must arrive in time order. Coordinates are canvas pixels.
  * `tilt` is altitude in radians (pi/2 upright); `roll` may be negative to mean
  * the hardware cannot report it. */
+/* `fromPressureDevice` is 1 for a Pencil and 0 for a finger. It selects which
+ * of the brush's two tapers applies and cannot be inferred: a finger reports a
+ * synthesised pressure and an upright tilt, and so does a perpendicular Pencil.
+ * Only the first sample of a stroke is read. */
 void mc_stroke_add_sample(MCStrokePath* path,
                           float x, float y,
                           float pressure,
                           float tilt,
                           float azimuth,
                           float roll,
-                          double timestamp);
+                          double timestamp,
+                          int32_t fromPressureDevice);
 
 /* Flushes the tail of the stroke and applies the end taper. */
 void mc_stroke_finish(MCStrokePath* path);

@@ -408,16 +408,18 @@ transcription of one real brush's studio:
 |---|---:|---:|---:|---:|
 | Stroke path | 2 | 0 | 3 | 5 |
 | Stabilization | 0 | 1 | 3 | 4 |
-| Taper | 0 | 2 | 7 | 9 |
-| Shape | 2 | 0 | 11 | 13 |
+| Taper | 2 | 1 | 6 | 9 |
+| Shape | 4 | 0 | 9 | 13 |
 | Grain | 2 | 2 | 10 | 14 |
 | Rendering | 0 | 1 | 8 | 9 |
 | Dynamics | 3 | 1 | 1 | 5 |
-| Apple Pencil | 1 | 1 | 7 | 9 |
+| Apple Pencil | 1 | 2 | 6 | 9 |
 | Properties | 1 | 1 | 3 | 5 |
-| **Total** | **11** | **9** | **53** | **73** |
+| **Total** | **15** | **9** | **49** | **73** |
 
-**15% complete, 12% partial, 73% missing.**
+**21% complete, 12% partial, 67% missing.** Was 15/12/73 when this section was
+written on 2026-09-08; the three structural gaps closed the next day moved four
+settings to complete and one to partial.
 
 Read that number carefully, because it flatters us in one direction and is
 unfair in another. Unfair: what exists is the load-bearing half — dab emission,
@@ -440,9 +442,9 @@ editor is a UI built on top of whatever shape the data has:**
 
 | Gap | Why it is structural |
 |---|---|
-| Pressure response as a **spline**, not an exponent | Procreate's is a graph widget. Four bytes of exponent cannot express a graph, and an editor exposing a curve control needs the real thing underneath |
-| **Taper as a Vector2D**, split pressure versus touch | We have three scalars and no touch/pressure split. Two axes where we assumed one |
-| Shape **Count** — N stamps per dab | Changes dab emission itself, not a field on a dab |
+| ~~Pressure response as a **spline**~~ **Done 2026-09-09** | Six interior points, piecewise linear so it cannot overshoot a size multiplier. The widget is still missing, so the setting reads partial rather than complete |
+| ~~**Taper as a Vector2D**, split pressure versus touch~~ **Done 2026-09-09** | Two ends, independently, and one taper per input kind. The kind now reaches the engine through `mc_stroke_add_sample`; it cannot be inferred, since a finger and a perpendicular Pencil report the same pressure and tilt |
+| ~~Shape **Count** — N stamps per dab~~ **Done 2026-09-09** | Stamps are separate dabs, so nothing downstream knows the feature exists. Angle jitter and scatter moved to per-stamp draws, or the siblings would land as one thicker mark |
 | **Per-dab colour**, for colour dynamics | `MCDab` carries no colour. Adding it is an ABI change and widens the GPU vertex struct |
 | **Wet mix** — colour pickup | The dab must *read* the canvas under it. Nothing in the pipeline does that today; see docs/wet-mix-references.md |
 | Grain **blend mode** | Grain currently caps coverage. A mode enum means the compositing step becomes a choice rather than a constant |
@@ -467,6 +469,23 @@ is worse because presets will exist by then.
 Checkable: re-run the count against `docs/procreate-brush-settings.md` and the
 table above must match. When a setting lands, its marker moves there first and
 this table follows.
+
+### Deferred, and why
+
+Kept here rather than in a commit message, because a delayed task that lives
+only in a commit message is a task nobody will find.
+
+| Deferred | Why, and what it costs to wait |
+|---|---|
+| **Wet mix** — colour pickup | A subsystem, not a setting: the dab must *read* the canvas beneath it, which nothing in the pipeline does. `docs/wet-mix-references.md` has the algorithm. Deserves its own milestone rather than riding along with a UI change |
+| **Per-dab colour**, for colour dynamics | An ABI change that widens the GPU vertex struct. Cheap to do, but only worth doing with colour dynamics, which is a feature not a field |
+| **Grain blend mode** | Compositing becomes a choice rather than a constant. Blocked behind knowing which modes matter, which is a device question |
+| **Grain brightness and contrast** | Additive, and the last thing between "grain is mechanically right" and "grain looks like paper". Wanted early: our map is fractal noise clustered near mid-grey, and these two controls are how that gets judged at all |
+| **Rendering styles** as named values | Procreate has six; Opacity and Flow already span the space they cover. Revisit only if the two sliders prove not to reach somewhere a style does |
+| **1 px stroke is invisible** (#68) | Open since 2026-09-02. May already be fixed by density accumulation; needs a device round to say |
+| **A left/right toggle for the quick bar** | `BrushQuickBar.edge` exists and is honoured; nothing exposes it. Procreate defaults to the left because a right-handed palm rests on the right edge, and which default suits this app is a device question, not a code one |
+| **Showing the scrubbing gain while dragging** | `PrecisionSlider.currentGain` is published and unused. A "1/4" next to the readout would tell a person the slowdown is deliberate rather than the app struggling. Cosmetic until someone reports the confusion |
+| **A curve editor for the pressure response** | The curve exists in the model and is tested; nothing exposes it, which is why that setting is marked partial rather than complete in the table above |
 
 ### Decisions worth revisiting
 

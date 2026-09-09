@@ -65,6 +65,11 @@ float StrokePath::nextRandom() noexcept {
 void StrokePath::addSample(const StrokeSample& sample) {
     if (finished_) return;
 
+    // Latched from the first sample; see the field's note for why not the last.
+    if (nodes_.empty()) {
+        fromPressureDevice_ = sample.fromPressureDevice;
+    }
+
     Node node;
     node.pressure = clamp01(sample.pressure);
     node.tilt = sample.tilt;
@@ -203,9 +208,10 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
 
     // Start taper. The end taper cannot be applied here because it depends on
     // where the stroke stops, which is not yet known — see applyEndTaper().
-    if (brush_.taperLength > 0.0f && travelled_ < brush_.taperLength) {
-        const float t = travelled_ / brush_.taperLength;
-        diameter *= lerp(clamp01(brush_.taperStartScale), 1.0f, t);
+    const TaperEnd& startTaper = activeTaper().start;
+    if (startTaper.length > 0.0f && travelled_ < startTaper.length) {
+        const float t = travelled_ / startTaper.length;
+        diameter *= lerp(clamp01(startTaper.scale), 1.0f, t);
     }
 
     if (brush_.sizeJitter > 0.0f) {
@@ -219,12 +225,12 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
         flow *= 1.0f - clamp01(brush_.flowJitter) * nextRandom();
     }
 
+    // Base orientation. Jitter is applied per *stamp* below rather than here,
+    // so that several stamps at one position do not all share one draw and
+    // land as a single thicker mark.
     float angle = brush_.angle;
     if (brush_.angleFollowsDirection && (dirX != 0.0f || dirY != 0.0f)) {
         angle += std::atan2(dirY, dirX);
-    }
-    if (brush_.angleJitter > 0.0f) {
-        angle += (nextRandom() * 2.0f - 1.0f) * brush_.angleJitter;
     }
 
     Dab dab;
@@ -270,15 +276,46 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
     // lateral shake of where the dab lands rather than travel along the path.
     dab.grainOffset = travelled_;
 
-    if (brush_.scatter > 0.0f) {
-        const float theta = nextRandom() * 6.2831853f;
-        const float reach = nextRandom() * brush_.scatter * diameter;
-        dab.x += std::cos(theta) * reach;
-        dab.y += std::sin(theta) * reach;
+    // Shape Count: how many stamps of the shape land at this one position.
+    //
+    // Only meaningful together with scatter or angle jitter. With neither, the
+    // stamps land exactly on top of one another, which the geometry channel
+    // ignores (a maximum of equal values) while the density channel darkens —
+    // a legitimate way to thicken ink, but not what Count is for. Count is how
+    // a spray, a stipple or a foliage brush is built.
+    //
+    // Stamps are separate dabs rather than a flag on one, so nothing
+    // downstream needs to know this feature exists: the GPU stamps them, the
+    // tile capture notes each one where it actually lands, and undo replays
+    // them like any other.
+    int32_t stamps = brush_.shapeCount < 1 ? 1 : brush_.shapeCount;
+    if (stamps > 1 && brush_.shapeCountJitter > 0.0f) {
+        // Jitter only ever removes stamps, so `shapeCount` stays the honest
+        // upper bound the panel shows — the same rule size jitter follows.
+        const float keep = 1.0f - clamp01(brush_.shapeCountJitter) * nextRandom();
+        const int32_t jittered = static_cast<int32_t>(
+            std::lround(static_cast<float>(stamps) * keep));
+        stamps = jittered < 1 ? 1 : jittered;
     }
 
-    dabs_.push_back(dab);
-    noteTiles(dab);
+    for (int32_t s = 0; s < stamps; ++s) {
+        Dab stamp = dab;
+
+        if (brush_.angleJitter > 0.0f) {
+            stamp.angle += (nextRandom() * 2.0f - 1.0f) * brush_.angleJitter;
+        }
+        if (brush_.scatter > 0.0f) {
+            const float theta = nextRandom() * 6.2831853f;
+            const float reach = nextRandom() * brush_.scatter * diameter;
+            stamp.x += std::cos(theta) * reach;
+            stamp.y += std::sin(theta) * reach;
+        }
+
+        dabs_.push_back(stamp);
+        // After scatter, so the tiles follow where the stamp actually landed
+        // rather than where the dab position was.
+        noteTiles(stamp);
+    }
 
     // Spacing is a fraction of *this* dab's diameter, so the stroke keeps its
     // character as pressure changes the width. Recomputed after placement
@@ -309,8 +346,16 @@ void StrokePath::noteTiles(const Dab& dab) {
     }
 }
 
+const Taper& StrokePath::activeTaper() const {
+    // A finger reports no real pressure, so a brush whose character comes from
+    // pressure makes nothing recognisable from one. Which taper applies is
+    // therefore a property of the input, not of the brush alone.
+    return fromPressureDevice_ ? brush_.taper.pressure : brush_.taper.touch;
+}
+
 void StrokePath::applyEndTaper() {
-    if (brush_.taperLength <= 0.0f || dabs_.size() < 2) return;
+    const TaperEnd& endTaper = activeTaper().end;
+    if (endTaper.length <= 0.0f || dabs_.size() < 2) return;
 
     // Walk backwards from the final dab, scaling by how close each one is to
     // the end. Tiles were noted at the untapered radius, which is a superset
@@ -322,12 +367,12 @@ void StrokePath::applyEndTaper() {
             const float dy = dabs_[i + 1].y - dabs_[i].y;
             distance += std::sqrt(dx * dx + dy * dy);
         }
-        if (distance >= brush_.taperLength) break;
+        if (distance >= endTaper.length) break;
 
-        const float t = distance / brush_.taperLength;
+        const float t = distance / endTaper.length;
         dabs_[i].radius = std::max(
             kMinimumRadius,
-            dabs_[i].radius * lerp(clamp01(brush_.taperEndScale), 1.0f, t));
+            dabs_[i].radius * lerp(clamp01(endTaper.scale), 1.0f, t));
     }
 }
 
