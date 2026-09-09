@@ -48,6 +48,41 @@ enum class GrainMovement : int32_t {
     Rolling = 1,
 };
 
+/// How the stroke's ink reaches the layer. This is the axis Procreate
+/// spends six named **rendering styles** on, and it decides what `opacity`
+/// below actually means.
+///
+/// It exists because the engine got this wrong and the device said so.
+/// Ours behaved as Glaze for every brush, which is one of the six and not
+/// the one anybody meets: Procreate's stock brushes ship in Blending
+/// styles, so the Opacity slider an artist reaches for every few strokes
+/// *builds* rather than caps, and ours refused to. The measurement had been
+/// in `docs/procreate-experiments.md` since 2026-09-08 and was read as
+/// "two sliders span the space", which is true of the arithmetic and false
+/// of the control the hand lands on.
+enum class RenderingStyle : int32_t {
+    /// Opacity multiplies each dab, and dabs pile up with no ceiling. A
+    /// stroke can saturate against itself, so scrubbing one patch reaches
+    /// solid however low Opacity is set.
+    ///
+    /// Measured, Studio Pen at Opacity 25%: a twenty-pass scribble without
+    /// lifting reached B 1 in Intense Blending and B 5 in Uniform Blending
+    /// — solid, or near enough. **This is the default**, because it is
+    /// Procreate's, and because a stock brush is what a person judges the
+    /// app by.
+    Blending,
+
+    /// Opacity is a ceiling on the finished stroke, applied once at
+    /// composite. A stroke cannot exceed it however much it overlaps
+    /// itself; a *separate* stroke composites on top and goes darker.
+    ///
+    /// Measured, same brush and Opacity: Light Glaze settled at 0.16 ink
+    /// under twenty passes without lifting, then reached 0.60 after five
+    /// more strokes — and six strokes of 0.16 composited alpha-over predict
+    /// 0.65. That is Photoshop's Opacity exactly.
+    Glaze,
+};
+
 /// The shape of a response, as a set of points — the way Procreate's is a
 /// graph rather than a slider.
 ///
@@ -231,27 +266,37 @@ struct Brush {
     /// never a change to what the number means.
     float flow = 1.0f;
 
-    /// Stroke-level alpha, applied once when the finished stroke is composited.
-    /// A ceiling on the whole stroke rather than a per-dab multiplier, so
-    /// lowering it never makes overlaps appear.
+    /// Which family the ink lands in. Blending by default — see above.
     ///
-    /// **This is the strength control**, and between them the two fields give
-    /// both of Procreate's accumulation families without a mode switch:
+    /// Procreate names six and we have two, and the missing axis is honest
+    /// rather than hidden: Light / Uniform / Intense scales *how much* within
+    /// each family, and we have one measurement per style across three of the
+    /// six. Light Glaze settling at 0.16 ink for an Opacity of 25% says the
+    /// ceiling is not literally the slider value, so there is a factor there we
+    /// have not measured. Inventing it from one point would be worse than the
+    /// gap.
+    RenderingStyle renderingStyle = RenderingStyle::Blending;
+
+    /// The strength control, and the one that belongs on the main screen.
     ///
-    ///   * Opacity 100% with a low Flow is a **Blending** style — dabs pile up
-    ///     freely and a stroke can saturate against itself. Measured: Intense
-    ///     Blending at 25% opacity scrubbed to solid black.
-    ///   * A lowered Opacity is a **Glaze** style — a stroke cannot exceed it
-    ///     however much it overlaps itself, while a *separate* stroke
-    ///     composites on top. Measured: Light Glaze at 25% opacity settled at
-    ///     0.16 ink under twenty passes without lifting, then reached 0.60
-    ///     after five more strokes. Six strokes of 0.16 composited alpha-over
-    ///     predict 0.65.
+    /// What it does depends on `renderingStyle`, which is the whole point of
+    /// that field:
     ///
-    /// Procreate spends six named rendering styles on that axis. Two
-    /// independent sliders reach the same places, which is why the
-    /// Maximum/Buildup switch removed earlier is not coming back — it was a
-    /// third control for something these two already span.
+    ///   * **Blending** (default) — multiplies into each dab alongside `flow`,
+    ///     so a stroke builds toward solid and crossings darken. Lowering it
+    ///     makes the ink thinner, not the maximum lower.
+    ///   * **Glaze** — left off the dab and applied once when the finished
+    ///     stroke is composited, so it caps the whole stroke and a
+    ///     self-crossing cannot exceed it.
+    ///
+    /// **Why it multiplies with `flow` rather than replacing it.** They are the
+    /// same arithmetic in Blending and different controls all the same, by
+    /// where they live: `flow` is a property of the brush, set once when the
+    /// brush is built, and `opacity` is what the hand changes between strokes.
+    /// Procreate splits them the same way — Flow inside Brush Studio, Opacity
+    /// on the canvas edge — and so does Photoshop. Collapsing them would save a
+    /// field and lose the distinction between how wet the pen is and how hard
+    /// you are pressing today.
     float opacity = 1.0f;
 
     // MARK: Grain

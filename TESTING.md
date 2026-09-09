@@ -79,8 +79,25 @@ it *feels* like Procreate's is the part no test can answer.
 | 89 | Scrubbing survives inside the panel | Open the brush panel, scroll it, then drag a slider **sideways** out of the track | The panel must not steal the gesture and cancel the drag. A sideways drag inside a scrolling panel looks exactly like a scroll, and this is bug 8's shape |
 | 90 | The quick bar sits where a hand can use it | Draw normally for a few minutes with the bar on the right | Honest answer wanted, not a pass: does your palm cover it? Procreate puts these on the **left** for right-handers for that reason. The side is a property (`BrushQuickBar.edge`), so switching the default costs one line — but which default is right is your call, not a code question |
 | 91 | Size runs fine at the small end | Quick bar, set size near the bottom of the track, then near the top | The bottom half of the track covers roughly 1–100 px and the top half 100–400. Deliberate: the curve is squared so 1–20 px, where every pixel shows, gets most of the travel instead of a few millimetres |
-| 92 | Opacity is a ceiling, not a per-dab strength | Quick bar Opacity 50%. Draw a loop that crosses itself once | The crossing is **the same** darkness as the line — 50% ink, nowhere darker. Contrast with Flow 50%, where the crossing *does* build. That is the Glaze/Blending distinction, and the two sliders are how this app spans it |
+| ~~92~~ | ~~Opacity is a ceiling, not a per-dab strength~~ | — | **Withdrawn 2026-09-09 before it was run.** It predicted a crossing that does not darken at Opacity 50%, which was our behaviour and not Procreate's. See bug 18; replaced by 94–96 |
 | 93 | The panel shows everything | Open the brush panel | Folding sections, Shape open and the rest closed. Every parameter the engine has is reachable. **Pressure response is the exception** — the curve exists and is tested, but there is no graph widget to draw it with yet, so it shows as a plain control |
+
+## Pending — the 2026-09-09 fixes (opacity, handedness, contrast)
+
+Four device reports came back on v0.3.88 and all four were right. These check
+the fixes, and #94 is the one that matters: it is a change to what the app
+*does*, not to how it looks.
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 94 | Opacity builds, like Procreate's | Opacity **25%**, Flow 100%, Blending. Scribble one patch back and forth ~20 times without lifting | **It reaches solid black.** This is the fix — before, it stopped at 25% and stayed there however long you worked at it. Measured in Procreate at the same setting: Intense Blending B 1, i.e. solid |
+| 95 | Glaze still settles | Brush panel → Rendering → **Glaze**. Same 25%, same 20-pass scribble | It stops well short of solid and stays there. Then lift and lay five more strokes over it: *those* go darker. That is the other family, kept, and it is what Procreate's Light Glaze measured at (0.16 ink, then 0.60 after five more) |
+| 96 | Full opacity is unchanged | Opacity **100%**, draw and cross. Then switch Blending/Glaze and repeat | Identical in both, and identical to v0.3.88. At 100% the two families are the same brush — asserted in CI, checked here because it is what made the default change safe for every existing brush |
+| 97 | Opacity goes properly low | Quick bar, drag Opacity to the bottom | It reaches **1%**, and the readout shows a decimal below 10% (`3.5%`, not `3%`). A very light stroke should be visible but faint. The old floor was 2%, set when Opacity was a ceiling and anything under a few percent was invisible |
+| 98 | The sliders are visible on white | Clear to a white canvas. Look at the quick bar | Track, fill and thumb all clearly visible. Then draw a solid black patch behind them and look again — **both** must work. Every layer is a light fill with a dark outline for exactly this reason |
+| 99 | Controls default to the left | Fresh launch | Toolbar, quick bar and panels all on the **left**; the HUD moves to the right to stay out of their way |
+| 100 | The swap moves everything | Tap the arrow button under the brush button | The whole chrome crosses to the other edge — toolbar, quick bar, and the panels open the other way — and the HUD swaps with it. Kill the app and relaunch: it stays where you put it |
+| 101 | Drawing still stops at the chrome | With the controls on the left, drag the Pencil across the quick bar and the toolbar | No stroke is drawn under them. This is bug 12's shape and the frames all moved, so it is worth thirty seconds |
 
 ## Pending — UI regressions to confirm
 
@@ -368,15 +385,80 @@ they lived in the Swift shell rather than the engine:
     both read as grain problems and neither was: a tooth can only bite into
     coverage that is less than 1, and Flow was not producing any.
 
-Every one of these but 15 lived in how the shell drove the engine — layout and view lifecycle, not logic — which is the argument for
+18. **Opacity was a Glaze, and every stock brush should have been Blending.**
+    Reported 2026-09-09, in one line, after drawing with it: *"opacity
+    basically acts like flow in procreate"*. Correct, and the measurement that
+    said so had been in `docs/procreate-experiments.md` since 2026-09-08.
+    Procreate expresses accumulation as a **rendering style** with six named
+    values, and they are not decoration on one behaviour — they select between
+    two. Measured at Opacity 25%, one twenty-pass scribble: Intense Blending
+    B 1 and Uniform Blending B 5, both solid; Light Glaze B 85, settling at
+    0.16 ink and staying there. Our engine applied Opacity once at composite
+    for *every* brush, which is a Glaze, and Procreate's stock brushes are
+    Blending. So the always-visible slider capped a stroke where Procreate's
+    builds it, and no setting in our brush panel could make it do otherwise.
+    **The error was not arithmetic and is worth keeping visible.** The question
+    asked of the data was "can our two sliders express both families", and the
+    answer really was yes — Opacity 100% with a low Flow *is* Blending. The
+    question that decides whether the app is right is "does the control the
+    hand lands on do what the hand expects", and it was never asked. A spanning
+    set is not a user interface. Round 5's conclusion is corrected in place
+    rather than rewritten, under the table it got wrong.
+    Fixed with `Brush::renderingStyle`, two values, defaulting to Blending: the
+    dab carries `flow * opacity` in a Blending style and `flow` alone in a
+    Glaze. One pass at Opacity 25% now measures 0.992 ink in the engine's own
+    test, against the device's B 1. Four tests in `test_stroke.cpp`, one of
+    which asserts the two families are the same brush at Opacity 100% — which
+    is why changing the default was safe for every existing brush.
+
+19. **The sliders were white on a white canvas.** Reported 2026-09-09 with a
+    screenshot: the quick bar's thumbs read as faint smudges and the track was
+    not there at all. The track was white at 18% alpha, the fill white at 85%,
+    the thumb solid white, and the only relief was a drop shadow.
+    A drop shadow cannot fix this. It is a dark blur — it disappears over dark
+    paint and is too soft to define a 6-point track over light. The general
+    fault is that **a control floating over the canvas has no known
+    background**, so no single colour can be relied on, and the palette was
+    chosen against a canvas that happened to be dark in every screenshot taken
+    of it.
+    Fixed with contrast in both directions rather than a darker palette: every
+    layer is now a light fill carrying a dark outline, so the outline holds it
+    against white and the fill holds it against black. The rule generalises to
+    any chrome drawn over artwork, which is most of what this app will draw.
+
+20. **The controls were on the wrong side, and I had reasoned my way to
+    knowing that and shipped it anyway.** Asked for on the right, built on the
+    right; drawing with it showed the palm resting over them. The note next to
+    the code already said Procreate defaults to the left for exactly this
+    reason — it was written, recorded as a preference worth testing, and then
+    shipped as the default regardless.
+    The rule, now written down rather than rediscovered: **controls belong on
+    the side of the hand that is not holding the pen.** That makes the majority
+    default leading and the swap a necessity rather than a nicety, since a
+    left-handed artist has the mirror-image problem exactly as badly. The whole
+    chrome moves together — toolbar, quick bar, both panels, and the HUD to the
+    opposite edge — from one toolbar button, and it persists.
+    Filed as a bug and not a preference change because the information needed
+    to get it right was already in the file that got it wrong.
+
+Every one of these but 15 and 18 lived in how the shell drove the engine —
+layout and view lifecycle, not logic — which is the argument for
 pushing more behind the C ABI where CI can reach it. Note the shape they share:
 none are arithmetic, all are UIKit rebuilding, sizing or re-orienting something
 at the wrong moment.
 
 12 is the same shape as the rest — a frame computed against the wrong thing.
-10, 11, 13 and 15 are not: they are design errors in what the brush *means*,
-which is a category this project had not hit before and which no amount of
-UIKit discipline would have caught.
+10, 11, 13, 15 and 18 are not: they are design errors in what the brush
+*means*, which is a category this project had not hit before and which no
+amount of UIKit discipline would have caught.
+
+19 and 20 are a third category, and naming it is the point of listing them:
+**both were already known and written down, and shipped wrong anyway.** The
+handedness argument was in a comment beside the code that ignored it; the
+Blending measurement was in a document whose conclusion contradicted its own
+table. Neither needed new information. What they needed was for the written
+finding to be checked against the default that was about to ship, and nothing
+in this project does that step.
 
 15 breaks the pattern in a way worth keeping visible, because the old claim
 here was that the engine had been correct throughout and every device bug had

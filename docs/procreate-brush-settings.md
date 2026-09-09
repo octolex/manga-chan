@@ -106,7 +106,7 @@ of many, and is why a grained stroke currently reads as a uniform veil.
 
 | | Setting | Type |
 |---|---|---|
-| ⬜ | **Estilo de renderizado — Rendering style** | enum: Light / Uniform / Intense / Heavy Glaze, Uniform / Intense Blending |
+| 🔶 | **Estilo de renderizado — Rendering style** | enum: Light / Uniform / Intense / Heavy Glaze, Uniform / Intense Blending |
 | 🔶 | Flujo — Flow | **maximum level** |
 | ⬜ | Bordes húmedos — Wet edges | percentage |
 | ⬜ | Bordes quemados — Burnt edges (+ mode) | percentage, blend mode |
@@ -119,6 +119,21 @@ of many, and is why a grained stroke currently reads as a uniform veil.
 **There is no Maximum/Buildup switch.** Accumulation is expressed as a
 *rendering style* with six named values, and Flow is a "maximum level" rather
 than a plain slider. Our binary switch is a cruder cut through the same space.
+
+**Two of the six, as of 2026-09-09** — hence partial rather than missing. The
+axis that matters is Glaze vs Blending, because it decides what Opacity *means*,
+and that is now a brush field. What we do not have is the Light / Uniform /
+Intense / Heavy gradation *within* each family: Light Glaze settling at 0.16 ink
+for an Opacity of 25% says there is a factor there, and one measurement in three
+of the six styles is not enough to name it. Two honest families beat six
+invented ones.
+
+This entry was wrong by omission for a week, and it cost a device round. It was
+read as "Procreate exposes six names for something our two sliders already
+span", which is true of the arithmetic and false of the experience: the six
+names are not decoration on one behaviour, they select between two behaviours,
+and every stock brush selects Blending. See the correction under Round 5 in
+`procreate-experiments.md`.
 
 **Alpha threshold** is the mechanism that makes grain read as tooth rather than
 as a veil: coverage is thresholded against the grain rather than scaled by it.

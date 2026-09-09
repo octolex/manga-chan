@@ -126,6 +126,8 @@ Brush fromC(const MCBrush& b) {
     out.opacity = b.opacity;
     out.grainDepth = b.grainDepth;
     out.grainScale = b.grainScale;
+    out.renderingStyle = b.renderingStyle == MC_RENDER_GLAZE
+        ? RenderingStyle::Glaze : RenderingStyle::Blending;
     out.grainMovement = b.grainMovement == MC_GRAIN_ROLLING
         ? GrainMovement::Rolling : GrainMovement::Canvas;
     out.sizeDynamics = fromC(b.sizeDynamics);
@@ -155,6 +157,8 @@ MCBrush toC(const Brush& b) {
     out.opacity = b.opacity;
     out.grainDepth = b.grainDepth;
     out.grainScale = b.grainScale;
+    out.renderingStyle = b.renderingStyle == RenderingStyle::Glaze
+        ? MC_RENDER_GLAZE : MC_RENDER_BLENDING;
     out.grainMovement = b.grainMovement == GrainMovement::Rolling
         ? MC_GRAIN_ROLLING : MC_GRAIN_CANVAS;
     out.sizeDynamics = toC(b.sizeDynamics);

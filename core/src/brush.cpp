@@ -155,6 +155,12 @@ Brush inkPen() {
     b.hardness = 0.95f;
     b.flow = 1.0f;
     b.opacity = 1.0f;
+    // Blending, like Procreate's stock brushes. At full opacity the two
+    // families are indistinguishable — 1.0 on the dab and 1.0 at composite
+    // are the same nothing — so this default costs the ink pen nothing and
+    // only shows once the artist reaches for the Opacity slider, which is
+    // exactly when it has to be right.
+    b.renderingStyle = RenderingStyle::Blending;
 
     // Full flow, so one pass saturates at once and the line cannot darken
     // where it crosses itself. That is what makes this an inking pen rather

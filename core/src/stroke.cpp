@@ -267,7 +267,22 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
     // Opacity on the main screen and Flow buried in Brush Studio. If the slider
     // proves hard to use, the answer is a curve on the slider, not a change to
     // what the number means.
-    dab.flow = flow;
+    //
+    // Opacity joins it here in a Blending style, and stays off the dab in a
+    // Glaze. That one branch is the whole rendering-style difference, and it
+    // lives in the engine rather than the shell for the usual reason: which
+    // family a brush is in changes what a dab deposits, and a dab is something
+    // CI can count.
+    //
+    // Blending was wrong here until 2026-09-09. Opacity was applied only at
+    // composite, for every brush, which is a Glaze — so the always-visible
+    // Opacity slider capped a stroke instead of building it, and scrubbing a
+    // patch at 25% could never reach solid. Procreate's stock brushes are
+    // Blending, so that is what an artist means by the word, and the device
+    // said so before this file did.
+    dab.flow = brush_.renderingStyle == RenderingStyle::Blending
+                 ? flow * clamp01(brush_.opacity)
+                 : flow;
     dab.roundness = clamp01(brush_.roundness);
     dab.hardness = clamp01(brush_.hardness);
 
