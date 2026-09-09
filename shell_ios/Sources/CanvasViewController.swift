@@ -55,6 +55,10 @@ final class CanvasViewController: UIViewController {
     /// covering "add layer" and making the panel untestable. Anchoring to the
     /// stack means a third button can never reintroduce it.
     private let toolbar = UIStackView()
+
+    /// Size and Opacity, always visible on the canvas edge. See BrushQuickBar
+    /// for why those two and not others, and for the note on handedness.
+    private let quickBar = BrushQuickBar(edge: .trailing)
     private let brushPanel = BrushPanelView()
 
     override func loadView() {
@@ -192,6 +196,26 @@ final class CanvasViewController: UIViewController {
             toolbar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
                                               constant: -12),
         ])
+
+        setUpQuickBar()
+    }
+
+    /// The quick bar takes the trailing edge, so the panels move inboard of it
+    /// rather than opening on top. Both fit side by side on an iPad: the panel
+    /// is 330 points and the bar about 60.
+    private func setUpQuickBar() {
+        quickBar.delegate = self
+        view.addSubview(quickBar)
+        quickBar.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            quickBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                                               constant: -10),
+            // Centred rather than hung from the toolbar: these are reached for
+            // mid-stroke, and the middle of the edge is where the hand already
+            // is.
+            quickBar.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
     }
 
     // MARK: - Layers panel
@@ -205,8 +229,9 @@ final class CanvasViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             layersPanel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
-            layersPanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                                                  constant: -12),
+            // Inboard of the quick bar, not over it.
+            layersPanel.trailingAnchor.constraint(equalTo: quickBar.leadingAnchor,
+                                                  constant: -10),
             layersPanel.widthAnchor.constraint(equalToConstant: 330),
             // Capped rather than pinned to the bottom: a long stack scrolls
             // inside the panel instead of the panel swallowing the canvas.
@@ -228,8 +253,9 @@ final class CanvasViewController: UIViewController {
             // Below the whole toolbar, exactly as the layers panel is. Only one
             // panel is ever visible, so they can share the position.
             brushPanel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
-            brushPanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                                                 constant: -12),
+            // Inboard of the quick bar, not over it.
+            brushPanel.trailingAnchor.constraint(equalTo: quickBar.leadingAnchor,
+                                                 constant: -10),
             brushPanel.widthAnchor.constraint(equalToConstant: 330),
             brushPanel.heightAnchor.constraint(lessThanOrEqualTo: view.heightAnchor,
                                                multiplier: 0.75),
@@ -357,6 +383,9 @@ final class CanvasViewController: UIViewController {
         // would draw straight through the buttons. Testing the stack also
         // covers the gap between them, which used to be a live canvas.
         if toolbar.frame.contains(point) { return }
+        // Always visible, so unlike the panels there is no hidden check — and
+        // unlike the buttons its frame is already in `view` coordinates.
+        if quickBar.frame.contains(point) { return }
 
         // Several fingers already on the glass is a gesture, not drawing.
         if touch.type != .pencil, (event?.allTouches?.count ?? 1) > 1 {
@@ -526,6 +555,11 @@ extension CanvasViewController: BrushPanelDelegate {
         // when it begins, so a slider moved mid-stroke cannot retroactively
         // change ink already laid down.
         renderer?.brush = brush
+        // Size and Opacity exist in two places now, and they are one value.
+        // Pushing rather than observing, because the bar must not send the
+        // change back and start a loop.
+        quickBar.size = brush.size
+        quickBar.opacity = brush.opacity
     }
 
     func brushPanel(_ panel: BrushPanelView, didChangeColor color: UIColor) {
@@ -552,5 +586,26 @@ extension CanvasViewController: UIPencilInteractionDelegate {
         inputStats.doubleTapCount += 1
         Diagnostics.log("pencil double-tap (\(inputStats.doubleTapCount))")
         hud.update(input: inputStats)
+    }
+}
+
+
+// MARK: - Always-visible size and opacity
+
+extension CanvasViewController: BrushQuickBarDelegate {
+
+    func quickBar(_ bar: BrushQuickBar, didChangeSize size: Float) {
+        guard var brush = renderer?.brush else { return }
+        brush.size = size
+        renderer?.brush = brush
+        // The panel may be open on the same two values; keep them agreeing.
+        brushPanel.refreshFromBrush(brush)
+    }
+
+    func quickBar(_ bar: BrushQuickBar, didChangeOpacity opacity: Float) {
+        guard var brush = renderer?.brush else { return }
+        brush.opacity = opacity
+        renderer?.brush = brush
+        brushPanel.refreshFromBrush(brush)
     }
 }

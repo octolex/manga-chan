@@ -39,6 +39,12 @@ final class BrushPanelView: UIView {
     /// rather than looked up — a rebuild would take the slider with it.
     private var valueLabels: [String: UILabel] = [:]
 
+    /// The sliders themselves, and how each formats its value, so a change
+    /// made *elsewhere* can be adopted without rebuilding. Size and opacity now
+    /// live in two places — here and on the quick bar — and they are one value.
+    private var sliders: [String: PrecisionSlider] = [:]
+    private var formatters: [String: (Float) -> String] = [:]
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         build()
@@ -179,6 +185,28 @@ final class BrushPanelView: UIView {
         return line
     }
 
+    /// Adopt a brush that was changed somewhere else.
+    ///
+    /// Updates in place rather than rebuilding, for the same reason the labels
+    /// are: rebuilding would replace the very controls a finger might be on,
+    /// and it would throw away the panel's scroll position on every drag of the
+    /// quick bar.
+    ///
+    /// Deliberately silent — it does not call the delegate. The quick bar is
+    /// what changed the brush; telling it back would be a loop.
+    func refreshFromBrush(_ brush: MCBrush) {
+        self.brush = brush
+        apply(key: "size", value: brush.size)
+        apply(key: "opacity", value: brush.opacity)
+    }
+
+    private func apply(key: String, value: Float) {
+        sliders[key]?.value = value
+        if let format = formatters[key] {
+            valueLabels[key]?.text = format(value)
+        }
+    }
+
     private func slider(_ title: String,
                         key: String,
                         value: Float,
@@ -202,24 +230,30 @@ final class BrushPanelView: UIView {
         header.distribution = .fill
         name.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let control = UISlider()
-        control.minimumValue = range.lowerBound
-        control.maximumValue = range.upperBound
+        // PrecisionSlider rather than UISlider, so every control in the app
+        // slows down as the finger moves away from its track. See
+        // SliderScrubbing for why that matters: on a 1:1 slider the last thing
+        // that happens before you get the value you asked for is that lifting
+        // your finger takes it away again.
+        let control = PrecisionSlider(axis: .horizontal)
+        control.range = range
         control.value = value
-        control.minimumTrackTintColor = UIColor(red: 0.16, green: 0.42, blue: 0.85, alpha: 1)
+        control.fillColor = UIColor(red: 0.16, green: 0.42, blue: 0.85, alpha: 1)
         // Explicit height, or the enclosing stack compresses it when space runs
         // short and the rows overlap instead of scrolling.
-        control.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        control.heightAnchor.constraint(equalToConstant: 36).isActive = true
 
-        let action = UIAction { [weak self] act in
-            guard let self, let slider = act.sender as? UISlider else { return }
-            apply(&brush, slider.value)
+        sliders[key] = control
+        formatters[key] = format
+
+        control.onChange = { [weak self] newValue, _ in
+            guard let self else { return }
+            apply(&brush, newValue)
             // Updated in place. Rebuilding here would destroy the slider the
             // finger is still on, ending the drag after a single value.
-            valueLabels[key]?.text = format(slider.value)
+            valueLabels[key]?.text = format(newValue)
             delegate?.brushPanel(self, didChange: brush)
         }
-        control.addAction(action, for: .valueChanged)
 
         let row = UIStackView(arrangedSubviews: [header, control])
         row.axis = .vertical
