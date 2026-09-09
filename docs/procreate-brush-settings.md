@@ -42,8 +42,8 @@ that corresponds to StreamLine.
 
 | | Setting | Type |
 |---|---|---|
-| 🔶 | Ahusamiento con presión — Pressure taper | **Vector2D** |
-| ⬜ | Ahusamiento con toque — Touch taper | **Vector2D** |
+| ✅ | Ahusamiento con presión — Pressure taper | **Vector2D** |
+| ✅ | Ahusamiento con toque — Touch taper | **Vector2D** |
 | ⬜ | Vincular tamaños de puntas — Link tip sizes | bool |
 | 🔶 | Tamaño — Size | percentage |
 | ⬜ | Opacidad — Opacity | percentage |
@@ -64,8 +64,8 @@ split.
 | ⬜ | Estilo de entrada — Input style | enum: Touch only, Angle, Angle + rotation |
 | ⬜ | Relativa al trazo — Relative to stroke | bool |
 | ✅ | Rotación / Giro — Rotation / Spin | percentage |
-| ⬜ | Número — Count | integer |
-| ⬜ | Variación de número — Count jitter | percentage |
+| ✅ | Número — Count | integer |
+| ✅ | Variación de número — Count jitter | percentage |
 | ⬜ | Aleatorio — Random | bool |
 | ⬜ | Voltear X / Y — Flip X / Y | bool |
 | ✅ | Redondez — Roundness (ellipse widget) | ellipse control |
@@ -149,7 +149,7 @@ Secondary colour. All ⬜.
 
 | | Setting | Type |
 |---|---|---|
-| ⬜ | Presión — Pressure | **pressure graph widget** |
+| 🔶 | Presión — Pressure | **pressure graph widget** — the curve exists in the model; no widget yet |
 | ✅ | Presión → Tamaño, Opacidad, Flujo | percentage |
 | ⬜ | Inclinación — Tilt | **tilt view widget** |
 | 🔶 | Inclinación → Opacidad, Degradado, Flujo, Tamaño | percentage |

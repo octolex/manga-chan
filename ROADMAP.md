@@ -408,16 +408,18 @@ transcription of one real brush's studio:
 |---|---:|---:|---:|---:|
 | Stroke path | 2 | 0 | 3 | 5 |
 | Stabilization | 0 | 1 | 3 | 4 |
-| Taper | 0 | 2 | 7 | 9 |
-| Shape | 2 | 0 | 11 | 13 |
+| Taper | 2 | 1 | 6 | 9 |
+| Shape | 4 | 0 | 9 | 13 |
 | Grain | 2 | 2 | 10 | 14 |
 | Rendering | 0 | 1 | 8 | 9 |
 | Dynamics | 3 | 1 | 1 | 5 |
-| Apple Pencil | 1 | 1 | 7 | 9 |
+| Apple Pencil | 1 | 2 | 6 | 9 |
 | Properties | 1 | 1 | 3 | 5 |
-| **Total** | **11** | **9** | **53** | **73** |
+| **Total** | **15** | **9** | **49** | **73** |
 
-**15% complete, 12% partial, 73% missing.**
+**21% complete, 12% partial, 67% missing.** Was 15/12/73 when this section was
+written on 2026-09-08; the three structural gaps closed the next day moved four
+settings to complete and one to partial.
 
 Read that number carefully, because it flatters us in one direction and is
 unfair in another. Unfair: what exists is the load-bearing half — dab emission,
@@ -440,9 +442,9 @@ editor is a UI built on top of whatever shape the data has:**
 
 | Gap | Why it is structural |
 |---|---|
-| Pressure response as a **spline**, not an exponent | Procreate's is a graph widget. Four bytes of exponent cannot express a graph, and an editor exposing a curve control needs the real thing underneath |
-| **Taper as a Vector2D**, split pressure versus touch | We have three scalars and no touch/pressure split. Two axes where we assumed one |
-| Shape **Count** — N stamps per dab | Changes dab emission itself, not a field on a dab |
+| ~~Pressure response as a **spline**~~ **Done 2026-09-09** | Six interior points, piecewise linear so it cannot overshoot a size multiplier. The widget is still missing, so the setting reads partial rather than complete |
+| ~~**Taper as a Vector2D**, split pressure versus touch~~ **Done 2026-09-09** | Two ends, independently, and one taper per input kind. The kind now reaches the engine through `mc_stroke_add_sample`; it cannot be inferred, since a finger and a perpendicular Pencil report the same pressure and tilt |
+| ~~Shape **Count** — N stamps per dab~~ **Done 2026-09-09** | Stamps are separate dabs, so nothing downstream knows the feature exists. Angle jitter and scatter moved to per-stamp draws, or the siblings would land as one thicker mark |
 | **Per-dab colour**, for colour dynamics | `MCDab` carries no colour. Adding it is an ABI change and widens the GPU vertex struct |
 | **Wet mix** — colour pickup | The dab must *read* the canvas under it. Nothing in the pipeline does that today; see docs/wet-mix-references.md |
 | Grain **blend mode** | Grain currently caps coverage. A mode enum means the compositing step becomes a choice rather than a constant |
