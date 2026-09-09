@@ -53,16 +53,34 @@ whether it costs a frame.
 | # | What | How | Expected |
 |---|---|---|---|
 | 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Was invisible at 1, barely visible at 2. Density now accumulates across the ~2 dabs that land per pixel, which may resolve it with no special case |
-| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line, at **every** Flow. Reimplemented 2026-09-08 as a coverage cap; first device round on v0.3.80 |
+| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line, at **every** Flow. Reimplemented 2026-09-08 as a coverage cap and **still never seen on a device** — v0.3.80 was never tested, so this carries forward unchanged |
 | 81 | Canvas grain never fills in | Grain Behaviour **Texture**, Depth 100%, scrub one patch ~20 times | Texture survives however hard it is worked. Matches Procreate |
 | 82 | Rolling grain does fill in | Grain Behaviour **Movement**, same scrub | Goes solid. The only difference from #81 is arc-length offset, and one mechanism produces both |
 | 83 | Depth only changes the gaps | Depth 50% then 100%, one stroke each | Gaps darker at 50%, lighter at 100%. The pattern must not move, rescale or change shape |
-| 84 | The build says which build it is | Open the HUD | `app 0.3.80 (80)`. Never `MISMATCH`, never `local build` |
+| 84 | The build says which build it is | Open the HUD | `app 0.3.<n> (<n>)` with the two numbers **equal** — that is the whole check. Never `MISMATCH`, never `local build`. Check it before anything else in a round: every finding below is worthless if it came from the wrong build |
 | ~~76~~ | ~~How opaque is a Flow-50% pass?~~ | — | **Answered 2026-09-03: effectively solid.** Only ~10% was visibly translucent. That is bug 15, and it is why every grain attempt failed |
 | 77 | Flow means what it says | Depth 0. Draw single non-crossing strokes at Flow 25%, 50%, 75% | Three clearly different strengths, roughly a quarter, half and three quarters. Before this change 50% and 75% were both solid black |
 | 78 | Flow no longer moves with Spacing | Flow 50%, draw. Set Spacing to about half what it was, draw again | The two strokes are the same darkness. Previously halving the spacing made the same brush markedly darker |
 | 79 | Crossings still build | Flow 25%, draw a loop that crosses itself once | The crossing is clearly darker than either line through it — the behaviour the 10% panel showed, kept |
 | 80 | Full flow is unchanged | Flow 100%, draw and cross | Solid, and the crossing exactly as dark as the line. This is the default inking brush and it must not have moved |
+
+## Pending — the 2026-09-09 round (sliders, quick bar, panel)
+
+New controls, so these are first sightings rather than regressions. #85–#87 are
+the ones worth care: the scrubbing arithmetic is tested off-device, but whether
+it *feels* like Procreate's is the part no test can answer.
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 85 | A slider drags 1:1 on the track | Any slider. Drag along it with your finger roughly on the track | The thumb stays under the finger. Nothing feels heavy or laggy — within 24 pt of the track the rate is exactly 1:1, and if ordinary dragging feels slowed, that is a bug |
+| 86 | Moving away buys precision | Press a slider, then slide your finger **sideways off** the track — about a thumb's width — and keep dragging along | The value moves about **half** as fast. Two thumb-widths out, a quarter. The thumb no longer tracks the finger, which is correct: the finger has travelled further than the value has |
+| 87 | The precision is not thrown away on the way back | Do #86, land on a value you want, then bring the finger back toward the track before lifting | The value **stays**. The thumb must not snap back under the finger — snapping would discard exactly the precision the detour bought. Then lifting must not move it either: that finger-roll problem is the whole reason this exists |
+| 88 | Tapping a slider does nothing | Tap a slider anywhere away from the thumb | Nothing moves. Deliberate: at these sizes a jump-to-tap would throw the value across the range on first contact. If you want jump-to-tap back, say so — it is a one-line policy, not a rebuild |
+| 89 | Scrubbing survives inside the panel | Open the brush panel, scroll it, then drag a slider **sideways** out of the track | The panel must not steal the gesture and cancel the drag. A sideways drag inside a scrolling panel looks exactly like a scroll, and this is bug 8's shape |
+| 90 | The quick bar sits where a hand can use it | Draw normally for a few minutes with the bar on the right | Honest answer wanted, not a pass: does your palm cover it? Procreate puts these on the **left** for right-handers for that reason. The side is a property (`BrushQuickBar.edge`), so switching the default costs one line — but which default is right is your call, not a code question |
+| 91 | Size runs fine at the small end | Quick bar, set size near the bottom of the track, then near the top | The bottom half of the track covers roughly 1–100 px and the top half 100–400. Deliberate: the curve is squared so 1–20 px, where every pixel shows, gets most of the travel instead of a few millimetres |
+| 92 | Opacity is a ceiling, not a per-dab strength | Quick bar Opacity 50%. Draw a loop that crosses itself once | The crossing is **the same** darkness as the line — 50% ink, nowhere darker. Contrast with Flow 50%, where the crossing *does* build. That is the Glaze/Blending distinction, and the two sliders are how this app spans it |
+| 93 | The panel shows everything | Open the brush panel | Folding sections, Shape open and the rest closed. Every parameter the engine has is reachable. **Pressure response is the exception** — the curve exists and is tested, but there is no graph widget to draw it with yet, so it shows as a plain control |
 
 ## Pending — UI regressions to confirm
 
@@ -81,12 +99,14 @@ Not bugs; do not report these until the milestone that addresses them.
 - **One grain map.** It is generated from a fixed seed rather than chosen, so
   there is nothing to switch between until the brush library exists. Depth and
   Scale are the whole of the control surface.
-- **Grain does not currently work.** It is thresholded per dab, which at Flow
-  100% does nothing and at 50% masks the stroke away. This *was* listed here as
-  deliberate; it is not, it is bug 14. #76 has now answered why, and the answer
-  was not what the entry assumed: the fault is not only *where* the threshold
-  is applied but that Flow left nothing partly transparent to threshold. See
-  bug 15. Leave Depth at 0; nothing else is affected.
+- ~~**Grain does not currently work.**~~ Struck out 2026-09-09, and kept here
+  rather than deleted because the entry itself was the fault. It said grain was
+  thresholded per dab and told the reader to leave Depth at 0 — which is exactly
+  how a wrong "deliberate" entry does its damage: it argues someone out of
+  reporting the thing it describes. Grain was rewritten on 2026-09-08 as a
+  coverage **cap** rather than a threshold, and has never been seen on a device
+  since. **Do not leave Depth at 0.** Tests 74 and 81–83 are the ones that
+  settle whether the rewrite worked; nothing here predicts their outcome.
 - **No Maximum/Buildup switch.** Flow is the control: at 100% a pass saturates
   and crossings do not darken; below that they build. The switch made Flow and
   Opacity redundant at one end, which is what it was removed for.
