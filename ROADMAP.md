@@ -410,17 +410,31 @@ transcription of one real brush's studio:
 | Stabilization | 0 | 1 | 3 | 4 |
 | Taper | 2 | 1 | 6 | 9 |
 | Shape | 4 | 0 | 9 | 13 |
-| Grain | 2 | 2 | 10 | 14 |
+| Grain | 4 | 2 | 8 | 14 |
 | Rendering | 0 | 2 | 7 | 9 |
 | Dynamics | 3 | 1 | 1 | 5 |
 | Apple Pencil | 1 | 2 | 6 | 9 |
 | Properties | 1 | 1 | 3 | 5 |
-| **Total** | **15** | **10** | **48** | **73** |
+| **Total** | **17** | **10** | **46** | **73** |
 
-**21% complete, 14% partial, 66% missing.** Was 15/12/73 when this section was
+**23% complete, 14% partial, 63% missing.** Was 15/12/73 when this section was
 written on 2026-09-08; the three structural gaps closed the next day moved four
-settings to complete and one to partial, and Rendering style moved to partial on
-2026-09-09 when the Glaze/Blending split landed.
+settings to complete and one to partial, Rendering style moved to partial on
+2026-09-09 when the Glaze/Blending split landed, and grain Brightness and
+Contrast completed on 2026-09-10.
+
+**The rule this table runs on**, written here rather than left in a commit
+message: every number in it is a count of marked rows in
+`docs/procreate-brush-settings.md`, and the two documents must agree exactly.
+A setting is *complete* only when it is reachable by the artist — implemented in
+the engine and exposed in the panel — *partial* when one of those two is true,
+and *missing* otherwise.
+
+`tools/check_taxonomy.py` enforces it on every push and pull request. It is
+there because this rule was stated in a commit message on 2026-09-08 and
+described as checkable by recounting, and was then recounted by hand, twice, in
+two sessions. This project's own principle is that a task living only in a
+commit message is a task nobody will find; the same is true of a rule.
 
 Rendering style is *partial* and not complete on purpose, and the reason is the
 one this table exists to enforce: we have two of Procreate's six named styles.
@@ -434,10 +448,17 @@ Read that number carefully, because it flatters us in one direction and is
 unfair in another. Unfair: what exists is the load-bearing half — dab emission,
 spacing, dynamics, jitter, the ink model and grain are the parts everything else
 attaches to, and a brush with none of the missing settings still draws. Flatters
-us: the count excludes **Wet mix** and **Colour dynamics** entirely, because
-neither was tabulated, and together they are two whole subsystems we have not
-started. And it is one brush — Procreate shows settings conditionally, so the
-real surface is larger than 73.
+us, and now with a figure on it: the count excludes **Wet mix** (8 settings) and
+**Colour dynamics** (5 sources × 5 channels, 25) entirely, because neither was
+tabulated as rows. That is **33 settings, all of them missing, sitting outside
+the denominator** — counted in, the headline is 17 of 106, or **16%**, not 23%.
+Both are two whole subsystems we have not started. And it is one brush:
+Procreate shows settings conditionally, so the real surface is larger again.
+
+The 73-row figure is the one to quote for *sequencing*, because it counts what
+has been transcribed precisely enough to be checkable. The 106 figure is the one
+to quote for *how far there is to go*. Quoting the first for the second is the
+kind of thing this section exists to stop.
 
 #### Structural gaps versus additive ones
 
@@ -489,7 +510,7 @@ only in a commit message is a task nobody will find.
 | **Wet mix** — colour pickup | A subsystem, not a setting: the dab must *read* the canvas beneath it, which nothing in the pipeline does. `docs/wet-mix-references.md` has the algorithm. Deserves its own milestone rather than riding along with a UI change |
 | **Per-dab colour**, for colour dynamics | An ABI change that widens the GPU vertex struct. Cheap to do, but only worth doing with colour dynamics, which is a feature not a field |
 | **Grain blend mode** | Compositing becomes a choice rather than a constant. Blocked behind knowing which modes matter, which is a device question |
-| **Grain brightness and contrast** | Additive, and the last thing between "grain is mechanically right" and "grain looks like paper". Wanted early: our map is fractal noise clustered near mid-grey, and these two controls are how that gets judged at all |
+| ~~**Grain brightness and contrast**~~ | **Closed 2026-09-10, and the guess about why was measured and confirmed.** The map really is clustered: **90.1% of it sits between 0.2 and 0.8**, which is why multiplying coverage by it reads as an even wash. Full contrast takes that to 14.3%. `makeGrain` normalises the map's *range* and does nothing about its *distribution*, which is the gap these two controls fill |
 | ~~**Rendering styles** as named values~~ | **Closed 2026-09-09, and the reason it was deferred was wrong.** "Opacity and Flow already span the space" was true of the arithmetic and false of the control: our Opacity was a Glaze for every brush while Procreate's stock brushes are Blending, so the always-visible slider capped strokes where Procreate's builds them. Two families now exist as a brush field. See bug 18 |
 | **The intensity ladder within each family** | Light / Uniform / Intense / Heavy. Light Glaze settling at 0.16 ink for an Opacity of 25% says there is a factor of roughly 0.64 in there, but that is one point in one style. Costs nothing to wait: the family split is what changes behaviour, this only trims it. **One device round settles it** — the same twenty-pass scribble at one Opacity across all six named styles, six numbers |
 | **1 px stroke is invisible** (#68) | Open since 2026-09-02. May already be fixed by density accumulation; needs a device round to say |

@@ -26,6 +26,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Cheap, and it guards a rule that had only ever been stated in a commit
+      # message — where, by this project's own principle about deferred tasks,
+      # nobody will find it. It was then recounted by hand with an ad-hoc awk
+      # one-liner, twice, in two sessions. A habit is not a check.
+      #
+      # Linux only: it reads two text files and would be the same answer twice.
+      - name: Completeness table matches the taxonomy
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 tools/check_taxonomy.py
+
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 

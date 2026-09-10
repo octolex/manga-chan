@@ -40,10 +40,12 @@ typedef enum {
 } MSGrainMovement;
 
 typedef struct {
-    simd_float2 viewportSize;  // drawable size in pixels
-    float grainDepth;          // 0 ignores the grain map entirely
-    float grainScale;          // canvas pixels spanned by one repeat of the map
-    int32_t grainMovement;     // MSGrainMovement
+    simd_float2 viewportSize;   // drawable size in pixels
+    float grainDepth;           // 0 ignores the grain map entirely
+    float grainScale;           // canvas pixels spanned by one repeat of the map
+    float grainBrightness;      // -1...+1, 0 neutral; matches mc::grainLevels
+    float grainContrast;        // -1...+1, 0 neutral; matches mc::grainLevels
+    int32_t grainMovement;      // MSGrainMovement
     int32_t _pad;
 } MSDabUniforms;
 

@@ -89,7 +89,32 @@ struct DabRasterData {
 //  inked area, permanently, on purpose. What likely looked wrong was the map —
 //  our fractal noise clusters near mid-grey and reads as a wash rather than as
 //  tooth, which is what Procreate's grain Brightness and Contrast exist to fix.
-inline float grain_tooth(texture2d<float> grain, float2 uv, float depth)
+//  Brightness and Contrast, mirroring mc::grainLevels in core/texture.cpp line
+//  for line. The two are compared against each other in DabShaderTests, which
+//  is the only thing stopping them drifting — a mismatch here does not fail to
+//  compile and does not look obviously wrong, it just makes the grain slightly
+//  not the grain the engine thinks it is.
+//
+//  Measured on our own map: 90.1% of it sits between 0.2 and 0.8, which is why
+//  a plain multiply reads as a wash. Full contrast takes that to 14.3%.
+inline float grain_levels(float sample, float brightness, float contrast)
+{
+    float b = clamp(brightness, -1.0, 1.0);
+    float c = clamp(contrast, -1.0, 1.0);
+    float s = saturate(sample);
+
+    // Exactly the identity when neutral, and the reference does the same. The
+    // arithmetic below is a no-op mathematically and not in floating point, so
+    // without this the shader and the CPU reference would disagree by an ulp
+    // for every brush that never touches these controls — which is all of them.
+    if (b == 0.0 && c == 0.0) { return s; }
+
+    // 2^(3c): an eighth to eight times, 1 exactly in the middle.
+    return saturate((s - 0.5) * exp2(c * 3.0) + 0.5 + b);
+}
+
+inline float grain_tooth(texture2d<float> grain, float2 uv, float depth,
+                         float brightness, float contrast)
 {
     // Uniform across the draw, so this branch costs nothing beyond the compare
     // and it skips the texture fetch entirely on every brush that has no grain
@@ -100,11 +125,16 @@ inline float grain_tooth(texture2d<float> grain, float2 uv, float depth)
     // choices are what let the CPU reference and this sampler be compared at
     // all; a mismatch in either is invisible on screen.
     constexpr sampler grainSampler(filter::linear, address::repeat);
-    float g = grain.sample(grainSampler, uv).r;
+    float g = grain_levels(grain.sample(grainSampler, uv).r, brightness, contrast);
 
     // Depth interpolates between no mask at all and the full map. Measured
     // behaviour: it changes how dark the gaps go and nothing else, so it
     // belongs here as a lerp and not anywhere near the sampling coordinate.
+    //
+    // Levels are applied to the sampled value *before* this lerp, so Depth
+    // still only decides how far the mask bites and never what its pattern is.
+    // The other order would make Depth wash out Contrast, which is two controls
+    // fighting over one number.
     return mix(1.0, g, saturate(depth));
 }
 
@@ -175,7 +205,9 @@ fragment float4 dab_coverage_fragment(DabRasterData in [[stage_in]],
     // blend keeps it the true antialiased edge however many dabs cross this
     // pixel, and multiplying the tooth in here — rather than into the density
     // below — is what makes canvas grain permanent and rolling grain fill in.
-    float geometry = shape * grain_tooth(grain, in.grainUV, uniforms.grainDepth);
+    float geometry = shape * grain_tooth(grain, in.grainUV, uniforms.grainDepth,
+                                        uniforms.grainBrightness,
+                                        uniforms.grainContrast);
 
     // The ink this dab lays down, which the alpha-over blend accumulates.
     // Deliberately ungrained: density is how much pigment arrived, and the
@@ -208,7 +240,8 @@ fragment float4 dab_ink_fragment(DabRasterData in [[stage_in]],
     //
     // One pass, so the two channels the committed path keeps apart collapse to
     // their minimum here: ink laid down, capped by what the paper allows.
-    float tooth = grain_tooth(grain, in.grainUV, uniforms.grainDepth);
+    float tooth = grain_tooth(grain, in.grainUV, uniforms.grainDepth,
+                              uniforms.grainBrightness, uniforms.grainContrast);
     float coverage = shape * min(in.flow, tooth);
 
     float alpha = inkColor.a * coverage;

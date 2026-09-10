@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <vector>
 
@@ -189,6 +190,126 @@ void testGrainUsesItsWholeRange() {
     CHECK(midtones > grain.byteCount() / 4);
 }
 
+/// Both controls are exactly the identity in the middle.
+///
+/// Not approximately. A brush that never opens the grain section must sample
+/// the raw map, so this is what makes the whole feature free for every brush
+/// that does not use it.
+void testGrainLevelsAreNeutralAtZero() {
+    std::printf("brightness and contrast are the identity at 0\n");
+    for (int32_t i = 0; i <= 255; ++i) {
+        const float v = static_cast<float>(i) / 255.0f;
+        CHECK(grainLevels(v, 0.0f, 0.0f) == v);
+    }
+}
+
+/// Contrast pivots at the middle, which is where the map piles up.
+void testContrastPivotsAtTheMiddle() {
+    std::printf("0.5 is the fixed point of contrast\n");
+    for (float c : {-1.0f, -0.5f, 0.0f, 0.37f, 1.0f}) {
+        CHECK(std::fabs(grainLevels(0.5f, 0.0f, c) - 0.5f) < 1e-6f);
+    }
+}
+
+/// Nothing leaves 0...1, whatever is fed in — including a NaN.
+///
+/// The tooth multiplies a dab's coverage, so a NaN here is not a wrong-looking
+/// stroke, it is a stroke that silently does not appear. The clamps are written
+/// as negated comparisons for exactly that reason and this is what says so.
+void testLevelsNeverLeaveTheUnitRange() {
+    std::printf("output stays in range under abusive input\n");
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    for (float s : {0.0f, 0.5f, 1.0f, -3.0f, 4.0f}) {
+        for (float b : {-1.0f, 0.0f, 1.0f, -9.0f, 9.0f, nan}) {
+            for (float c : {-1.0f, 0.0f, 1.0f, -40.0f, 40.0f, inf, nan}) {
+                const float got = grainLevels(s, b, c);
+                CHECK(got >= 0.0f && got <= 1.0f);
+                CHECK(got == got);  // not NaN
+            }
+        }
+    }
+}
+
+/// More contrast means more separation, and it never inverts.
+void testContrastSeparatesWithoutInverting() {
+    std::printf("contrast opens the map out and keeps its order\n");
+    float previous = 0.0f;
+    for (float c : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
+        const float spread = grainLevels(0.75f, 0.0f, c) - grainLevels(0.25f, 0.0f, c);
+        CHECK(spread >= previous);
+        previous = spread;
+
+        // Monotonic in the sample at every setting: a darker place in the map
+        // must stay the darker place, or the tooth would be a different pattern
+        // rather than the same one harder.
+        float last = -1.0f;
+        for (int32_t i = 0; i <= 255; ++i) {
+            const float v = grainLevels(static_cast<float>(i) / 255.0f, 0.0f, c);
+            CHECK(v >= last - 1e-6f);
+            last = v;
+        }
+    }
+}
+
+/// Brightness shifts without changing the slope, which is why it is applied
+/// after contrast rather than before.
+void testBrightnessShiftsWithoutRescaling() {
+    std::printf("brightness moves the curve rather than tilting it\n");
+    for (float c : {-0.5f, 0.0f, 0.8f}) {
+        // Away from the clamps at both ends, so what is being measured is the
+        // arithmetic rather than the saturation.
+        const float lowAt0 = grainLevels(0.45f, 0.0f, c);
+        const float highAt0 = grainLevels(0.55f, 0.0f, c);
+        const float lowShifted = grainLevels(0.45f, 0.1f, c);
+        const float highShifted = grainLevels(0.55f, 0.1f, c);
+
+        CHECK(std::fabs((lowShifted - lowAt0) - 0.1f) < 1e-5f);
+        CHECK(std::fabs((highShifted - highAt0) - 0.1f) < 1e-5f);
+        CHECK(std::fabs((highShifted - lowShifted) - (highAt0 - lowAt0)) < 1e-5f);
+    }
+}
+
+/// **The measurement this control exists for.**
+///
+/// Our grain map is a fractal sum, and `makeGrain` normalises its *range* —
+/// darkest to 0, lightest to 255. That does nothing about its *distribution*:
+/// measured here, **90.1% of the map sits between 0.2 and 0.8**, a band wide
+/// enough that multiplying coverage by it reads as an even wash rather than as
+/// tooth. Full contrast takes that to 14.3%.
+///
+/// This is the number that retires an argument. Grain attempt one was a plain
+/// multiply, rejected in 1f89bd7 for "veiling the whole stroke uniformly", and
+/// the device later showed the mechanism was right all along. It was never the
+/// multiply. It was that nine tenths of the mask was one shade of grey, and
+/// nothing in the brush could change that until now.
+void testContrastIsWhatMakesTheMapReadAsTooth() {
+    std::printf("how much of the map is mid-grey, and what contrast does to it\n");
+
+    const AlphaTexture grain = makeGrain(kGrainSize, 99);
+    const auto midtoneFraction = [&](float contrast) {
+        size_t mid = 0;
+        for (size_t i = 0; i < grain.byteCount(); ++i) {
+            const float v = grainLevels(static_cast<float>(grain.pixels()[i]) / 255.0f,
+                                        0.0f, contrast);
+            if (v >= 0.2f && v <= 0.8f) ++mid;
+        }
+        return static_cast<double>(mid) / static_cast<double>(grain.byteCount());
+    };
+
+    const double flat = midtoneFraction(0.0f);
+    const double crisp = midtoneFraction(1.0f);
+    std::printf("  midtones: %.1f%% raw -> %.1f%% at full contrast\n",
+                flat * 100.0, crisp * 100.0);
+
+    // Bounds rather than the exact figures, so a change to the generator moves
+    // the numbers without failing the test for the wrong reason — but wide
+    // enough apart that the claim still means something.
+    CHECK(flat > 0.80);
+    CHECK(crisp < 0.30);
+    CHECK(flat - crisp > 0.5);
+}
+
 void testGrainIsDeterministicAndSeedDependent() {
     std::printf("grain is a pure function of its seed\n");
 
@@ -273,6 +394,12 @@ int main() {
     testAnEmptyMapReadsAsUnmodulated();
     testGrainIsSeamlessAcrossTheTile();
     testGrainUsesItsWholeRange();
+    testGrainLevelsAreNeutralAtZero();
+    testContrastPivotsAtTheMiddle();
+    testLevelsNeverLeaveTheUnitRange();
+    testContrastSeparatesWithoutInverting();
+    testBrightnessShiftsWithoutRescaling();
+    testContrastIsWhatMakesTheMapReadAsTooth();
     testGrainIsDeterministicAndSeedDependent();
     testGrainSurvivesAwkwardSizes();
     testTheAbiRoundTripsTheGrain();

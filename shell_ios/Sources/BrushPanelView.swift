@@ -25,6 +25,18 @@ protocol BrushPanelDelegate: AnyObject {
     func brushPanel(_ panel: BrushPanelView, didChangeColor color: UIColor)
 }
 
+/// A centre-zero readout: "none" in the middle and a sign either side, so the
+/// neutral position reads as neutral rather than as "0%", which looks like the
+/// control is switched off.
+///
+/// A free function rather than a method because the formatters are escaping
+/// closures stored on the panel; a method would need `self.` in each of them
+/// and would keep the panel alive from its own table.
+private func signedPercent(_ v: Float) -> String {
+    if abs(v) < 0.005 { return "none" }
+    return String(format: "%@%.0f%%", v > 0 ? "+" : "−", abs(v) * 100)
+}
+
 final class BrushPanelView: UIView {
 
     weak var delegate: BrushPanelDelegate?
@@ -210,6 +222,24 @@ final class BrushPanelView: UIView {
             slider("Scale", key: "grainScale", value: brush.grainScale, range: 24...600,
                    format: { String(format: "%.0f px", $0) },
                    apply: { $0.grainScale = $1 }),
+            // Signed, centred on zero, because these two are corrections to a
+            // map rather than amounts of anything — "none" is the middle of the
+            // travel, not the bottom of it.
+            //
+            // Contrast is the one that matters and the reason both exist.
+            // Measured on our own map: 90.1% of it sits between 0.2 and 0.8, so
+            // multiplying coverage by it reads as an even wash. Full contrast
+            // takes that to 14.3%, which is the difference between a veil and
+            // tooth. The first grain attempt was rejected for being a veil, and
+            // it was this, not the mechanism.
+            slider("Brightness", key: "grainBrightness", value: brush.grainBrightness,
+                   range: -1...1,
+                   format: { signedPercent($0) },
+                   apply: { $0.grainBrightness = $1 }),
+            slider("Contrast", key: "grainContrast", value: brush.grainContrast,
+                   range: -1...1,
+                   format: { signedPercent($0) },
+                   apply: { $0.grainContrast = $1 }),
             grainMovementControl(),
         ]))
 

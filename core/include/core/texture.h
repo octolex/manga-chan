@@ -78,6 +78,35 @@ private:
 float sampleAlpha(const uint8_t* pixels, int32_t width, int32_t height,
                   float u, float v, Wrap wrap) noexcept;
 
+/// Procreate's grain **Brightness** and **Contrast**, applied to one sampled
+/// value of the map.
+///
+/// Both are signed, -1 to +1, with 0 neutral — the way Procreate presents them,
+/// as a slider that starts in the middle. `grainLevels(g, 0, 0) == g` exactly,
+/// so a brush that never touches either control samples the raw map.
+///
+/// **Why this is needed at all, given `makeGrain` already normalises.** That
+/// normalisation fixes the *range* — it stretches the darkest sample to 0 and
+/// the lightest to 255 — and does nothing about the *distribution*. A fractal
+/// sum is a sum of independent octaves, so its values pile up near the mean
+/// however far the extremes are stretched: most of the map sits close to
+/// mid-grey with a thin tail at each end. Multiplied into coverage that reads
+/// as an even wash rather than as tooth, which is exactly the complaint that
+/// killed the first grain attempt in 1f89bd7 and was later shown to be a
+/// complaint about the map rather than about the mechanism.
+///
+/// Contrast pivots at 0.5 and is a **multiplicative gain**, `2^(3c)`, so the
+/// range runs from an eighth to eight times and the two halves of the slider
+/// are mirror images of one another. A linear `1 + c` was the obvious choice
+/// and tops out at 2x, which is not enough to turn a mid-grey pile into pits:
+/// the whole point of the control is reaching a near-threshold at the end of
+/// its travel.
+///
+/// Contrast is applied before brightness, so brightness shifts the curve
+/// without changing its slope. The other order makes the two controls fight —
+/// every brightness change would rescale itself by the contrast.
+float grainLevels(float sample, float brightness, float contrast) noexcept;
+
 /// Generates a seamlessly tiling grain map.
 ///
 /// Seamless is the whole difficulty. Grain repeats across the canvas, so a

@@ -33,6 +33,14 @@ and never touches the iPad.
 
 ## Pending — grain
 
+**Set Contrast to about +70% before running any of these.** Measured
+2026-09-10: 90.1% of our grain map sits between 0.2 and 0.8, so at Contrast 0 it
+multiplies coverage by a near-uniform mid-grey and reads as a wash rather than
+as tooth — which is exactly the complaint that killed the first grain attempt,
+and it was the map rather than the mechanism. Full contrast takes that 90.1% to
+14.3%. Running these at Contrast 0 would burn a round on a cause we have already
+found.
+
 CI already pins the grain arithmetic against the engine's CPU sampler, so what
 is left here is only what a test cannot see: whether it looks like paper, and
 whether it costs a frame.
@@ -53,10 +61,10 @@ whether it costs a frame.
 | # | What | How | Expected |
 |---|---|---|---|
 | 68 | 1 px stroke is visible | Size to 1 px, draw; then 2 px | A visible line at 1 px. Was invisible at 1, barely visible at 2. Density now accumulates across the ~2 dabs that land per pixel, which may resolve it with no special case |
-| 74 | Grain reads as tooth | Depth ~70%, draw at a few Flow values | Texture in the stroke that still leaves a coherent line, at **every** Flow. Reimplemented 2026-09-08 as a coverage cap and **still never seen on a device** — v0.3.80 was never tested, so this carries forward unchanged |
-| 81 | Canvas grain never fills in | Grain Behaviour **Texture**, Depth 100%, scrub one patch ~20 times | Texture survives however hard it is worked. Matches Procreate |
-| 82 | Rolling grain does fill in | Grain Behaviour **Movement**, same scrub | Goes solid. The only difference from #81 is arc-length offset, and one mechanism produces both |
-| 83 | Depth only changes the gaps | Depth 50% then 100%, one stroke each | Gaps darker at 50%, lighter at 100%. The pattern must not move, rescale or change shape |
+| 74 | Grain reads as tooth | Depth ~70%, **Contrast +70%**, draw at a few Flow values | Texture in the stroke that still leaves a coherent line, at **every** Flow. Reimplemented 2026-09-08 as a coverage cap and **still never seen on a device** — v0.3.80 was never tested, so this carries forward unchanged |
+| 81 | Canvas grain never fills in | Grain Behaviour **Texture**, Depth 100%, **Contrast +70%**, scrub one patch ~20 times | Texture survives however hard it is worked. Matches Procreate |
+| 82 | Rolling grain does fill in | Grain Behaviour **Movement**, same Depth and Contrast, same scrub | Goes solid. The only difference from #81 is arc-length offset, and one mechanism produces both |
+| 83 | Depth only changes the gaps | **Contrast +70%**, then Depth 50% and 100%, one stroke each | Gaps darker at 50%, lighter at 100%. The pattern must not move, rescale or change shape |
 | 84 | The build says which build it is | Open the HUD | `app 0.3.<n> (<n>)` with the two numbers **equal** — that is the whole check. Never `MISMATCH`, never `local build`. Check it before anything else in a round: every finding below is worthless if it came from the wrong build |
 | ~~76~~ | ~~How opaque is a Flow-50% pass?~~ | — | **Answered 2026-09-03: effectively solid.** Only ~10% was visibly translucent. That is bug 15, and it is why every grain attempt failed |
 | 77 | Flow means what it says | Depth 0. Draw single non-crossing strokes at Flow 25%, 50%, 75% | Three clearly different strengths, roughly a quarter, half and three quarters. Before this change 50% and 75% were both solid black |
@@ -98,6 +106,20 @@ the fixes, and #94 is the one that matters: it is a change to what the app
 | 99 | Controls default to the left | Fresh launch | Toolbar, quick bar and panels all on the **left**; the HUD moves to the right to stay out of their way |
 | 100 | The swap moves everything | Tap the arrow button under the brush button | The whole chrome crosses to the other edge — toolbar, quick bar, and the panels open the other way — and the HUD swaps with it. Kill the app and relaunch: it stays where you put it |
 | 101 | Drawing still stops at the chrome | With the controls on the left, drag the Pencil across the quick bar and the toolbar | No stroke is drawn under them. This is bug 12's shape and the frames all moved, so it is worth thirty seconds |
+
+## Pending — the 2026-09-10 round (grain brightness and contrast)
+
+New controls, in the brush panel under Grain. They exist because of one
+measurement: **90.1% of our grain map sits between 0.2 and 0.8**, and full
+contrast takes that to 14.3%.
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 102 | Contrast turns the wash into tooth | Depth 100%, Contrast **none**, one stroke. Then Contrast **+100%**, one stroke beside it | The first is an even grey veil over the whole stroke. The second has distinct pits with ink between them. **If the first one already looks like tooth, say so** — it would mean the map is better than the measurement suggests and these controls are less urgent than I think |
+| 103 | Contrast keeps the pattern, only harder | The two strokes from #102, side by side | A speck that is dark in one is dark in the other. Contrast must open the *same* pattern out, never move or rescale it — that is the same property Depth has to have (#83), and for the same reason: anything that changes the sampling coordinate is a different bug |
+| 104 | Brightness shifts without changing the texture | Contrast **+70%**, Depth 100%. One stroke at Brightness **none**, one at **+40%**, one at **−40%** | More ink at +40% (the tooth is higher, so more of the stroke is allowed through) and less at −40%. The *grain* should look the same in all three — same pit positions, same crispness. Brightness moves the whole map, it does not re-texture it |
+| 105 | Neutral is genuinely nothing | Depth 100%, both controls at **none** | Identical to what v0.3.92 drew. Both readouts say `none`, not `0%`. CI asserts this to the pixel on both sides of the ABI, so a visible difference here is a real finding |
+| 106 | Grain still costs no frame | Depth 100%, Contrast +100%, long fast stroke, watch `gpu` | Flat, and level with a Contrast-none stroke. The levels are four instructions on a value already fetched, so this should not be measurable — if it is, that is worth knowing |
 
 ## Pending — UI regressions to confirm
 

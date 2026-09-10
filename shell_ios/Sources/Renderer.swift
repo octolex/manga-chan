@@ -491,6 +491,8 @@ final class Renderer: NSObject {
         MSDabUniforms(viewportSize: simd_float2(Float(width), Float(height)),
                       grainDepth: grainTexture == nil ? 0 : brush.grainDepth,
                       grainScale: brush.grainScale,
+                      grainBrightness: brush.grainBrightness,
+                      grainContrast: brush.grainContrast,
                       grainMovement: brush.grainMovement,
                       _pad: 0)
     }
