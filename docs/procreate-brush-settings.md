@@ -91,8 +91,8 @@ split.
 | ⬜ | Variación de profundidad — Depth jitter | percentage |
 | ⬜ | Variación de diferencia — Difference jitter | bool |
 | ⬜ | **Modo de fusión — Blend mode** | blend mode enum |
-| ⬜ | Brillo — Brightness | percentage |
-| ⬜ | Contraste — Contrast | percentage |
+| ✅ | Brillo — Brightness | percentage |
+| ✅ | Contraste — Contrast | percentage |
 | ⬜ | Filtrado de grano — Grain filtering | enum: None, Classic, Improved |
 
 **Our two anchoring modes match Procreate's exactly** — Movimiento/Texturizado

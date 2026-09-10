@@ -130,6 +130,8 @@ typedef struct {
 
     float grainDepth;          /* tooth height; caps where ink may sit */
     float grainScale;          /* canvas pixels per repeat of the map */
+    float grainBrightness;     /* -1...+1, 0 neutral; shifts the whole map */
+    float grainContrast;       /* -1...+1, 0 neutral; opens it out around 0.5 */
     int32_t grainMovement;     /* MCGrainMovement */
 
     MCModulation sizeDynamics;
@@ -174,6 +176,12 @@ size_t mc_grain_generate(int32_t size, uint64_t seed, uint8_t* out, size_t capac
  * offset between the two is invisible on screen and obvious here.
  */
 float mc_grain_sample(const uint8_t* map, int32_t size, float u, float v);
+
+/* Procreate's grain Brightness and Contrast on one sampled value, both signed
+ * -1...+1 with 0 neutral and exactly the identity. Mirrored in grain_tooth in
+ * Shaders.metal; the simulator harness compares the two, which is the only
+ * thing that keeps them from drifting. */
+float mc_grain_levels(float sample, float brightness, float contrast);
 
 typedef struct MCStrokePath MCStrokePath;
 

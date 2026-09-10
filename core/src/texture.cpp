@@ -128,6 +128,41 @@ float AlphaTexture::sample(float u, float v, Wrap wrap) const noexcept {
     return sampleAlpha(pixels_.data(), width_, height_, u, v, wrap);
 }
 
+float grainLevels(float sample, float brightness, float contrast) noexcept {
+    // Clamped rather than trusted: these arrive from a slider across an ABI,
+    // and a contrast of 40 would make `exp2` produce an infinity that then
+    // poisons the multiply into a NaN. A NaN tooth is an invisible stroke.
+    // Written as a negated comparison so a NaN falls to the low end rather
+    // than through: `v < -1` is false for NaN and would pass it straight on,
+    // and a NaN tooth multiplies a dab's coverage to NaN, which is a stroke
+    // that silently does not appear.
+    const auto clampSigned = [](float v) {
+        return !(v > -1.0f) ? -1.0f : (v > 1.0f ? 1.0f : v);
+    };
+    const float b = clampSigned(brightness);
+    const float c = clampSigned(contrast);
+    const float s = !(sample > 0.0f) ? 0.0f : (sample > 1.0f ? 1.0f : sample);
+
+    // Neutral is the identity *exactly*, and that needs saying in code rather
+    // than being left to the arithmetic. `(s - 0.5) + 0.5` is not `s` in
+    // floating point — it is out by an ulp for most of the range — so without
+    // this branch a brush with no grain settings would sample a map one level
+    // away from the one on the GPU. It also skips the exp2 on every brush that
+    // never opens the grain section, which is all of them by default, exactly
+    // as `grain_tooth` skips the texture fetch when depth is 0.
+    if (b == 0.0f && c == 0.0f) return s;
+
+    // 2^(3c): an eighth at one end, eight times at the other, and 1 exactly at
+    // the middle. Multiplicative so the halves mirror each other — a person who
+    // learns what +0.5 does knows what -0.5 does.
+    const float gain = std::exp2(c * 3.0f);
+
+    // Pivot at 0.5 because that is where a fractal sum piles up, so this is the
+    // point the control has to open outward from.
+    const float out = (s - 0.5f) * gain + 0.5f + b;
+    return !(out > 0.0f) ? 0.0f : (out > 1.0f ? 1.0f : out);
+}
+
 AlphaTexture makeGrain(int32_t size, uint64_t seed, int32_t lattice, int32_t octaves) {
     if (size <= 0) return {};
     lattice = std::max(1, lattice);

@@ -128,6 +128,8 @@ Brush fromC(const MCBrush& b) {
     out.grainScale = b.grainScale;
     out.renderingStyle = b.renderingStyle == MC_RENDER_GLAZE
         ? RenderingStyle::Glaze : RenderingStyle::Blending;
+    out.grainBrightness = b.grainBrightness;
+    out.grainContrast = b.grainContrast;
     out.grainMovement = b.grainMovement == MC_GRAIN_ROLLING
         ? GrainMovement::Rolling : GrainMovement::Canvas;
     out.sizeDynamics = fromC(b.sizeDynamics);
@@ -159,6 +161,8 @@ MCBrush toC(const Brush& b) {
     out.grainScale = b.grainScale;
     out.renderingStyle = b.renderingStyle == RenderingStyle::Glaze
         ? MC_RENDER_GLAZE : MC_RENDER_BLENDING;
+    out.grainBrightness = b.grainBrightness;
+    out.grainContrast = b.grainContrast;
     out.grainMovement = b.grainMovement == GrainMovement::Rolling
         ? MC_GRAIN_ROLLING : MC_GRAIN_CANVAS;
     out.sizeDynamics = toC(b.sizeDynamics);
@@ -202,6 +206,10 @@ float mc_grain_sample(const uint8_t* map, int32_t size, float u, float v) {
     // reference sampler that disagreed with the shader's sampler about
     // addressing would pass every test and fail on the device.
     return sampleAlpha(map, size, size, u, v, Wrap::Repeat);
+}
+
+float mc_grain_levels(float sample, float brightness, float contrast) {
+    return grainLevels(sample, brightness, contrast);
 }
 
 MCStrokePath* mc_stroke_begin(const MCBrush* brush, uint64_t seed) {

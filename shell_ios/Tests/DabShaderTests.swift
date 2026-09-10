@@ -232,6 +232,101 @@ final class DabShaderTests: XCTestCase {
                              "rolling grain must fill in where canvas grain cannot")
     }
 
+    /// The shader's Brightness and Contrast are the engine's, to the pixel.
+    ///
+    /// `grain_levels` in Shaders.metal is a hand-copy of `mc::grainLevels`, and
+    /// a hand-copy is a thing that drifts. Nothing about a mismatch here would
+    /// announce itself: it compiles, it renders, and the grain is simply not
+    /// quite the grain the engine believes it is applying — the most expensive
+    /// class of bug this project can have, and the reason the harness exists.
+    func testGrainLevelsMatchTheEngineReference() throws {
+        let scale: Float = 96
+        let depth: Float = 0.6
+        let map = try XCTUnwrap(GrainTexture.bytes())
+
+        // Both signs of both controls, and one pair together — the order they
+        // are applied in is exactly the kind of thing a hand-copy gets wrong,
+        // and it only shows when both are non-zero.
+        for (brightness, contrast) in [(Float(0.0), Float(1.0)),
+                                       (Float(0.0), Float(-0.6)),
+                                       (Float(0.25), Float(0.0)),
+                                       (Float(-0.2), Float(0.7))] {
+            let pixels = try renderCoverage([dab(x: 32, y: 32, radius: 26, flow: 1)],
+                                            depth: depth, scale: scale,
+                                            brightness: brightness, contrast: contrast)
+            var compared = 0
+            for y in 20...44 {
+                for x in 20...44 {
+                    guard insideDab(x: x, y: y, cx: 32, cy: 32, radius: 26, margin: 3) else { continue }
+                    let raw = mc_grain_sample(map, Int32(GrainTexture.size),
+                                              (Float(x) + 0.5) / scale,
+                                              (Float(y) + 0.5) / scale)
+                    let levelled = mc_grain_levels(raw, brightness, contrast)
+                    let expected = min(Float(1.0), (1 - depth) + levelled * depth)
+
+                    XCTAssertEqual(composited(pixels, x: x, y: y), expected, accuracy: 0.01,
+                                   "levels at (\(x), \(y)) disagree with the engine "
+                                   + "at brightness \(brightness), contrast \(contrast)")
+                    compared += 1
+                }
+            }
+            XCTAssertGreaterThan(compared, 200)
+        }
+    }
+
+    /// Neutral settings sample the raw map, and that has to be exact.
+    ///
+    /// Both sides take an early-out when brightness and contrast are zero,
+    /// because `(s - 0.5) + 0.5` is not `s` in floating point. Every brush that
+    /// never opens the grain section goes down this path, so it is the one that
+    /// most needs to be the same on both sides of the ABI.
+    func testNeutralLevelsChangeNothing() throws {
+        let scale: Float = 96
+        let depth: Float = 0.6
+        let plain = try renderCoverage([dab(x: 32, y: 32, radius: 26, flow: 1)],
+                                       depth: depth, scale: scale)
+        let neutral = try renderCoverage([dab(x: 32, y: 32, radius: 26, flow: 1)],
+                                         depth: depth, scale: scale,
+                                         brightness: 0, contrast: 0)
+        XCTAssertEqual(plain, neutral, "neutral levels must be a no-op, not nearly one")
+    }
+
+    /// Contrast is what turns our map from a wash into tooth.
+    ///
+    /// The measurement, in the engine's own suite: 90.1% of the grain map sits
+    /// between 0.2 and 0.8, and full contrast takes that to 14.3%. This is the
+    /// same claim made where it matters — on the rendered coverage — because
+    /// the whole reason the first grain attempt was rejected was that it "veiled
+    /// the stroke uniformly", and it did, and it was the map rather than the
+    /// mechanism.
+    func testContrastSpreadsTheRenderedTooth() throws {
+        let scale: Float = 96
+        let depth: Float = 1.0
+        let dabs = [dab(x: 32, y: 32, radius: 26, flow: 1)]
+
+        func spread(contrast: Float) throws -> Double {
+            let pixels = try renderCoverage(dabs, depth: depth, scale: scale,
+                                            contrast: contrast)
+            var values: [Double] = []
+            for y in 20...44 {
+                for x in 20...44 where insideDab(x: x, y: y, cx: 32, cy: 32,
+                                                 radius: 26, margin: 3) {
+                    values.append(Double(composited(pixels, x: x, y: y)))
+                }
+            }
+            let mean = values.reduce(0, +) / Double(values.count)
+            let variance = values.map { ($0 - mean) * ($0 - mean) }.reduce(0, +)
+                / Double(values.count)
+            return variance.squareRoot()
+        }
+
+        let flat = try spread(contrast: 0)
+        let crisp = try spread(contrast: 1)
+        print("tooth spread: \(flat) raw -> \(crisp) at full contrast")
+        XCTAssertGreaterThan(crisp, flat * 1.5,
+                             "full contrast must visibly open the tooth out")
+    }
+
     func testGrainDepthOffLeavesCoverageExact() throws {
         let pixels = try renderCoverage([dab(x: 32, y: 32, radius: 24, flow: 0.5)],
                                         depth: 0, scale: 96)
@@ -336,7 +431,9 @@ final class DabShaderTests: XCTestCase {
     private func renderCoverage(_ dabs: [MSDab],
                                 depth: Float = 0,
                                 scale: Float = 1,
-                                movement: MSGrainMovement = MSGrainCanvas) throws -> [UInt8] {
+                                movement: MSGrainMovement = MSGrainCanvas,
+                                brightness: Float = 0,
+                                contrast: Float = 0) throws -> [UInt8] {
         let device = try metalDevice()
         let queue = try XCTUnwrap(device.makeCommandQueue())
         let library = try device.makeDefaultLibrary(bundle: Bundle(for: type(of: self)))
@@ -345,7 +442,8 @@ final class DabShaderTests: XCTestCase {
 
         try render(dabs, device: device, queue: queue, library: library,
                    into: texture, grain: grain,
-                   depth: depth, scale: scale, movement: movement)
+                   depth: depth, scale: scale, movement: movement,
+                   brightness: brightness, contrast: contrast)
         return readBack(texture)
     }
 
@@ -396,7 +494,9 @@ final class DabShaderTests: XCTestCase {
                         grain: MTLTexture? = nil,
                         depth: Float = 0,
                         scale: Float = 1,
-                        movement: MSGrainMovement = MSGrainCanvas) throws {
+                        movement: MSGrainMovement = MSGrainCanvas,
+                        brightness: Float = 0,
+                        contrast: Float = 0) throws {
         let pipeline = try makePipeline(device: device, library: library)
 
         let pass = MTLRenderPassDescriptor()
@@ -413,6 +513,8 @@ final class DabShaderTests: XCTestCase {
             viewportSize: simd_float2(Float(size), Float(size)),
             grainDepth: depth,
             grainScale: scale,
+            grainBrightness: brightness,
+            grainContrast: contrast,
             grainMovement: Int32(movement.rawValue),
             _pad: 0)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,

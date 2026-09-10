@@ -336,6 +336,22 @@ struct Brush {
     /// not get finer when you pick up a smaller pencil.
     float grainScale = 192.0f;
 
+    /// Procreate's grain **Brightness** and **Contrast**, both signed -1...+1
+    /// with 0 neutral. See `grainLevels` in `texture.h` for the arithmetic and
+    /// for why normalising the map is not a substitute.
+    ///
+    /// These are the two controls that decide whether our grain map reads as
+    /// paper or as a wash, and they are the reason the first grain attempt was
+    /// judged a failure on a mechanism that turned out to be right: a fractal
+    /// sum piles up near mid-grey, and a mid-grey mask is a veil. Contrast is
+    /// what turns that pile into pits.
+    ///
+    /// Additive rather than structural — two floats on a struct that already
+    /// crosses the ABI — which is why they landed after the three gaps that
+    /// changed the shape of the data.
+    float grainBrightness = 0.0f;
+    float grainContrast = 0.0f;
+
     GrainMovement grainMovement = GrainMovement::Canvas;
 
     // MARK: Dynamics
