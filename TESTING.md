@@ -6,14 +6,38 @@ static ID (`com.octolex.mangachan`) for every build, so reinstalling costs
 nothing. The 7-day certificate expiry still applies, and SideStore refreshes it
 on device over WiFi.
 
-Current pipeline, no computer in the loop: download the `.ipa` from the CI
-artifact on the iPad, install with **SideStore + LocalDevVPN** against the
-existing App ID.
+Current pipeline, no computer in the loop: every build publishes a GitHub
+release, and the **SideStore** source picks it up, so an update arrives as a tap
+(since 2026-09-08; before that the `.ipa` was downloaded from the CI artifact by
+hand). Check the HUD's `app 0.3.n (n)` line before anything else in a round.
 
 **The rule stands anyway,** for a different reason: CI is faster and cheaper
 than a person with an iPad, and it does not get bored. If it needs the GPU, the
 Pencil, or the display, it goes on this list. Everything else gets a unit test
 and never touches the iPad.
+
+## Next round — start here
+
+Written 2026-09-23 for **observation mode**: draw, and say what looks wrong.
+The long tables below are the record, not a checklist. Five things matter more
+than the rest, because they change what the app *does* and none has been seen
+on a device:
+
+1. **Grain** — tests 81–83. Set Contrast to about **+70%** first; at Contrast 0
+   our map is 90.1% mid-grey and reads as a veil for a reason already measured.
+   Canvas grain should survive twenty passes; rolling grain should fill in.
+2. **Opacity builds now, and it builds far too fast.** Expect a single stroke
+   at 25% to look almost solid. That is bug 21, found on review, and it is not
+   what Procreate does — its single pass at 10% measured 3–9% ink, ours gives
+   41–99%. No need to report it; *do* say whether it makes the app unusable
+   before the fix, because that decides the order of the next work.
+3. **The side swap** — controls on the left by default, the arrow button moves
+   everything, and it survives a relaunch.
+4. **Sliders on a white canvas** — visible now, or not.
+5. **The measurement for bug 21**, whenever there are ten minutes for Procreate.
+   It is at the end of `docs/procreate-experiments.md`: read the Studio Pen's
+   pressure settings, then four single strokes at 10 / 25 / 50 / 100% and one
+   light-pressure stroke at 25%, eyedropper B on each. Five numbers.
 
 ## Pending — colour and brush controls
 
@@ -24,7 +48,7 @@ and never touches the iPad.
 | 51b | Drags are not scrolls | Drag across the square, then the hue strip, without lifting | Colour tracks the whole way; the panel does **not** scroll under the finger |
 | 51c | Hue strip is smooth | Look along the strip | A continuous spectrum, not twelve flat bands |
 | 52 | Size | Drag Size, draw | Stroke weight follows. 1 px stays a visible line |
-| 53 | Opacity | Set ~30%, Flow 100%, draw a stroke that crosses itself | Translucent, and the crossing is **not** darker |
+| ~~53~~ | ~~Opacity~~ | — | **Withdrawn 2026-09-23.** It expected a crossing that does not darken, which is Glaze behaviour; the default became Blending on 2026-09-09 and crossings now darken on purpose. Left standing, it would have reported the fix as a fault. #95 covers Glaze |
 | 55 | Hardness | Take it to 0%, draw | Soft airbrushed edge rather than a hard rim |
 | 56 | Stabilization | 0% then ~60%, draw the same shaky line | Visibly steadier, at the cost of lag behind the pencil |
 | 57 | Spacing | Raise toward 50%, draw slowly | Dabs separate into a chain — confirms spacing is real |
@@ -98,7 +122,7 @@ the fixes, and #94 is the one that matters: it is a change to what the app
 
 | # | What | How | Expected |
 |---|---|---|---|
-| 94 | Opacity builds, like Procreate's | Opacity **25%**, Flow 100%, Blending. Scribble one patch back and forth ~20 times without lifting | **It reaches solid black.** This is the fix — before, it stopped at 25% and stayed there however long you worked at it. Measured in Procreate at the same setting: Intense Blending B 1, i.e. solid |
+| 94 | Opacity builds, like Procreate's | Opacity **25%**, Flow 100%, Blending. First **one single stroke**. Then scribble a patch ~20 times without lifting | The scribble reaches solid — no ceiling, which is the family fix. **The single stroke will also look nearly solid, and that is wrong**: bug 21. Rewritten 2026-09-23 — as first written this test only checked the scribble, which ours saturates in one pass, so it could not have failed |
 | 95 | Glaze still settles | Brush panel → Rendering → **Glaze**. Same 25%, same 20-pass scribble | It stops well short of solid and stays there. Then lift and lay five more strokes over it: *those* go darker. That is the other family, kept, and it is what Procreate's Light Glaze measured at (0.16 ink, then 0.60 after five more) |
 | 96 | Full opacity is unchanged | Opacity **100%**, draw and cross. Then switch Blending/Glaze and repeat | Identical in both, and identical to v0.3.88. At 100% the two families are the same brush — asserted in CI, checked here because it is what made the default change safe for every existing brush |
 | 97 | Opacity goes properly low | Quick bar, drag Opacity to the bottom | It reaches **1%**, and the readout shows a decimal below 10% (`3.5%`, not `3%`). A very light stroke should be visible but faint. The old floor was 2%, set when Opacity was a ceiling and anything under a few percent was invisible |
@@ -136,8 +160,8 @@ Not bugs; do not report these until the milestone that addresses them.
   itself is still an analytic circle, so there is no bristle or stamp shape
   yet. A shape map goes through the same sampler the grain now uses.
 - **One grain map.** It is generated from a fixed seed rather than chosen, so
-  there is nothing to switch between until the brush library exists. Depth and
-  Scale are the whole of the control surface.
+  there is nothing to switch between until the brush library exists. Depth,
+  Scale, Brightness and Contrast are the whole of the control surface.
 - ~~**Grain does not currently work.**~~ Struck out 2026-09-09, and kept here
   rather than deleted because the entry itself was the fault. It said grain was
   thresholded per dab and told the reader to leave Depth at 0 — which is exactly
@@ -148,7 +172,9 @@ Not bugs; do not report these until the milestone that addresses them.
   settle whether the rewrite worked; nothing here predicts their outcome.
 - **No Maximum/Buildup switch.** Flow is the control: at 100% a pass saturates
   and crossings do not darken; below that they build. The switch made Flow and
-  Opacity redundant at one end, which is what it was removed for.
+  Opacity redundant at one end, which is what it was removed for. Since
+  2026-09-09 Opacity builds too, in the default **Blending** style; **Glaze**,
+  in the brush panel under Rendering, is the family that caps a stroke.
 - **No brush library.** Settings can be changed but not saved, named, or
   switched between. One brush at a time until the brush editor proper.
 - **Tilt tops out near 86°, not 90°.** Measured on the Pencil Pro: the
@@ -301,11 +327,18 @@ they lived in the Swift shell rather than the engine:
     grain, not a scaling by it. Procreate has this as an explicit control
     (Umbral alfa / alpha threshold) — see docs/procreate-brush-settings.md.
     Not yet fixed; it is a taxonomy change, not a patch.
+    **Status 2026-09-23:** the threshold reading here was wrong — see 14. The
+    multiply this entry rejects was right. What looked like a veil was the map:
+    90.1% of it sits between 0.2 and 0.8 (measured 2026-09-10), and grain
+    Contrast now exists to open it out. Awaiting device confirmation (81–83).
 11. **Flow and Opacity are redundant under Maximum accumulation.** Both end up
     scaling the same final alpha, so only their product matters, and reaching
     build-up behaviour needs an explicit mode switch that Photoshop and
     Procreate both manage without. Procreate expresses accumulation as a
     six-value *rendering style* with Flow as a ceiling. Not yet fixed.
+    **Status 2026-09-23: fixed.** The switch was removed when density got its
+    own channel, which made Flow and Opacity independent, and rendering style
+    arrived as a brush field on 2026-09-09 (bug 18).
 12. **The layers panel opened underneath the brush button.** Each panel was
     anchored below the button that opened it, and the brush button sits below
     the layers button — so it drew on top of the layers panel's own header and
@@ -338,7 +371,9 @@ they lived in the Swift shell rather than the engine:
     That is what **attempt #1 already did**. It was rejected on device as "a
     uniform veil", and that objection is now falsified: Procreate's canvas grain
     does keep texture across the whole inked area, permanently. The fault was
-    most likely the map rather than the maths — our four-octave fractal noise
+    the map rather than the maths — **measured 2026-09-10: 90.1% of the map sits
+    between 0.2 and 0.8**, where this once said "most likely". Our four-octave
+    fractal noise
     sits near mid-grey and reads as a wash. Procreate exposes Brightness and
     Contrast on the grain for exactly this reason.
     **Fixed 2026-09-06**, after the same three findings were reproduced on a
@@ -428,8 +463,11 @@ they lived in the Swift shell rather than the engine:
     rather than rewritten, under the table it got wrong.
     Fixed with `Brush::renderingStyle`, two values, defaulting to Blending: the
     dab carries `flow * opacity` in a Blending style and `flow` alone in a
-    Glaze. One pass at Opacity 25% now measures 0.992 ink in the engine's own
-    test, against the device's B 1. Four tests in `test_stroke.cpp`, one of
+    Glaze. ~~One pass at Opacity 25% now measures 0.992 ink in the engine's own
+    test, against the device's B 1.~~ **Wrong comparison, corrected
+    2026-09-23:** B 1 came from twenty passes, and both saturate under twenty.
+    The single-pass figures disagree by eleven to fourteen times; see 21.
+    Four tests in `test_stroke.cpp`, one of
     which asserts the two families are the same brush at Opacity 100% — which
     is why changing the default was safe for every existing brush.
 
@@ -448,39 +486,60 @@ they lived in the Swift shell rather than the engine:
     against white and the fill holds it against black. The rule generalises to
     any chrome drawn over artwork, which is most of what this app will draw.
 
-20. **The controls were on the wrong side, and I had reasoned my way to
-    knowing that and shipped it anyway.** Asked for on the right, built on the
-    right; drawing with it showed the palm resting over them. The note next to
-    the code already said Procreate defaults to the left for exactly this
-    reason — it was written, recorded as a preference worth testing, and then
-    shipped as the default regardless.
+20. **The controls were on the wrong side.** Asked for on the right and built
+    there, with the handedness concern — Procreate defaults to the left because
+    a right-handed palm rests on the right edge — recorded beside the code and
+    raised at the time. Drawing with it showed the palm resting over them.
+    *Reframed 2026-09-23:* this entry first said the concern was known and
+    "shipped anyway", which misdescribes it. The placement was an explicit
+    request; raising the concern and building what was asked is the process
+    working, and the device settling it is what device rounds are for.
     The rule, now written down rather than rediscovered: **controls belong on
     the side of the hand that is not holding the pen.** That makes the majority
     default leading and the swap a necessity rather than a nicety, since a
     left-handed artist has the mirror-image problem exactly as badly. The whole
     chrome moves together — toolbar, quick bar, both panels, and the HUD to the
     opposite edge — from one toolbar button, and it persists.
-    Filed as a bug and not a preference change because the information needed
-    to get it right was already in the file that got it wrong.
+    Kept in this register rather than only in the code, so the rule is findable.
 
-Every one of these but 15 and 18 lived in how the shell drove the engine —
-layout and view lifecycle, not logic — which is the argument for
-pushing more behind the C ABI where CI can reach it. Note the shape they share:
-none are arithmetic, all are UIKit rebuilding, sizing or re-orienting something
-at the wrong moment.
+21. **Opacity is about twenty times too strong per dab.** Found 2026-09-23 on a
+    review pass, not on the device, and open. The Blending change put
+    `flow * opacity` on each dab. Round 4b's single strokes at Opacity 10%
+    measured 0.03 / 0.06 / 0.08 / 0.09 ink across four spacings; the engine,
+    replaying the same settings, gives 0.410 / 0.686 / 0.891 / 0.995. Per dab
+    that is 0.10 against Procreate's ~0.005.
+    Missed when 18 shipped because the only comparison made was against the
+    twenty-pass scribble, where both saturate — see 18 and the category note
+    below. The family (no ceiling) is right; the scale is not.
+    **Not fixed yet, deliberately.** Three explanations fit the one data point —
+    a non-linear slider in Procreate, the Studio Pen's own pressure dynamics,
+    or something per-dab we do not model — and they prescribe different fixes.
+    This topic has produced five confident models already. The measurement is
+    at the end of `docs/procreate-experiments.md`, and it is five numbers.
+
+1–9 and 12 lived in how the shell drove the engine — layout and view
+lifecycle, not logic — which is the argument for pushing more behind the C ABI
+where CI can reach it. Note the shape they share: none are arithmetic, all are
+UIKit rebuilding, sizing or re-orienting something at the wrong moment. (This
+once said "every one of these but 15 and 18", which stopped being true as the
+register grew; 16 is release infrastructure, 19 is a palette, 20 a placement.)
 
 12 is the same shape as the rest — a frame computed against the wrong thing.
-10, 11, 13, 15 and 18 are not: they are design errors in what the brush
-*means*, which is a category this project had not hit before and which no
+10, 11, 13, 14, 15, 17, 18 and 21 are not: they are design errors in what the
+brush *means*, which is a category this project had not hit before and which no
 amount of UIKit discipline would have caught.
 
-19 and 20 are a third category, and naming it is the point of listing them:
-**both were already known and written down, and shipped wrong anyway.** The
-handedness argument was in a comment beside the code that ignored it; the
-Blending measurement was in a document whose conclusion contradicted its own
-table. Neither needed new information. What they needed was for the written
-finding to be checked against the default that was about to ship, and nothing
-in this project does that step.
+18 and 21 are a third category, and naming it is the point of listing them:
+**the data to get it right was already in the same table as the conclusion.**
+18 concluded "two sliders span the space" from a table that also showed every
+stock brush was Blending. 21 confirmed a single-pass engine figure against a
+twenty-pass device figure, when the same document held the single-pass device
+figures and they disagreed by an order of magnitude. Neither needed new
+information. What they needed was for the conclusion to be checked against
+*every* number it came from, comparing like with like — passes, pressure,
+brush — before it shipped. That step is now written into CLAUDE.md.
+(First written 2026-09-09 as "19 and 20". 19 was never on file — nobody had
+written anything about the palette — and 20 is reframed above.)
 
 15 breaks the pattern in a way worth keeping visible, because the old claim
 here was that the engine had been correct throughout and every device bug had

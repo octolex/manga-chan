@@ -635,3 +635,76 @@ another round: the same twenty-pass scribble at one Opacity across all six
 named styles, on one brush, reading B each time. Six numbers would give both the
 family split and the intensity ladder in a single pass, which is what should
 have been asked for in round 5 instead of three.
+
+---
+
+# Correction to the correction — 2026-09-23. The family is right, the scale is not.
+
+Found on a review pass, not on the device. The section above says one pass at
+Opacity 25% "now measures 0.992 ink in the engine's own test, against the
+device's B 1 for Intense Blending". **That compares one pass of ours to twenty
+passes of Procreate's.** B 1 was the twenty-pass scribble. Both saturate under
+twenty passes, so that comparison could not have failed, and it was presented
+as agreement.
+
+The comparison that can fail is the single stroke, and round 4b already has it.
+Replayed through the engine — Flow 100%, Opacity 10%, Depth 0, one straight
+pass, Blending, pressure dynamics off:
+
+| Spacing | Procreate, one pass | Ours, one pass | Ours ÷ Procreate |
+|---|---:|---:|---:|
+| 20% | 0.03 | 0.410 | 14× |
+| 10% | 0.06 | 0.686 | 11× |
+| 5%  | 0.08 | 0.891 | 11× |
+| 2%  | 0.09 | 0.995 | 11× (ours saturated) |
+
+Measured on both sides: Procreate's column is the eyedropper, ours is the
+engine's own dab list, accumulated alpha-over at the stroke's centre. On the
+per-dab amount the gap is about twenty times — Procreate's corrected per-dab
+alpha was 0.0051 / 0.0056 / 0.0042 / 0.0047 at Opacity 10%, and ours is 0.10.
+
+So **the change to Blending was the right family and the wrong scale.** The
+twenty-pass test was correctly answered — no ceiling — and it was the only
+question asked. A single stroke at 25% in our app is now close to solid, where
+the same stroke in Procreate is light. That is bug 21.
+
+## Why the engine is not changed yet
+
+Three explanations fit the one point we have, and they prescribe different
+fixes:
+
+1. **The slider is not linear in Procreate.** A per-dab amount of `o^2.3`
+   passes through 0.005 at 10% and 1 at 100%, and happens to agree with the
+   twenty-pass result at 25%. But that is one free parameter fitted to one real
+   constraint, and the other two are loose. Consistent, not confirmed.
+2. **The Studio Pen has pressure on opacity or flow**, and round 4's strokes
+   were drawn with an even but unknown pressure. Its Apple Pencil settings were
+   never recorded. If pressure drives opacity, 0.005 is the slider times the
+   pressure response and says nothing about the slider on its own.
+3. **Something per-dab we do not model** — a normalisation by dab size, or
+   similar. No evidence for it; listed so its absence is a choice.
+
+The same confound sits under the Light Glaze figure. "0.16 ink at Opacity 25%
+means a factor of about 0.64 in the Light style" was written as if the style
+were the only variable. Pressure on the Studio Pen would produce the same
+number.
+
+This topic has now produced five confident models: three for grain, one flow
+compensation, and one conclusion about Opacity that was half right. Changing the
+engine on a one-point fit would be a sixth. The measurement is cheap.
+
+## The measurement that settles it
+
+1. **Read, don't draw.** Studio Pen → Brush Studio → Apple Pencil → Pressure:
+   the Opacity and Flow values. If both are 0%, explanation 2 is gone and the
+   rest of this is a clean measurement of the slider.
+2. **Four single strokes**, one straight pass each, firm even pressure, grain
+   off, the pen's own spacing: Opacity **10%, 25%, 50%, 100%**. Eyedropper B at
+   the middle of each.
+3. **One more at 25% with very light pressure.** If it reads much lighter than
+   step 2's 25%, pressure is in play and step 2 measured the pen, not the slider.
+
+Four numbers give the shape of the curve directly: linear-with-a-factor makes
+the 100% stroke visibly short of solid, a power curve keeps it solid and
+collapses the low end, and a pressure effect shows up in step 3 alone.
+

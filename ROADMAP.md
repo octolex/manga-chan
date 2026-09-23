@@ -177,15 +177,22 @@ disc.
 | ↪️ | ~~Grain as a threshold, not a multiply~~ — **wrong, reverted.** Grain is a cap on where ink may sit; see the grain section below |
 | ✅ | Grain measured against Procreate and re-implemented as a coverage cap |
 | ✅ | Accumulation re-cut as one Flow control, with the mode switch removed |
+| ✅ | Rendering style as a brush field: **Blending** (default) and **Glaze** — 2026-09-09. The family is right; the per-dab scale is about 20× too strong and open as bug 21 |
+| ✅ | Grain Brightness and Contrast, with the map's distribution measured — 2026-09-10 |
+| ✅ | Precision scrubbing on every slider, Size and Opacity on the canvas edge, the brush panel in folding sections, and the whole chrome swappable between edges — 2026-09-09 |
+| ✅ | The completeness table checked against the taxonomy in CI — 2026-09-10 |
 | ⬜ | Textured dab shapes on the same sampler |
-| ⬜ | **Close the structural taxonomy gaps** — see *How complete is the brush definition* below. These change the shape of the data and get more expensive the later they land |
+| 🔨 | **Close the structural taxonomy gaps** — see *How complete is the brush definition* below. **Three of six closed** on 2026-09-09 (pressure curve, taper Vector2D, shape Count). The three left are each parked for a stated reason: grain blend mode waits on a device question, per-dab colour on colour dynamics, and wet mix is a milestone of its own |
 | ⬜ | Brush editor UI, and a starter set of manga brushes |
 | ⬜ | Additive taxonomy gaps: the settings that are only more fields |
 | ⬜ | Per-tile dab culling once the canvas is larger than the screen |
 
 **Verified on device, 2026-09-01.** Round caps, curve smoothness at speed,
-even weight along a long stroke, and undo returning a stroke identically — the
-last confirming that seeded jitter does what it was designed for. Every Apple
+even weight along a long stroke, and undo returning a stroke identically.
+~~— the last confirming that seeded jitter does what it was designed for.~~
+*Corrected 2026-09-23:* undo restores per-tile snapshots and has since
+2026-08-28; it never re-runs a stroke. Undo returning pixels identically
+confirms the tile history, and says nothing about jitter. Every Apple
 Pencil Pro channel is live: pressure, tilt, azimuth, roll, hover, squeeze and
 double-tap. Pressure drives width end to end, and `peak/fr` reads 4, which is
 240 Hz sampling landing in a 60 Hz frame exactly as expected.
@@ -512,9 +519,11 @@ only in a commit message is a task nobody will find.
 | **Grain blend mode** | Compositing becomes a choice rather than a constant. Blocked behind knowing which modes matter, which is a device question |
 | ~~**Grain brightness and contrast**~~ | **Closed 2026-09-10, and the guess about why was measured and confirmed.** The map really is clustered: **90.1% of it sits between 0.2 and 0.8**, which is why multiplying coverage by it reads as an even wash. Full contrast takes that to 14.3%. `makeGrain` normalises the map's *range* and does nothing about its *distribution*, which is the gap these two controls fill |
 | ~~**Rendering styles** as named values~~ | **Closed 2026-09-09, and the reason it was deferred was wrong.** "Opacity and Flow already span the space" was true of the arithmetic and false of the control: our Opacity was a Glaze for every brush while Procreate's stock brushes are Blending, so the always-visible slider capped strokes where Procreate's builds them. Two families now exist as a brush field. See bug 18 |
-| **The intensity ladder within each family** | Light / Uniform / Intense / Heavy. Light Glaze settling at 0.16 ink for an Opacity of 25% says there is a factor of roughly 0.64 in there, but that is one point in one style. Costs nothing to wait: the family split is what changes behaviour, this only trims it. **One device round settles it** — the same twenty-pass scribble at one Opacity across all six named styles, six numbers |
+| **Opacity's per-dab scale** (bug 21) | **The most important open item.** One stroke at Opacity 10% is 11–14× darker than Procreate's at the same settings; per dab, about 20×. Three explanations fit and prescribe different fixes, so it waits on five numbers from Procreate — the measurement is at the end of `docs/procreate-experiments.md`. Costs a usable Opacity slider until then: a single stroke at 25% reads almost solid |
+| **The intensity ladder within each family** | Light / Uniform / Intense / Heavy. Light Glaze settling at 0.16 ink for an Opacity of 25% was read as a factor of roughly 0.64 in the Light style — but the Studio Pen's pressure settings were never recorded, and pressure on opacity would produce the same number. One point, one style, one uncontrolled variable. Costs nothing to wait: the family split is what changes behaviour, this only trims it. **One device round settles it** — the same twenty-pass scribble at one Opacity across all six named styles, six numbers |
 | **1 px stroke is invisible** (#68) | Open since 2026-09-02. May already be fixed by density accumulation; needs a device round to say |
 | ~~**A left/right toggle for the quick bar**~~ | **Closed 2026-09-09.** The device answered the question: the palm covers them. The whole chrome now moves together from a toolbar button and the choice persists. `edge` turned out to be written and never read — dead state pretending to be a feature — so it was deleted rather than exposed. See bug 20 |
+| **Prediction jitter matches the stroke** | The predicted tip is built with seed 1, the committed stroke with its own seed, so a jittered brush flickers at the tip as one replaces the other. **Not a one-line fix**, though it looks like one: passing the same seed through still restarts the sequence at draw zero, while the committed stroke is already dozens of draws in. The prediction has to *continue* the stroke's generator state, which means forking a stroke rather than building a fresh one. Deferred because no brush with jitter exists yet, so the flicker has nothing to show on |
 | **Showing the scrubbing gain while dragging** | `PrecisionSlider.currentGain` is published and unused. A "1/4" next to the readout would tell a person the slowdown is deliberate rather than the app struggling. Reported as *"the slider behavior is perfect"* on 2026-09-09, so the confusion it guards against did not happen — this now needs a reason to exist, not just an absence of one |
 | **A curve editor for the pressure response** | The curve exists in the model and is tested; nothing exposes it, which is why that setting is marked partial rather than complete in the table above |
 
@@ -523,8 +532,16 @@ only in a commit message is a task nobody will find.
 - **Spacing is a fraction of dab diameter**, not an absolute distance, so a
   brush keeps its character when resized. Absolute spacing is the classic
   mistake: it turns a smooth small brush into a dotted line when scaled up.
-- **Jitter is seeded and deterministic.** Undo re-runs a stroke, so jitter that
-  differed between runs would make undo lossy.
+- **Jitter is seeded and deterministic.** ~~Undo re-runs a stroke, so jitter
+  that differed between runs would make undo lossy.~~ *Corrected 2026-09-23:*
+  that reason was never true — undo has been per-tile copy-on-write since
+  2026-08-28, two days before this line was written. Determinism still earns its
+  keep for a narrower reason: the C++ suite asserts jitter bounds and needs a
+  reproducible sequence, and a session replays identically. One consequence
+  found on the same pass: the **prediction** stroke always uses seed 1, not the
+  committed stroke's seed, so on a jittered brush the predicted tip shows
+  different jitter from the stroke that replaces it. Invisible on the default
+  brush, which has none.
 - **Dynamics are named fields rather than a source/target matrix.** A matrix is
   more expressive on paper but evaluates a loop of mostly-disabled entries per
   dab and is harder to lay out in a UI, not easier.
