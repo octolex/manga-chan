@@ -812,11 +812,15 @@ void testTheTwoFamiliesAgreeAtFullOpacity() {
 
 /// A Blending stroke passes its own Opacity value, which a Glaze cannot.
 ///
-/// The measurable consequence, and the one the device reported: at Opacity 25%
-/// a twenty-pass scribble reached B 1 — solid — in Intense Blending, while
-/// Light Glaze settled at 0.16 ink and stayed there. One pass of ours already
-/// carries more ink than the slider reads, because roughly seventeen dabs cover
-/// every pixel at this spacing and they accumulate freely.
+/// This pins the *family* — no ceiling — and deliberately not the magnitude.
+/// On the device, at Opacity 25%, a twenty-pass scribble reached B 1 in Intense
+/// Blending while Light Glaze settled at 0.16 ink. One pass of ours already
+/// reaches 0.99 here, and that is **not** a match for the device's B 1: that
+/// figure came from twenty passes, and a single Procreate pass at Opacity 10%
+/// measured 0.03–0.09 ink, where ours gives 0.41–0.99. The per-dab amount is
+/// about twenty times Procreate's. That is bug 21, open until the device says
+/// how Procreate maps its slider onto a dab; until then this test must not be
+/// read as confirming the scale.
 void testABlendingStrokeExceedsItsOpacity() {
     Brush brush = inkPen();
     brush.renderingStyle = RenderingStyle::Blending;

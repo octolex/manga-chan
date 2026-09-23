@@ -70,6 +70,14 @@ enum class RenderingStyle : int32_t {
     /// — solid, or near enough. **This is the default**, because it is
     /// Procreate's, and because a stock brush is what a person judges the
     /// app by.
+    ///
+    /// **The family is right and the magnitude is not** (bug 21, open). Ours
+    /// puts `flow * opacity` on each dab; Procreate's single pass at Opacity
+    /// 10% measured 0.03–0.09 ink where ours gives 0.41–0.99 — eleven to
+    /// fourteen times darker, or about twenty times on the per-dab amount.
+    /// The twenty-pass result above cannot see this, because both saturate.
+    /// What maps the slider to the dab in Procreate is not yet measured; see
+    /// the correction at the end of `docs/procreate-experiments.md`.
     Blending,
 
     /// Opacity is a ceiling on the finished stroke, applied once at

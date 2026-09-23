@@ -71,7 +71,7 @@ final class PrecisionSlider: UIControl, ScrollDragImmune {
     // MARK: - Appearance
 
     /// **A control floating over the canvas has no known background**, so no
-    /// single colour can be relied on to show. White-on-white was bug 16: on a
+    /// single colour can be relied on to show. White-on-white was bug 19: on a
     /// white canvas the track vanished entirely and the thumb read as a faint
     /// smudge, which is how a slider becomes invisible without ever looking
     /// broken in a screenshot taken over dark paint.
