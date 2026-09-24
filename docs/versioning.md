@@ -128,6 +128,14 @@ Everything so far is internal pre-alpha, and none of it is a public build.
    between builds, and that is allowed until 1.0 — but a release that does break
    them must say so at the top of its notes.
 11. **1.0.0 is not declared from a checklist.** See the two conditions above.
+12. **A build is announced only once the source names it.** "It's up" means
+   `source.json` on `main` carries the new version — not that the PR merged,
+   and not that a release exists. A pull request's build publishes a release
+   but deliberately leaves the source alone, and the build from `main` takes
+   about fifteen minutes after the merge. On 2026-09-23 a build was reported
+   out at the merge, the tester looked, and SideStore correctly still showed
+   the previous one. Checkable: the announcement's timestamp against the
+   `SideStore source: vX` commit on `main`.
 
 ## Why not date-based, or just a build number
 

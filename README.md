@@ -64,9 +64,12 @@ unzipping or manual installing:
 https://raw.githubusercontent.com/octolex/manga-chan/main/source.json
 ```
 
-That URL is a fixed tag whose `source.json` asset every build replaces, so it
-never changes. Do not delete the `sidestore-source` release; the tag *is* the
-contract.
+Every build from `main` commits the new version into that file, and it is
+served with a five-minute cache, so an update appears in SideStore within
+minutes of the build finishing — about fifteen minutes after a merge, not at
+the merge. (Until 2026-09-08 the source was a release asset on a fixed
+`sidestore-source` tag; that asset is still written so the old URL keeps
+working, but it is no longer what anything advertises.)
 
 Full rules — what each number means, when it changes, and what 1.0 will
 require — are in [docs/versioning.md](docs/versioning.md).

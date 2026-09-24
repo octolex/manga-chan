@@ -163,7 +163,7 @@ final class BrushPanelView: UIView {
 
         stack.addArrangedSubview(section("Rendering", rows: [
             renderingStyleControl(),
-            slider("Opacity", key: "opacity", value: brush.opacity, range: 0.01...1,
+            slider("Opacity", key: "opacity", value: brush.opacity, range: 0...1,
                    format: { $0 < 0.0995 ? String(format: "%.1f%%", $0 * 100)
                                          : "\(Int($0 * 100))%" },
                    apply: { $0.opacity = $1 }),

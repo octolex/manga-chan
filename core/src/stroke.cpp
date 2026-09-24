@@ -280,8 +280,11 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
     // patch at 25% could never reach solid. Procreate's stock brushes are
     // Blending, so that is what an artist means by the word, and the device
     // said so before this file did.
+    //
+    // The Blending amount is not the slider itself but the slider to the power
+    // 2.6 — measured on the Studio Pen on 2026-09-24, and the fix for bug 21.
     dab.flow = brush_.renderingStyle == RenderingStyle::Blending
-                 ? flow * clamp01(brush_.opacity)
+                 ? flow * blendingDabOpacity(brush_.opacity)
                  : flow;
     dab.roundness = clamp01(brush_.roundness);
     dab.hardness = clamp01(brush_.hardness);

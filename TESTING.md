@@ -18,26 +18,19 @@ and never touches the iPad.
 
 ## Next round — start here
 
-Written 2026-09-23 for **observation mode**: draw, and say what looks wrong.
-The long tables below are the record, not a checklist. Five things matter more
-than the rest, because they change what the app *does* and none has been seen
-on a device:
+Kept short on purpose (2026-09-24). The working plan, one step at a time, is a
+private page Claude keeps; this block is the public summary of it. Everything
+here happens **in Manga-Chan** — the Procreate measurements for opacity are
+done (round 6 in `docs/procreate-experiments.md`).
 
-1. **Grain** — tests 81–83. Set Contrast to about **+70%** first; at Contrast 0
-   our map is 90.1% mid-grey and reads as a veil for a reason already measured.
-   Canvas grain should survive twenty passes; rolling grain should fill in.
-2. **Opacity builds now, and it builds far too fast.** Expect a single stroke
-   at 25% to look almost solid. That is bug 21, found on review, and it is not
-   what Procreate does — its single pass at 10% measured 3–9% ink, ours gives
-   41–99%. No need to report it; *do* say whether it makes the app unusable
-   before the fix, because that decides the order of the next work.
-3. **The side swap** — controls on the left by default, the arrow button moves
-   everything, and it survives a relaunch.
-4. **Sliders on a white canvas** — visible now, or not.
-5. **The measurement for bug 21**, whenever there are ten minutes for Procreate.
-   It is at the end of `docs/procreate-experiments.md`: read the Studio Pen's
-   pressure settings, then four single strokes at 10 / 25 / 50 / 100% and one
-   light-pressure stroke at 25%, eyedropper B on each. Five numbers.
+- **Opacity** — rebuilt on 2026-09-24 from the Studio Pen measurements. One
+  stroke at 25% should now read a light-to-mid grey, not almost solid; low
+  settings should be faint, as Procreate's are. The slider reaches 0%.
+- **Grain** — never seen on the device. Brush panel → Grain: Depth 100%,
+  Contrast about **+70%**. Canvas behaviour should survive a twenty-pass scrub;
+  Rolling should fill in.
+- **The side swap and the sliders on white** — the 2026-09-09 fixes, still
+  unchecked.
 
 ## Pending — colour and brush controls
 
@@ -122,10 +115,10 @@ the fixes, and #94 is the one that matters: it is a change to what the app
 
 | # | What | How | Expected |
 |---|---|---|---|
-| 94 | Opacity builds, like Procreate's | Opacity **25%**, Flow 100%, Blending. First **one single stroke**. Then scribble a patch ~20 times without lifting | The scribble reaches solid — no ceiling, which is the family fix. **The single stroke will also look nearly solid, and that is wrong**: bug 21. Rewritten 2026-09-23 — as first written this test only checked the scribble, which ours saturates in one pass, so it could not have failed |
+| 94 | Opacity builds, like Procreate's — **expectations revised 2026-09-24, see 21** | Opacity **25%**, Flow 100%, Blending. First **one single stroke**. Then scribble a patch ~20 times without lifting | The scribble reaches solid — no ceiling, which is the family fix. The single stroke should now read light-to-mid grey — about 0.37 ink on the default pen, against 0.72 on the Studio Pen, whose spacing packs about three times as many dabs. Rewritten 2026-09-23 — as first written this test only checked the scribble, which ours saturates in one pass, so it could not have failed |
 | 95 | Glaze still settles | Brush panel → Rendering → **Glaze**. Same 25%, same 20-pass scribble | It stops well short of solid and stays there. Then lift and lay five more strokes over it: *those* go darker. That is the other family, kept, and it is what Procreate's Light Glaze measured at (0.16 ink, then 0.60 after five more) |
 | 96 | Full opacity is unchanged | Opacity **100%**, draw and cross. Then switch Blending/Glaze and repeat | Identical in both, and identical to v0.3.88. At 100% the two families are the same brush — asserted in CI, checked here because it is what made the default change safe for every existing brush |
-| 97 | Opacity goes properly low | Quick bar, drag Opacity to the bottom | It reaches **1%**, and the readout shows a decimal below 10% (`3.5%`, not `3%`). A very light stroke should be visible but faint. The old floor was 2%, set when Opacity was a ceiling and anything under a few percent was invisible |
+| 97 | Opacity goes properly low | Quick bar, drag Opacity to the bottom | It reaches **0%**, as Procreate's does, and the readout shows a decimal below 10% (`3.5%`, not `3%`). Below about 5% a stroke is very faint by design — the dab carries opacity^2.6. The old floor was 2%, set when Opacity was a ceiling and anything under a few percent was invisible |
 | 98 | The sliders are visible on white | Clear to a white canvas. Look at the quick bar | Track, fill and thumb all clearly visible. Then draw a solid black patch behind them and look again — **both** must work. Every layer is a light fill with a dark outline for exactly this reason |
 | 99 | Controls default to the left | Fresh launch | Toolbar, quick bar and panels all on the **left**; the HUD moves to the right to stay out of their way |
 | 100 | The swap moves everything | Tap the arrow button under the brush button | The whole chrome crosses to the other edge — toolbar, quick bar, and the panels open the other way — and the HUD swaps with it. Kill the app and relaunch: it stays where you put it |
@@ -516,6 +509,14 @@ they lived in the Swift shell rather than the engine:
     or something per-dab we do not model — and they prescribe different fixes.
     This topic has produced five confident models already. The measurement is
     at the end of `docs/procreate-experiments.md`, and it is five numbers.
+    **Fixed 2026-09-24, on the real Studio Pen** — rounds 3–5 turned out to have
+    used a lookalike brush, so the numbers above describe an unknown pen, not
+    Procreate's. Measured on the classic Studio Pen with every opacity-affecting
+    setting cleared: Glaze is linear and ours already matched; Blending is
+    `opacity^2.6` per dab, fitted on two points and then confirmed by a third
+    predicted in advance (20% → B 49, read B 49). Of the three explanations,
+    it was the first — a non-linear slider. The engine reproduces the device's
+    density ratios to within 1%, and a test pins them.
 
 1–9 and 12 lived in how the shell drove the engine — layout and view
 lifecycle, not logic — which is the argument for pushing more behind the C ABI

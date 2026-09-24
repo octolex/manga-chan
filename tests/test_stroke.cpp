@@ -767,8 +767,10 @@ void testBlendingPutsOpacityOnTheDab() {
     brush.opacity = 0.5f;
     const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
     CHECK(!path.dabs().empty());
+    // flow * opacity^2.6, not flow * opacity — see blendingDabOpacity.
+    const float expected = 0.4f * std::pow(0.5f, 2.6f);
     for (const Dab& d : path.dabs()) {
-        CHECK(std::fabs(d.flow - 0.2f) < 1e-5f);
+        CHECK(std::fabs(d.flow - expected) < 1e-5f);
     }
 }
 
@@ -810,17 +812,10 @@ void testTheTwoFamiliesAgreeAtFullOpacity() {
     }
 }
 
-/// A Blending stroke passes its own Opacity value, which a Glaze cannot.
+/// A Blending stroke has no ceiling, which a Glaze does.
 ///
-/// This pins the *family* — no ceiling — and deliberately not the magnitude.
-/// On the device, at Opacity 25%, a twenty-pass scribble reached B 1 in Intense
-/// Blending while Light Glaze settled at 0.16 ink. One pass of ours already
-/// reaches 0.99 here, and that is **not** a match for the device's B 1: that
-/// figure came from twenty passes, and a single Procreate pass at Opacity 10%
-/// measured 0.03–0.09 ink, where ours gives 0.41–0.99. The per-dab amount is
-/// about twenty times Procreate's. That is bug 21, open until the device says
-/// how Procreate maps its slider onto a dab; until then this test must not be
-/// read as confirming the scale.
+/// Pins the *family* only. The scale is pinned separately, against Procreate's
+/// own numbers, by testTheBlendingCurveMatchesTheStudioPen below.
 void testABlendingStrokeExceedsItsOpacity() {
     Brush brush = inkPen();
     brush.renderingStyle = RenderingStyle::Blending;
@@ -830,7 +825,10 @@ void testABlendingStrokeExceedsItsOpacity() {
     const float once = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
     std::printf("  one pass at opacity 0.25 -> %.3f ink\n",
                 static_cast<double>(once));
-    CHECK(once > 0.25f);
+    // No ceiling: enough passes over one patch always reach solid.
+    float scrubbed = once;
+    for (int pass = 1; pass < 20; ++pass) scrubbed += once * (1.0f - scrubbed);
+    CHECK(scrubbed > 0.95f);
 
     // And a Glaze at the same setting deposits the *same* ink and is then
     // capped by the tint, so it can never pass 0.25 however many times it
@@ -842,6 +840,56 @@ void testABlendingStrokeExceedsItsOpacity() {
     const float coverage = accumulatedFlowAt(glazed.dabs(), 160.0f, 100.0f);
     CHECK(coverage * glaze.opacity <= glaze.opacity + 1e-6f);
     CHECK(coverage > once);
+}
+
+/// The Blending curve matches Procreate's Studio Pen, measured on 2026-09-24.
+///
+/// Intense Blending, one pass, pure black: 10% → 0.11 ink, 20% → 0.51,
+/// 25% → 0.72. The 20% figure was predicted from the other two before it was
+/// measured, and hit.
+///
+/// Compared as **ratios of stroke density** (`-ln(1 - ink)`), not as
+/// darkness. Density is the per-dab amount times the number of dabs over the
+/// pixel, and the dab count belongs to the brush — the Studio Pen's spacing is
+/// Procreate's minimum, ours is not — so absolute darkness would test the
+/// spacing, not the slider. The ratio between two opacities on one brush
+/// cancels the dab count and leaves only the curve.
+///
+/// The bug this pins: with a linear slider the 25%/10% ratio was about 2.5,
+/// and the device says it is about 11.
+void testTheBlendingCurveMatchesTheStudioPen() {
+    const auto density = [](float opacity) {
+        Brush brush = inkPen();
+        brush.renderingStyle = RenderingStyle::Blending;
+        brush.hardness = 1.0f;
+        brush.opacity = opacity;
+        brush.sizeDynamics.byPressure.enabled = false;
+        const StrokePath path = straightLine(brush, 20.0f, 300.0f, 32);
+        const float ink = accumulatedFlowAt(path.dabs(), 160.0f, 100.0f);
+        return -std::log(1.0f - ink);
+    };
+    const auto deviceDensity = [](float ink) { return -std::log(1.0f - ink); };
+
+    const float ours25 = density(0.25f) / density(0.10f);
+    const float ours20 = density(0.20f) / density(0.10f);
+    const float theirs25 = deviceDensity(0.72f) / deviceDensity(0.11f);
+    const float theirs20 = deviceDensity(0.51f) / deviceDensity(0.11f);
+    std::printf("  density 25%%/10%%: ours %.2f, Studio Pen %.2f\n",
+                static_cast<double>(ours25), static_cast<double>(theirs25));
+    std::printf("  density 20%%/10%%: ours %.2f, Studio Pen %.2f\n",
+                static_cast<double>(ours20), static_cast<double>(theirs20));
+
+    // Within 15%: B is read in whole units, and at 10% one unit of B is 9% of
+    // the ink, so the device ratios themselves carry about that much.
+    CHECK(std::fabs(ours25 / theirs25 - 1.0f) < 0.15f);
+    CHECK(std::fabs(ours20 / theirs20 - 1.0f) < 0.15f);
+
+    // And the mapping's ends are exact, which is what keeps every brush that
+    // never touches the slider drawing exactly as before.
+    CHECK(blendingDabOpacity(1.0f) == 1.0f);
+    CHECK(blendingDabOpacity(0.0f) == 0.0f);
+    CHECK(blendingDabOpacity(-1.0f) == 0.0f);
+    CHECK(blendingDabOpacity(2.0f) == 1.0f);
 }
 
 /// Crossing the stroke over itself still darkens.
@@ -893,6 +941,7 @@ int main() {
     testGlazeLeavesOpacityOffTheDab();
     testTheTwoFamiliesAgreeAtFullOpacity();
     testABlendingStrokeExceedsItsOpacity();
+    testTheBlendingCurveMatchesTheStudioPen();
     testCrossingTheStrokeStillDarkens();
     return check::report("stroke");
 }

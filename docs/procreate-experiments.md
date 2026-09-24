@@ -708,3 +708,88 @@ Four numbers give the shape of the curve directly: linear-with-a-factor makes
 the 100% stroke visibly short of solid, a power curve keeps it solid and
 collapses the low end, and a pressure effect shows up in step 3 alone.
 
+---
+
+# Round 6 — the real Studio Pen, 2026-09-24. Bug 21 measured and fixed.
+
+## First: rounds 3 to 5 were not the Studio Pen
+
+Every round from 3 to 5 was drawn with **a lookalike brush found online**, not
+Procreate's Studio Pen — Procreate 5.4 moved the classic brushes into a
+*Classic Library* (pinch in on the brush library), and the Studio Pen was only
+found there on 2026-09-23. Nobody's fault; it simply was not known.
+
+What that does and does not undo:
+
+* **Every number from rounds 3–5 belongs to an unknown brush.** The 0.03 /
+  0.06 / 0.08 / 0.09 spacing series, the per-dab 0.005, Light Glaze's 0.16 and
+  the "0.64 factor", the B readings in round 5 — none of them describe the
+  Studio Pen, and none should be quoted as Procreate's.
+* **The qualitative findings stand**, because they are properties of
+  Procreate's engine rather than of one brush: Glaze settles and Blending
+  builds; spacing is not compensated; canvas grain survives scrubbing and
+  rolling grain fills in; Depth changes only how dark the gaps go. None has
+  been contradicted, and the grain ones are due a device check in our app
+  regardless.
+
+## The brush, cleaned
+
+Classic Studio Pen, duplicated, then read and neutralised one screen at a time:
+
+| Setting | Stock value | Set to |
+|---|---|---|
+| Apple Pencil → Pressure → Opacity, Flow | None, None | — |
+| Apple Pencil → Tilt → Opacity (no Flow there) | None | — |
+| Rendering mode | **Intense Glaze** | kept for the Glaze series, then Intense Blending |
+| Stroke path → Spacing | None (Procreate's minimum) | — |
+| Taper → Opacity | None (taper Pressure 52% sizes the ends only) | — |
+| Grain → Depth | **Max** | None |
+| Dynamics → Speed / Jitter → Opacity | 0% / None | — |
+| Properties → Maximum / Minimum opacity | 100% / 1% | 100% / None |
+| Wet mix → Dilution, Charge, Attack, Pull | None, Disabled, None, **50%** | Pull → None |
+| Colour dynamics | all None or 0% | — |
+| Wet edges, Burnt edges, Blend mode | None, None, Normal | — |
+| Shape → Count, Scatter | 1, None | — |
+
+Pure black (HSB 0,0,0), a new Normal layer at 100%, one straight pass per
+stroke, eyedropper B read at the centre. At 100% the eyedropper read B 0 — no
+offset this time, unlike round 5's +1 on the lookalike.
+
+## Results
+
+| Opacity | Intense Glaze | Intense Blending |
+|---|---|---|
+| 10% | B 91 → 0.09 | B 89 → 0.11 |
+| 20% | — | **B 49 → 0.51, predicted 49** |
+| 25% | B 76 → 0.24 | B 28 → 0.72 |
+| 50% | B 51 → 0.49 | B 0 → solid |
+| 100% | B 0 → 1.00 | not measured; implied by 50% |
+
+The 10% Glaze stroke was reached from 11% and from 9% at the finest slider
+step, and read the same both ways, so hidden fractions of the slider do not
+matter at this resolution. The Blending strokes show a gradient from edge to
+centre — more dabs overlap on the centreline — which Glaze does not.
+
+**Glaze is the slider.** One pass lands on the Opacity value, a ceiling on the
+stroke. Our Glaze already does exactly this.
+
+**Blending is the slider to the power 2.6.** In stroke density
+(`-ln(1 - ink)`), 25% is 10.9 times 10%, where a linear slider gives 2.5. The
+exponent was fitted to 10% and 25% (2.61) and then **the 20% stroke was
+predicted before it was drawn — B 49 — and read B 49.** A third point that
+could have refuted the curve and did not.
+
+## What changed in the engine
+
+`blendingDabOpacity(o) = o^2.6`; a Blending dab now carries
+`flow * blendingDabOpacity(opacity)`. Glaze is unchanged. The engine now
+reproduces the device's density ratios: 25%/10% is 10.97 against the Studio
+Pen's 10.92, and 20%/10% is 6.10 against 6.12. The test compares ratios, not
+darkness, because absolute darkness also depends on how many dabs overlap —
+the brush's spacing — and our ink pen's 6% spacing lays about a third as many
+dabs as the Studio Pen's minimum. That is a property of the brush preset, and
+matching a preset is a separate decision from matching the slider.
+
+Also changed on the same evidence: the Opacity slider reaches 0%, as
+Procreate's does.
+
