@@ -181,8 +181,11 @@ final class BrushPanelView: UIView {
         ]))
 
         stack.addArrangedSubview(section("Stroke path", rows: [
-            slider("Spacing", key: "spacing", value: brush.spacing, range: 0.02...0.5,
-                   format: { String(format: "%.0f%% of size", $0 * 100) },
+            // Down to None, as Procreate's is: every dab at the engine's
+            // half-pixel floor. The default pen sits there, to match the
+            // Studio Pen.
+            slider("Spacing", key: "spacing", value: brush.spacing, range: 0...0.5,
+                   format: { $0 < 0.005 ? "None" : String(format: "%.0f%% of size", $0 * 100) },
                    apply: { $0.spacing = $1 }),
             slider("Stabilization", key: "smoothing", value: brush.smoothing, range: 0...0.9,
                    format: { $0 < 0.005 ? "off" : "\(Int($0 / 0.9 * 100))%" },
