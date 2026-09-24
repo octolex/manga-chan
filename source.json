@@ -12,18 +12,18 @@
       "iconURL": "https://avatars.githubusercontent.com/u/4704228?v=4",
       "tintColor": "2A6BD9",
       "category": "entertainment",
-      "version": "0.3.98",
-      "versionDate": "2026-09-24T21:34:10Z",
-      "versionDescription": "Internal pre-alpha build 0.3.98, from 21013ca67f42deb87139931a493c9043b43497c5.",
-      "downloadURL": "https://github.com/octolex/manga-chan/releases/download/v0.3.98/MangaChan.ipa",
-      "size": 288808,
+      "version": "0.3.100",
+      "versionDate": "2026-09-24T21:52:46Z",
+      "versionDescription": "Internal pre-alpha build 0.3.100, from 969441431bb73da8096199f8e0fc0140f976cd52.",
+      "downloadURL": "https://github.com/octolex/manga-chan/releases/download/v0.3.100/MangaChan.ipa",
+      "size": 288798,
       "versions": [
         {
-          "version": "0.3.98",
-          "date": "2026-09-24T21:34:10Z",
-          "localizedDescription": "Internal pre-alpha build 0.3.98, from 21013ca67f42deb87139931a493c9043b43497c5.",
-          "downloadURL": "https://github.com/octolex/manga-chan/releases/download/v0.3.98/MangaChan.ipa",
-          "size": 288808,
+          "version": "0.3.100",
+          "date": "2026-09-24T21:52:46Z",
+          "localizedDescription": "Internal pre-alpha build 0.3.100, from 969441431bb73da8096199f8e0fc0140f976cd52.",
+          "downloadURL": "https://github.com/octolex/manga-chan/releases/download/v0.3.100/MangaChan.ipa",
+          "size": 288798,
           "minOSVersion": "17.0"
         }
       ]
