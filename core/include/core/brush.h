@@ -71,13 +71,11 @@ enum class RenderingStyle : int32_t {
     /// Procreate's, and because a stock brush is what a person judges the
     /// app by.
     ///
-    /// **The family is right and the magnitude is not** (bug 21, open). Ours
-    /// puts `flow * opacity` on each dab; Procreate's single pass at Opacity
-    /// 10% measured 0.03–0.09 ink where ours gives 0.41–0.99 — eleven to
-    /// fourteen times darker, or about twenty times on the per-dab amount.
-    /// The twenty-pass result above cannot see this, because both saturate.
-    /// What maps the slider to the dab in Procreate is not yet measured; see
-    /// the correction at the end of `docs/procreate-experiments.md`.
+    /// Each dab carries `flow * blendingDabOpacity(opacity)` — the slider to
+    /// the power 2.6, measured on the classic Studio Pen. It was linear until
+    /// 2026-09-24 (bug 21), which made a single low-opacity stroke an order of
+    /// magnitude too dark: the twenty-pass result above could not see that,
+    /// because both saturate.
     Blending,
 
     /// Opacity is a ceiling on the finished stroke, applied once at
@@ -420,6 +418,42 @@ struct Brush {
     /// tapers rather than disappearing and leaving a gap in the stroke.
     float minimumSizeFraction = 0.05f;
 };
+
+/// How much of the Opacity slider one dab carries in a **Blending** style:
+/// `opacity^2.6`.
+///
+/// Measured, not reasoned — on Procreate's classic Studio Pen, cleaned of
+/// every setting that touches opacity, Intense Blending, one straight pass in
+/// pure black (2026-09-24):
+///
+///   | Opacity | B  | ink  |
+///   |---------|----|------|
+///   | 10%     | 89 | 0.11 |
+///   | 20%     | 49 | 0.51 |
+///   | 25%     | 28 | 0.72 |
+///   | 50%     |  0 | 1.00 |
+///
+/// Stroke density (`-ln(1 - ink)`) grows as opacity to the power 2.61. The
+/// exponent was fitted to 10% and 25%, and the 20% reading was **predicted
+/// before it was measured** — B 49 — and landed exactly. So it is a curve and
+/// not two points joined up. 2.6 rather than 2.61 because B is read in whole
+/// units and the second decimal is below that resolution.
+///
+/// Only the exponent transfers between brushes. Density is also the number of
+/// dabs overlapping a pixel, which is the brush's spacing and size, so a brush
+/// with sparser dabs than the Studio Pen draws lighter at the same Opacity —
+/// correctly. The tests pin the ratios between opacities, which cancel the dab
+/// count, rather than absolute darkness.
+///
+/// **Glaze does not use this.** Measured on the same pen, Intense Glaze put
+/// 0.09 / 0.24 / 0.49 / 1.00 ink down for 10 / 25 / 50 / 100% — the slider
+/// itself, as a ceiling — which is what applying opacity once at composite
+/// already does.
+///
+/// This replaced a plain `flow * opacity` on 2026-09-24: bug 21. A single pass
+/// at 10% came out 0.41–0.99 against Procreate's 0.11, because a linear slider
+/// lets a low setting accumulate across dozens of overlapping dabs.
+float blendingDabOpacity(float opacity) noexcept;
 
 /// The default inking brush: hard edge, tight spacing, size on pressure,
 /// no buildup. Chosen so that the first thing on screen is the one a manga

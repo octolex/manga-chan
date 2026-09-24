@@ -146,6 +146,15 @@ float Modulation::evaluate(float pressure, float tilt, float velocity) const {
          * byVelocity.evaluate(velocity);
 }
 
+float blendingDabOpacity(float opacity) noexcept {
+    // Clamped first: pow of a negative is a NaN, and a NaN dab is a stroke
+    // that silently does not appear.
+    const float o = opacity < 0.0f ? 0.0f : (opacity > 1.0f ? 1.0f : opacity);
+    // Measured on Procreate's Studio Pen, Intense Blending — see brush.h.
+    constexpr float kExponent = 2.6f;
+    return std::pow(o, kExponent);
+}
+
 Brush inkPen() {
     Brush b;
     b.size = 14.0f;

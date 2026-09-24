@@ -155,14 +155,14 @@ final class BrushQuickBar: UIView {
             delegate?.quickBar(self, didChangeSize: newSize)
         }
 
-        // Down to 1%, not 2%. The old floor was set when Opacity was a ceiling
-        // on the finished stroke, where anything under a few percent was an
-        // invisible stroke and the floor was a kindness. It is a per-dab
-        // multiplier now, so 1% is a real working value — the thinnest glaze
-        // the brush can lay, built up over passes — and the floor was in the
-        // way. It stops above zero because a 0% brush is a brush that draws
-        // nothing, which reads as the app being broken.
-        opacitySlider.range = 0.01...1
+        // Down to 0%, as Procreate's is (checked on device, 2026-09-23). The
+        // floor here went 2% → 1% → gone: it existed first because Opacity was
+        // a ceiling, then on the reasoning that a 0% brush reads as broken.
+        // Procreate lets the slider reach zero and shows it, and the readout
+        // here says "0.0%" too, so nothing is hidden. In Blending the dab
+        // carries opacity^2.6 (bug 21), so the bottom few percent are very
+        // faint by design — the same as Procreate's.
+        opacitySlider.range = 0...1
         opacitySlider.value = opacity
         opacitySlider.onChange = { [weak self] newValue, _ in
             guard let self else { return }

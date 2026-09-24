@@ -34,6 +34,17 @@ Stated directly, so it does not have to be restated each session.
   Better still, publish the round as a page they can keep open beside Procreate,
   with any predicted outcome drawn rather than described — a grey swatch they
   can hold the canvas against beats a percentage they have to imagine.
+- **Short messages, one step at a time** (octolex, 2026-09-23). Ping-pong, not
+  documents: say "I now need you to test X" with only the instruction it needs,
+  answer questions briefly, and give long explanations only when asked. Every
+  new check goes into the plan first and is then asked **singly** — never a
+  list of things to do in one message. Say which app a step happens in.
+- **The working plan is a private artifact page**, "Manga-Chan Test Plan"
+  (find it with the Artifact tool's `list`). It holds every step, what each
+  resolves, and each result as it comes back. Update it after every answer and
+  resume from its step marked *next* — it exists so a compacted or new session
+  does not lose the thread. It is private on purpose; nothing in it belongs in
+  the public repo until it has been turned into a finding here.
 - **Observation mode, except for reverse-engineering** (octolex, 2026-09-09).
   For ordinary changes they draw with the build and report what looks wrong;
   they do not work through numbered checklists. Give a short "what changed,
