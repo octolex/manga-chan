@@ -158,9 +158,17 @@ float blendingDabOpacity(float opacity) noexcept {
 Brush inkPen() {
     Brush b;
     b.size = 14.0f;
-    // Tight enough that consecutive dabs overlap heavily and the stroke reads
-    // as a continuous line rather than a chain of discs.
-    b.spacing = 0.06f;
+    // None — Procreate's classic Studio Pen, which this pen stands in for,
+    // ships with Spacing at None, and matching it is what makes the same
+    // Opacity give the same darkness (octolex, 2026-09-24). Zero means every
+    // dab lands at the engine's half-pixel floor, which is what None means.
+    //
+    // It was 6% until then. Measured the day before: at 25% opacity that pen
+    // put down 0.37 ink against the Studio Pen's 0.72, because density is the
+    // per-dab amount times the dabs over a pixel, and 6% laid about a third as
+    // many. The cost is more dabs per stroke — watch `gpu` in the HUD on a
+    // large brush.
+    b.spacing = 0.0f;
     b.hardness = 0.95f;
     b.flow = 1.0f;
     b.opacity = 1.0f;

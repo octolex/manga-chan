@@ -793,3 +793,11 @@ matching a preset is a separate decision from matching the slider.
 Also changed on the same evidence: the Opacity slider reaches 0%, as
 Procreate's does.
 
+**Follow-up, same day.** octolex decided the default pen should match the
+Studio Pen's Spacing, which is None — every dab at the minimum. Ours now does
+(spacing 0, the engine's half-pixel floor). At the default size of 14 px a
+25% stroke went from 0.37 to 0.55 ink. The rest of the gap to the Studio Pen's
+0.72 should be brush width, since at a fixed floor the dab count scales with
+diameter. **Pre-registered:** if Procreate's floor is also about half a pixel,
+the Studio Pen was drawn at roughly 23 px, and our pen at 23 px gives 0.72.
+
