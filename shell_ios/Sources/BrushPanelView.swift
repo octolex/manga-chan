@@ -187,13 +187,32 @@ final class BrushPanelView: UIView {
             slider("Spacing", key: "spacing", value: brush.spacing, range: 0...0.5,
                    format: { $0 < 0.005 ? "None" : String(format: "%.0f%% of size", $0 * 100) },
                    apply: { $0.spacing = $1 }),
-            slider("Stabilization", key: "smoothing", value: brush.smoothing, range: 0...0.9,
-                   format: { $0 < 0.005 ? "off" : "\(Int($0 / 0.9 * 100))%" },
-                   apply: { $0.smoothing = $1 }),
             slider("Minimum size", key: "minimumSizeFraction",
                    value: brush.minimumSizeFraction, range: 0...0.5,
                    format: { "\(Int($0 * 100))% of size" },
                    apply: { $0.minimumSizeFraction = $1 }),
+        ]))
+
+        // Procreate's Brush Studio → Stabilization, under its names. Our
+        // `smoothing` is StreamLine; it was labelled "Stabilization" here until
+        // 2026-11-06, which is the name of a *different* Procreate control —
+        // a Procreate user setting up an inking pen reaches for StreamLine.
+        stack.addArrangedSubview(section("Stabilization", rows: [
+            slider("StreamLine", key: "smoothing", value: brush.smoothing, range: 0...0.9,
+                   format: { $0 < 0.005 ? "off" : "\(Int($0 / 0.9 * 100))%" },
+                   apply: { $0.smoothing = $1 }),
+            slider("Stabilization", key: "stabilization", value: brush.stabilization,
+                   range: 0...1,
+                   format: { $0 < 0.005 ? "off" : "\(Int(($0 * 100).rounded()))%" },
+                   apply: { $0.stabilization = $1 }),
+            slider("Motion filtering", key: "motionFiltering", value: brush.motionFiltering,
+                   range: 0...1,
+                   format: { $0 < 0.005 ? "off" : "\(Int(($0 * 100).rounded()))%" },
+                   apply: { $0.motionFiltering = $1 }),
+            slider("Motion filtering expression", key: "motionFilteringExpression",
+                   value: brush.motionFilteringExpression, range: 0...1,
+                   format: { "\(Int(($0 * 100).rounded()))%" },
+                   apply: { $0.motionFilteringExpression = $1 }),
         ]))
 
         // Two tapers, because a finger reports no real pressure and a
