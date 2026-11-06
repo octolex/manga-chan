@@ -627,7 +627,10 @@ would have reached the device. All five lived in the Swift shell.
     tests could not see it because they model density in exact arithmetic —
     the like-with-like error again, this time between a float model and an
     8-bit GPU. The buffer is now 16-bit integer, and a simulator test renders
-    the low-opacity case in both formats and prints both.
+    the low-opacity case in both formats and prints both. **Measured in CI,
+    2026-11-06, on real Metal:** 560 dabs at 5% — exact 0.2071, 16-bit
+    0.2072, 8-bit **0.0000**; 28 dabs at 10% — exact 0.0680, 16-bit 0.0680,
+    8-bit 0.1098. The 8-bit figures are the ones the simulation predicted.
 24. **The end taper never reached the canvas.** The taper shrinks the last
     dabs when the stroke ends, but the renderer stamps coverage incrementally
     and only ever stamped dabs it had not seen. The dabs the taper revised had
