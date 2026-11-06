@@ -13,7 +13,9 @@
 //      antialiased however many dabs pass over it.
 //    · Predicted touches are painted onto the finished frame rather than into
 //      coverage, so a wrong guess can never reach a layer.
-//    · Stroke opacity stays adjustable until the moment it is committed.
+//    · Each stroke keeps the brush and ink it began with, all the way to
+//      its commit, so nothing done after the pen lifts can change a stroke
+//      already drawn.
 //
 //  At stroke end the coverage is flattened into the active layer's texture,
 //  and only the tiles it touched are read back to the engine. That crossing
@@ -133,9 +135,28 @@ final class Renderer: NSObject {
     /// exactly once, which is what this counter guarantees.
     private var stampedDabs = 0
     private var coverageNeedsClear = true
-    private var pendingCommit = false
-    private var pendingTiles: [EngineTile] = []
+    /// Whether the current stroke has already been restamped for its end
+    /// taper. Once is enough — the taper revises the stroke once, at the lift.
+    private var restampedForTaper = false
     private var samplesThisFrame = 0
+
+    /// A finished stroke waiting for the next frame to flatten it into its
+    /// layer. Everything the commit needs is captured when the pen lifts.
+    ///
+    /// It used to be a flag plus whatever the renderer's state was when the
+    /// frame came — the stroke, the active layer, the ink. So a second stroke
+    /// begun inside the same frame replaced the first one's coverage before it
+    /// was flattened, and the first stroke vanished; a finger touch cancelled
+    /// in that window aborted it outright; and selecting another layer in it
+    /// committed the stroke into the wrong one. Nothing now reads live state
+    /// for a commit, and anything that would disturb one flushes it first —
+    /// see `flushPendingCommit`.
+    private struct PendingCommit {
+        let tiles: [EngineTile]
+        let layer: MCLayerId
+        let ink: simd_float4
+    }
+    private var pendingCommit: PendingCommit?
 
     /// Ink colour, straight (not premultiplied); the shader premultiplies.
     var inkColor = simd_float4(0.09, 0.09, 0.11, 1.0)
@@ -150,12 +171,10 @@ final class Renderer: NSObject {
     private var smoothedGPUMs: Double = 0
     private var smoothedCPUMs: Double = 0
 
-    /// Four channels rather than one: RGB holds ink density and alpha holds
-    /// the stroke's geometry, and they need different blend operations. Metal
-    /// splits blend state at the RGB/alpha boundary and nowhere finer, so a
-    /// two-channel format cannot express this — `rg8Unorm` has no alpha to put
-    /// the maximum-blended channel in.
-    private static let coverageFormat: MTLPixelFormat = .rgba8Unorm
+    // The coverage format — four channels, because RGB holds ink density and
+    // alpha the stroke's geometry and they need different blend operations,
+    // which Metal splits only at the RGB/alpha boundary — lives in
+    // StrokeCoverage, shared with the shader tests.
 
     var canvas: CanvasEngine { engine }
 
@@ -189,7 +208,7 @@ final class Renderer: NSObject {
         dabs.vertexFunction = try function("dab_vertex")
         dabs.fragmentFunction = try function("dab_coverage_fragment")
         let dabAttachment = dabs.colorAttachments[0]!
-        dabAttachment.pixelFormat = Self.coverageFormat
+        dabAttachment.pixelFormat = StrokeCoverage.pixelFormat
         dabAttachment.isBlendingEnabled = true
 
         // Ink density: alpha-over, so passes build.
@@ -253,9 +272,14 @@ final class Renderer: NSObject {
 
     // MARK: - Stroke input
 
-    /// The brush the next stroke will use. A value, so changing it mid-stroke
-    /// cannot alter a stroke already in progress.
-    ///
+    /// The brush the next stroke will use. A value, and each stroke carries
+    /// its own copy (`BrushStroke.brush`), so changing it mid-stroke cannot
+    /// alter a stroke already in progress — its grain and its tint come from
+    /// the brush it began with.
+    var brush: MCBrush = mc_brush_ink_pen() {
+        didSet { inkColor.w = Self.tint(for: brush) }
+    }
+
     /// Where stroke opacity is applied depends on the brush's rendering style,
     /// and this is the only place the shell knows about it.
     ///
@@ -266,26 +290,32 @@ final class Renderer: NSObject {
     /// it and the tint has to be 1 or it would be applied twice.
     ///
     /// The double-application is the bug this shape exists to make impossible:
-    /// one place decides, and the other reads `strokeTint` rather than
-    /// `brush.opacity`.
-    var brush: MCBrush = mc_brush_ink_pen() {
-        didSet { inkColor.w = strokeTint }
+    /// one place decides, and everything else asks it.
+    private static func tint(for brush: MCBrush) -> Float {
+        brush.renderingStyle == Int32(MC_RENDER_GLAZE.rawValue) ? brush.opacity : 1
     }
 
-    /// 1 in a Blending style, because the dabs already carry the opacity.
-    private var strokeTint: Float {
-        brush.renderingStyle == Int32(MC_RENDER_GLAZE.rawValue) ? brush.opacity : 1
+    /// The ink a given stroke composites with: the current colour, at the tint
+    /// of the brush *that stroke* was begun with.
+    private func ink(for stroke: BrushStroke?) -> simd_float4 {
+        guard let stroke else { return inkColor }
+        return simd_float4(inkColor.x, inkColor.y, inkColor.z, Self.tint(for: stroke.brush))
     }
 
     /// Ink colour without its alpha, which the rendering style owns.
     func setInkRGB(_ rgb: simd_float3) {
-        inkColor = simd_float4(rgb.x, rgb.y, rgb.z, strokeTint)
+        inkColor = simd_float4(rgb.x, rgb.y, rgb.z, Self.tint(for: brush))
     }
 
     func setStroke(_ stroke: BrushStroke?, sampleCount: Int) {
         if stroke !== self.stroke {
+            // A different stroke while the last one still waits for its frame:
+            // the last one is flattened now, before its coverage is cleared
+            // for the new one. Within one frame of a lift is quick hatching.
+            flushPendingCommit()
             stampedDabs = 0
             coverageNeedsClear = true
+            restampedForTaper = false
         }
         self.stroke = stroke
         strokeActive = stroke != nil
@@ -299,29 +329,82 @@ final class Renderer: NSObject {
     var engineTileSize: Int { engine.tileSize }
 
     /// Flattens the stroke into the active layer on the next frame, then hands
-    /// the tiles it touched to the engine.
+    /// the tiles it touched to the engine. The layer and ink are fixed now,
+    /// at the lift, not read again when the frame comes.
     func endStroke(tiles: Set<EngineTile>) {
-        guard strokeActive else { return }
+        guard strokeActive, pendingCommit == nil else { return }
         prediction = nil
-        pendingTiles = Array(tiles)
-        pendingCommit = true
+        pendingCommit = PendingCommit(tiles: Array(tiles),
+                                      layer: engine.activeLayer,
+                                      ink: ink(for: stroke))
     }
 
-    /// Discards the stroke without committing it. Nothing needs repainting:
-    /// the coverage texture is rebuilt from geometry each frame and only drawn
-    /// while a stroke is active.
+    /// Discards the stroke in progress without committing it. Nothing needs
+    /// repainting: the coverage is only drawn while a stroke is active.
+    ///
+    /// A stroke already *finished* is not this call's to discard. Once the pen
+    /// has lifted the stroke is the artist's, and the only thing that can take
+    /// it back is undo — so an abort arriving while one waits for its frame is
+    /// about a newer touch the renderer has not been shown yet, and leaves the
+    /// finished stroke alone.
     func abortStroke() {
-        guard strokeActive || pendingCommit else { return }
+        guard strokeActive, pendingCommit == nil else { return }
         stroke = nil
         prediction = nil
-        pendingTiles.removeAll(keepingCapacity: true)
         strokeActive = false
-        pendingCommit = false
+    }
+
+    /// Commits a finished stroke immediately rather than on the next frame.
+    ///
+    /// Called by anything that would otherwise disturb it: a new stroke, undo,
+    /// a layer change. Costs one GPU round trip — the same wait the frame
+    /// would have paid — but only in the rare case that something lands
+    /// between the lift and the next frame.
+    func flushPendingCommit() {
+        guard let commit = pendingCommit,
+              let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        commandBuffer.label = "Flush pending commit"
+        ensureTextures()
+        encodeCoverage(in: commandBuffer)
+        if let coverage = scratchTexture {
+            compositor.syncLayer(commit.layer, engine: engine)
+            compositor.flattenStroke(into: commit.layer, coverage: coverage,
+                                     inkColor: commit.ink, commandBuffer: commandBuffer)
+        }
+        commandBuffer.commit()
+        completeCommit(commit, commandBuffer: commandBuffer)
+    }
+
+    /// Waits for the flatten, then hands the stroke's tiles to the engine as
+    /// one undo step. The one place we stall on the GPU: reading the layer
+    /// before the flatten has actually run would capture it a frame stale.
+    /// Once per stroke, not per frame.
+    private func completeCommit(_ commit: PendingCommit, commandBuffer: MTLCommandBuffer) {
+        let waitStarted = CACurrentMediaTime()
+        commandBuffer.waitUntilCompleted()
+        let readStarted = CACurrentMediaTime()
+
+        engine.beginStroke("Stroke")
+        compositor.readBack(layer: commit.layer, tiles: commit.tiles, engine: engine)
+        engine.commitStroke()
+        engine.evict()
+
+        // Kept apart because they have different cures. The wait is the GPU
+        // finishing the frame; the readback is the copy from a screen-shaped
+        // texture into tiles.
+        stats.gpuWaitMs = (readStarted - waitStarted) * 1000.0
+        stats.lastCaptureMs = (CACurrentMediaTime() - readStarted) * 1000.0
+
+        stroke = nil
+        prediction = nil
+        strokeActive = false
+        pendingCommit = nil
     }
 
     // MARK: - Layers
 
     func addLayer() {
+        flushPendingCommit()
         let id = engine.addLayer(named: "Layer \(engine.layerCount + 1)")
         compositor.markLayerStale(id)
         onLayersChanged?()
@@ -329,38 +412,54 @@ final class Renderer: NSObject {
     }
 
     func duplicateActiveLayer() {
+        flushPendingCommit()
         let id = engine.duplicateLayer(engine.activeLayer)
         compositor.markLayerStale(id)
         onLayersChanged?()
     }
 
     func removeLayer(_ layer: MCLayerId) {
+        flushPendingCommit()
         guard engine.removeLayer(layer) else { return }
         compositor.forgetLayer(layer)
         onLayersChanged?()
     }
 
     func selectLayer(_ layer: MCLayerId) {
+        flushPendingCommit()
         engine.setActiveLayer(layer)
         onLayersChanged?()
     }
 
     func moveLayer(_ layer: MCLayerId, to index: Int) {
+        flushPendingCommit()
         guard engine.moveLayer(layer, to: index) else { return }
         onLayersChanged?()
     }
 
     func setProperties(_ properties: LayerProperties, of layer: MCLayerId) {
+        flushPendingCommit()
         // Deliberately does not fire onLayersChanged. The panel initiated this
         // and has already updated itself; rebuilding it here would tear down
         // whichever control the user is still touching.
         engine.setProperties(properties, of: layer)
     }
 
+    // MARK: - Eyedropper
+
+    /// The colour on screen at a canvas pixel. A stroke still waiting for its
+    /// frame is flattened first, so the eyedropper can pick the line that was
+    /// just drawn.
+    func compositeColor(atPixelX x: Int, y: Int) -> simd_float3 {
+        flushPendingCommit()
+        return engine.compositeColor(atPixelX: Int32(clamping: x), y: Int32(clamping: y))
+    }
+
     // MARK: - History
 
     @discardableResult
     func undo() -> Bool {
+        flushPendingCommit()
         guard let tiles = engine.undo() else { return false }
         // Undo can touch any layer, so every texture is suspect. Re-uploading
         // lazily on next use keeps this off the frame that has to stay
@@ -377,6 +476,7 @@ final class Renderer: NSObject {
 
     @discardableResult
     func redo() -> Bool {
+        flushPendingCommit()
         guard let tiles = engine.redo() else { return false }
         compositor.markAllLayersStale()
         onLayersChanged?()
@@ -385,6 +485,7 @@ final class Renderer: NSObject {
     }
 
     func clearActiveLayer() {
+        flushPendingCommit()
         let tiles = engine.clearActiveLayer()
         compositor.markLayerStale(engine.activeLayer)
         onLayersChanged?()
@@ -434,7 +535,8 @@ final class Renderer: NSObject {
         }
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: Self.coverageFormat, width: width, height: height, mipmapped: false)
+            pixelFormat: StrokeCoverage.pixelFormat, width: width, height: height,
+            mipmapped: false)
         descriptor.usage = [.renderTarget, .shaderRead]
         descriptor.storageMode = .private   // the CPU never reads coverage
         scratchTexture = device.makeTexture(descriptor: descriptor)
@@ -487,7 +589,7 @@ final class Renderer: NSObject {
     /// Depth is forced to zero when there is no texture, which makes the
     /// shader's `depth <= 0` early-out double as the guard that keeps it from
     /// ever sampling an unbound texture.
-    private func dabUniforms(width: Int, height: Int) -> MSDabUniforms {
+    private func dabUniforms(width: Int, height: Int, brush: MCBrush) -> MSDabUniforms {
         MSDabUniforms(viewportSize: simd_float2(Float(width), Float(height)),
                       grainDepth: grainTexture == nil ? 0 : brush.grainDepth,
                       grainScale: brush.grainScale,
@@ -501,6 +603,17 @@ final class Renderer: NSObject {
         guard let scratch = scratchTexture, let stroke else { return }
 
         let count = stroke.dabCount
+
+        // The end taper shrinks dabs that were already stamped at full size,
+        // and accumulated coverage cannot be taken back — so the stroke is
+        // stamped again from nothing. Once, at the lift, and only for a brush
+        // with an end taper. Until 2026-11-06 this case was not handled and
+        // the end taper never reached the canvas.
+        if !restampedForTaper, stroke.firstRevisedDab < stampedDabs {
+            coverageNeedsClear = true
+            restampedForTaper = true
+        }
+
         // Nothing new and nothing to clear: the texture already holds the
         // right image, so the whole pass can be skipped. A stroke held still
         // costs no GPU time at all.
@@ -516,7 +629,8 @@ final class Renderer: NSObject {
         encoder.label = "Dab coverage"
         encoder.setRenderPipelineState(dabPipeline)
 
-        var uniforms = dabUniforms(width: scratch.width, height: scratch.height)
+        var uniforms = dabUniforms(width: scratch.width, height: scratch.height,
+                                   brush: stroke.brush)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
                                index: Int(MSBufferIndexUniforms.rawValue))
         // The fragment stage needs them too: the vertex stage decides *where*
@@ -559,7 +673,8 @@ final class Renderer: NSObject {
         encoder.label = "Predicted dabs"
         encoder.setRenderPipelineState(predictionPipeline)
 
-        var uniforms = dabUniforms(width: target.width, height: target.height)
+        var uniforms = dabUniforms(width: target.width, height: target.height,
+                                   brush: prediction.brush)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
                                index: Int(MSBufferIndexUniforms.rawValue))
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<MSDabUniforms>.stride,
@@ -588,17 +703,16 @@ final class Renderer: NSObject {
         commandBuffer.label = "Frame \(stats.frameIndex)"
 
         let dabCount = (stroke?.dabCount ?? 0) + (prediction?.dabCount ?? 0)
-        let committing = pendingCommit
-        let activeLayer = engine.activeLayer
+        let commit = pendingCommit
 
         if strokeActive {
             encodeCoverage(in: commandBuffer)
         }
 
-        if committing, let coverage = scratchTexture {
-            compositor.syncLayer(activeLayer, engine: engine)
-            compositor.flattenStroke(into: activeLayer, coverage: coverage,
-                                     inkColor: inkColor, commandBuffer: commandBuffer)
+        if let commit, let coverage = scratchTexture {
+            compositor.syncLayer(commit.layer, engine: engine)
+            compositor.flattenStroke(into: commit.layer, coverage: coverage,
+                                     inkColor: commit.ink, commandBuffer: commandBuffer)
         }
 
         let plan = engine.refreshPlan()
@@ -609,13 +723,14 @@ final class Renderer: NSObject {
             compositor.rebuildOverCache(plan.over, engine: engine, commandBuffer: commandBuffer)
         }
 
+        let live = strokeActive && commit == nil
         compositor.present(into: drawable.texture, plan: plan, engine: engine,
-                           strokeCoverage: (strokeActive && !committing) ? scratchTexture : nil,
-                           inkColor: inkColor, commandBuffer: commandBuffer)
+                           strokeCoverage: live ? scratchTexture : nil,
+                           inkColor: ink(for: stroke), commandBuffer: commandBuffer)
 
         // Excluded on the committing frame, so a guess can never be flattened
         // into a layer.
-        if strokeActive && !committing {
+        if live {
             encodePrediction(onto: drawable.texture, in: commandBuffer)
         }
 
@@ -627,30 +742,8 @@ final class Renderer: NSObject {
         commandBuffer.present(drawable)
         commandBuffer.commit()
 
-        if committing {
-            // The one place we stall on the GPU. Reading the layer before the
-            // flatten has actually run would capture it a frame stale. Once
-            // per stroke, not per frame.
-            let waitStarted = CACurrentMediaTime()
-            commandBuffer.waitUntilCompleted()
-            let readStarted = CACurrentMediaTime()
-
-            engine.beginStroke("Stroke")
-            compositor.readBack(layer: activeLayer, tiles: pendingTiles, engine: engine)
-            engine.commitStroke()
-            engine.evict()
-
-            // Kept apart because they have different cures. The wait is the
-            // GPU finishing the frame; the readback is the copy from a
-            // screen-shaped texture into tiles.
-            stats.gpuWaitMs = (readStarted - waitStarted) * 1000.0
-            stats.lastCaptureMs = (CACurrentMediaTime() - readStarted) * 1000.0
-
-            stroke = nil
-            prediction = nil
-            pendingTiles.removeAll(keepingCapacity: true)
-            strokeActive = false
-            pendingCommit = false
+        if let commit {
+            completeCommit(commit, commandBuffer: commandBuffer)
         }
 
         let cpuMs = (CACurrentMediaTime() - cpuStart) * 1000.0

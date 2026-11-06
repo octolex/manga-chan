@@ -34,6 +34,13 @@ typedef struct {
 } MSDab;
 
 // Matches MCGrainMovement in core/brush_api.h.
+/// The smallest radius, in pixels, a dab is drawn at. A dab smaller than this
+/// on either axis is drawn at this size with its flow scaled down by the ratio
+/// of areas, so a hairline keeps its weight wherever it lands between pixel
+/// centres. Must equal MC_MIN_DRAWN_RADIUS in core/brush_api.h; the harness
+/// tests check. See mc::kMinimumDrawnRadius.
+#define MS_MIN_DRAWN_RADIUS 1.0f
+
 typedef enum {
     MSGrainCanvas = 0,   // grain fixed to the canvas, like the tooth of paper
     MSGrainRolling = 1   // grain travels with the stroke, like dry media
