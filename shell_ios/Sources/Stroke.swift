@@ -59,5 +59,13 @@ struct InputStats {
     var squeezeCount: Int = 0
     var doubleTapCount: Int = 0
     var peakSamplesPerFrame: Int = 0
+
+    /// Pencil force samples UIKit marked as estimates, how many of those were
+    /// later corrected, and the largest correction seen (in 0...1 pressure).
+    /// The measurement that decides whether corrections are worth applying to
+    /// a stroke already drawn.
+    var forceEstimated: Int = 0
+    var forceCorrected: Int = 0
+    var forceMaxError: Float = 0
 }
 

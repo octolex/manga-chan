@@ -23,15 +23,33 @@ final class BrushStroke {
     private let handle: OpaquePointer?
     private let pixelScale: CGFloat
 
+    /// The brush this stroke was begun with. The renderer takes the stroke's
+    /// grain and tint from here rather than from whatever brush is current,
+    /// so a slider moved mid-stroke cannot change ink already laid down.
+    let brush: MCBrush
+
     /// Newest raw sample, used to seed the prediction path so it starts where
     /// the committed stroke currently ends.
     private(set) var lastPoint: StrokePoint?
 
     private(set) var sampleCount = 0
 
-    init(brush: MCBrush, pixelScale: CGFloat, seed: UInt64) {
-        var brush = brush
-        self.handle = mc_stroke_begin(&brush, seed)
+    /// - Parameter input: the app-wide Pressure and Smoothing settings. They
+    ///   have to be set before the first sample, so they come in here.
+    init(brush: MCBrush, pixelScale: CGFloat, seed: UInt64,
+         input: MCInputSettings = mc_input_settings_default()) {
+        var copy = brush
+        self.handle = mc_stroke_begin(&copy, seed)
+        self.pixelScale = pixelScale
+        self.brush = brush
+        var settings = input
+        mc_stroke_set_input_settings(handle, &settings)
+    }
+
+    /// Wraps a path the engine has already built — QuickShape's.
+    private init(handle: OpaquePointer?, brush: MCBrush, pixelScale: CGFloat) {
+        self.handle = handle
+        self.brush = brush
         self.pixelScale = pixelScale
     }
 
@@ -62,6 +80,38 @@ final class BrushStroke {
     var dabCount: Int { Int(mc_stroke_dab_count(handle)) }
 
     var isEmpty: Bool { dabCount == 0 }
+
+    /// The first dab the end taper revised after it was emitted, or
+    /// `dabCount` when none was. See `Renderer.encodeCoverage`.
+    var firstRevisedDab: Int { Int(mc_stroke_first_revised_dab(handle)) }
+
+    // MARK: - QuickShape
+
+    /// Fits a shape to the stroke drawn so far, in canvas pixels. Nil when the
+    /// stroke is not clearly a shape, and should be left as drawn.
+    func detectShape() -> MCQuickShape? {
+        var shape = MCQuickShape()
+        let kind = mc_quickshape_detect(handle, &shape)
+        return kind == Int32(MC_SHAPE_NONE.rawValue) ? nil : shape
+    }
+
+    /// A fresh, unfinished stroke drawing `shape` with this stroke's brush.
+    /// It replaces this one wholesale; it is finished on lift like any other.
+    func replacing(with shape: MCQuickShape, seed: UInt64,
+                   timestamp: TimeInterval) -> BrushStroke {
+        var shape = shape
+        var brush = self.brush
+        let fromPencil: Int32 = (lastPoint?.fromPressureDevice ?? true) ? 1 : 0
+        let handle = mc_quickshape_stroke(&shape, &brush, seed, timestamp, fromPencil)
+        let stroke = BrushStroke(handle: handle, brush: self.brush, pixelScale: pixelScale)
+        stroke.lastPoint = lastPoint
+        stroke.sampleCount = sampleCount
+        return stroke
+    }
+
+    /// Canvas pixels to view points, for the shell placing things over the
+    /// canvas — the eyedropper loupe, the QuickShape pen position.
+    var scale: CGFloat { pixelScale }
 
     /// The dab array, owned by the engine. Valid until the next `append`.
     ///
@@ -100,9 +150,12 @@ final class BrushStroke {
     /// agree exactly with what the committed stroke will do — and keeping it
     /// separate means a wrong prediction can never contaminate the real path.
     static func prediction(brush: MCBrush, pixelScale: CGFloat,
+                           input: MCInputSettings = mc_input_settings_default(),
                            from seed: StrokePoint, through points: [StrokePoint]) -> BrushStroke? {
         guard !points.isEmpty else { return nil }
-        let path = BrushStroke(brush: brush, pixelScale: pixelScale, seed: 1)
+        // The same pressure curve as the stroke, or the predicted tip would be
+        // a different width from the line that replaces it.
+        let path = BrushStroke(brush: brush, pixelScale: pixelScale, seed: 1, input: input)
         path.append([seed] + points)
         path.finish()
         return path.isEmpty ? nil : path

@@ -25,6 +25,13 @@ import UIKit
 // a descriptor that was already open before anything went wrong.
 private nonisolated(unsafe) var crashFD: Int32 = -1
 
+// Frames for the crash backtrace, allocated once at launch. The handler used
+// to build a Swift array here, which allocates — exactly what its own comment
+// forbids — and a crash inside malloc, the case that most needs a backtrace,
+// would then have deadlocked or died again in the handler and lost it.
+private let crashFrameCapacity: Int32 = 128
+private nonisolated(unsafe) var crashFrames: UnsafeMutablePointer<UnsafeMutableRawPointer?>? = nil
+
 private func writeStatic(_ fd: Int32, _ text: StaticString) {
     // StaticString points at storage baked into the binary, so handing it to
     // write(2) allocates nothing and is safe in a signal handler.
@@ -49,15 +56,12 @@ private let fatalSignalHandler: @convention(c) (Int32) -> Void = { sig in
         writeStatic(crashFD, signalName(sig))
         writeStatic(crashFD, " ===\n")
 
-        var frames = [UnsafeMutableRawPointer?](repeating: nil, count: 128)
-        let count = frames.withUnsafeMutableBufferPointer { buffer in
-            backtrace(buffer.baseAddress, Int32(buffer.count))
-        }
-        frames.withUnsafeMutableBufferPointer { buffer in
+        if let frames = crashFrames {
+            let count = backtrace(frames, 128)   // crashFrameCapacity, as a literal: no global initialiser runs in here
             // backtrace_symbols_fd writes straight to the descriptor without
             // allocating, which is why it is the only symbolisation call
             // usable from here.
-            backtrace_symbols_fd(buffer.baseAddress, count, crashFD)
+            backtrace_symbols_fd(frames, count, crashFD)
         }
         fsync(crashFD)
     }
@@ -108,6 +112,11 @@ enum Diagnostics {
     }
 
     private static func installHandlers() {
+        let frames = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(
+            capacity: Int(crashFrameCapacity))
+        frames.initialize(repeating: nil, count: Int(crashFrameCapacity))
+        crashFrames = frames
+
         NSSetUncaughtExceptionHandler { exception in
             Diagnostics.log("=== UNCAUGHT EXCEPTION ===")
             Diagnostics.log("name: \(exception.name.rawValue)")

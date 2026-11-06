@@ -7,6 +7,9 @@
 #include "core/tile_store.h"
 #include "core/undo.h"
 
+#include <cmath>
+#include <utility>
+
 #include <cstring>
 #include <string>
 #include <vector>
@@ -243,6 +246,72 @@ int32_t mc_canvas_load_tile_from(MCCanvas* canvas, MCLayerId layer,
     }
     std::memcpy(rgba, source, kTileBytes);
     return 1;
+}
+
+namespace {
+
+Rgba8 layerPixel(const LayerStack& layers, LayerId id, int32_t x, int32_t y, bool bgra) {
+    const Layer* pixels = layers.pixels(id);
+    if (pixels == nullptr) return Rgba8{};
+    Rgba8 p = pixels->pixel(x, y);
+    if (bgra) std::swap(p.r, p.b);
+    return p;
+}
+
+/// One section of the plan composited onto `backdrop`, mirroring
+/// LayerCompositor.composite: a clipped layer is masked by the alpha of the
+/// nearest unclipped layer below it *in the same list*, visible or not.
+Rgba8 compositeSection(const LayerStack& layers, const std::vector<LayerId>& ids,
+                       Rgba8 backdrop, int32_t x, int32_t y, bool bgra) {
+    for (size_t i = 0; i < ids.size(); ++i) {
+        const LayerInfo* info = layers.info(ids[i]);
+        if (info == nullptr || !info->visible) continue;
+        Rgba8 source = layerPixel(layers, ids[i], x, y, bgra);
+        if (info->clipToBelow) {
+            size_t j = i;
+            float mask = -1.0f;
+            while (j > 0) {
+                --j;
+                const LayerInfo* below = layers.info(ids[j]);
+                if (below == nullptr) break;
+                if (!below->clipToBelow) {
+                    mask = layerPixel(layers, ids[j], x, y, bgra).a / 255.0f;
+                    break;
+                }
+            }
+            if (mask >= 0.0f) {
+                auto scale = [mask](uint8_t c) {
+                    return static_cast<uint8_t>(std::lround(c * mask));
+                };
+                source = Rgba8{scale(source.r), scale(source.g), scale(source.b), scale(source.a)};
+            }
+        }
+        backdrop = composite(info->blend, backdrop, source, info->opacity);
+    }
+    return backdrop;
+}
+
+}  // namespace
+
+void mc_canvas_sample_composite(MCCanvas* canvas, int32_t x, int32_t y,
+                                int32_t storedAsBGRA, uint8_t* outRGBA) {
+    if (outRGBA == nullptr) return;
+    Rgba8 result{255, 255, 255, 255};
+    if (ok(canvas)) {
+        const bool bgra = storedAsBGRA != 0;
+        const CompositePlan plan = planComposite(canvas->layers);
+        const Rgba8 under = compositeSection(canvas->layers, plan.under, Rgba8{}, x, y, bgra);
+        const Rgba8 over = compositeSection(canvas->layers, plan.over, Rgba8{}, x, y, bgra);
+        result = composite(BlendMode::Normal, result, under);
+        result = compositeSection(canvas->layers, plan.live, result, x, y, bgra);
+        result = composite(BlendMode::Normal, result, over);
+    }
+    // Over opaque white the result is opaque, so premultiplied and straight
+    // are the same bytes.
+    outRGBA[0] = result.r;
+    outRGBA[1] = result.g;
+    outRGBA[2] = result.b;
+    outRGBA[3] = 255;
 }
 
 int32_t mc_canvas_load_tile(MCCanvas* canvas, int32_t tx, int32_t ty, uint8_t* rgba) {

@@ -18,19 +18,28 @@ and never touches the iPad.
 
 ## Next round — start here
 
-Kept short on purpose (2026-09-24). The working plan, one step at a time, is a
-private page Claude keeps; this block is the public summary of it. Everything
-here happens **in Manga-Chan** — the Procreate measurements for opacity are
-done (round 6 in `docs/procreate-experiments.md`).
+Kept short on purpose. The working plan, one step at a time, is a private page
+Claude keeps; this block is the public summary of it.
 
-- **Opacity** — rebuilt on 2026-09-24 from the Studio Pen measurements. One
-  stroke at 25% should now read a light-to-mid grey, not almost solid; low
-  settings should be faint, as Procreate's are. The slider reaches 0%.
-- **Grain** — never seen on the device. Brush panel → Grain: Depth 100%,
-  Contrast about **+70%**. Canvas behaviour should survive a twenty-pass scrub;
-  Rolling should fill in.
-- **The side swap and the sliders on white** — the 2026-09-09 fixes, still
-  unchecked.
+**v0.3 builds from 2026-11-06 on** carry an audit's fixes and a pass at
+Procreate parity. Check the HUD's `app 0.3.n (n)` line first.
+
+- **Gestures, the Procreate set** — two-finger tap undo, three-finger tap redo,
+  **hold** either to repeat; **three-finger scrub** clears the layer;
+  **four-finger tap** hides the interface (it used to clear the layer);
+  **touch and hold** with a finger picks a colour; **draw and hold** snaps the
+  stroke to a line, arc, ellipse or polygon — rest a finger meanwhile for a
+  15° line or a circle.
+- **Stabilization** — the brush panel's old "Stabilization" slider is now named
+  **StreamLine**, as in Procreate, beside a real **Stabilization** and
+  **Motion filtering**. The toolbar's new slider button is Procreate's
+  **Pressure and Smoothing**: a pressure curve and app-wide floors.
+- **Low opacity** — in Blending, Opacity below about 9% used to draw nothing at
+  all (reasoned, now measured in CI — see bug 23). It should now build faintly,
+  as Procreate's does.
+- **Hairlines** — Size 1 px should draw an even line (bug 13).
+- **Still open from before** — grain (A2–A3 in the plan), the side swap, the
+  sliders on white.
 
 ## Pending — colour and brush controls
 
@@ -138,6 +147,25 @@ contrast takes that to 14.3%.
 | 105 | Neutral is genuinely nothing | Depth 100%, both controls at **none** | Identical to what v0.3.92 drew. Both readouts say `none`, not `0%`. CI asserts this to the pixel on both sides of the ABI, so a visible difference here is a real finding |
 | 106 | Grain still costs no frame | Depth 100%, Contrast +100%, long fast stroke, watch `gpu` | Flat, and level with a Contrast-none stroke. The levels are four instructions on a value already fetched, so this should not be measurable — if it is, that is worth knowing |
 
+## Pending — the 2026-11-06 round (audit fixes and Procreate parity)
+
+Observation, not a checklist: draw with it and report what feels unlike
+Procreate. These are the things that changed, so they are where to look.
+
+| # | What | How | Expected |
+|---|---|---|---|
+| 107 | Gestures match Procreate | Two- and three-finger tap; then **hold** two fingers | Undo, redo; holding repeats after a short delay, quickly, until there is nothing left |
+| 108 | Scrub clears, four fingers hide | Three fingers back and forth; then a four-finger tap, and again | The layer clears once, with a "Layer cleared" notice, and one undo brings it back. Four fingers hide every control; a second four-finger tap, or the small button in the corner, brings them back |
+| 109 | Eyedropper | Touch and hold a finger on some ink, slide, lift | A ring above the finger, picked colour on top, current underneath; lifting sets the colour |
+| 110 | QuickShape | Draw a rough line, keep the Pencil down | After ~0.6 s it snaps straight with a "Line" notice; moving the Pencil moves the end. Rest a finger: "Line, 15°". Same with an oval → ellipse, a circle with a finger → circle, a box → polygon. A scribble stays a scribble |
+| 111 | StreamLine is unchanged with the Pencil | Default pen, draw as usual | Identical feel to before: the value means what it did at 240 Hz. With a **finger** it now smooths as much as with the Pencil, where before it barely did |
+| 112 | Stabilization and Motion filtering | Brush panel → Stabilization. Each at ~60%, draw a slow wobbly line | Both steadier. Motion filtering at high Expression keeps fast flicks closer to the hand than at low |
+| 113 | Pressure curve | Toolbar → slider button. Drag the lower handle down, draw with light pressure | Lighter strokes for the same touch. Affects every brush, Pencil only. Survives a relaunch |
+| 114 | Low opacity builds | Blending, Opacity **5%**, scrub one patch twenty times without lifting | A visible grey that keeps building. Before this build: nothing at all |
+| 115 | The end taper shows | Brush panel → Taper — Pencil → End length ~80 px. Draw and lift | The line narrows to the tip at the end. Before: it stopped square |
+| 116 | Hairline | Size 1 px, draw slowly and quickly | An even, unbroken line |
+| 117 | Edge of the window | Draw near the right edge full screen; open Split View; draw near the new edge; leave Split View | The first drawing is intact. Before: the part hidden by Split View was erased |
+
 ## Pending — UI regressions to confirm
 
 | # | What | How | Expected |
@@ -174,6 +202,21 @@ Not bugs; do not report these until the milestone that addresses them.
   altitude reading loses precision and refresh rate as the pencil approaches
   perpendicular. Hardware behaviour, not our arithmetic — so a tilt response
   must not assume the full 0–90° range is reachable in practice.
+- **Nothing is saved.** Quitting, or iOS closing the app in the background,
+  loses the drawing. The document format is M5's; until then this is a test
+  build, not somewhere to keep work.
+- **Gesture delays are guesses.** The QuickShape hold (0.6 s), the rapid
+  undo delay (0.65 s) and the eyedropper hold (0.5 s) were not read off
+  Procreate, whose defaults are adjustable. If one feels wrong next to
+  Procreate, say which and by how much — that is a measurement, not a
+  complaint.
+- **Blending opacity below about 1.1% draws nothing.** The stroke buffer is
+  16-bit since 2026-11-06, and a dab under half a 16-bit step still rounds
+  away. Procreate's strokes at that setting are below one unit of its
+  eyedropper, so this should not be visible.
+- **Pencil force corrections are measured, not applied.** UIKit corrects
+  estimated force up to ~50 ms late; the HUD's `est frc` line counts how often
+  and how far. Whether to apply them depends on that number.
 - **Canvas is screen-sized.** Pan, zoom and a canvas larger than the screen
   come with the per-tile render restructure — see the re-scoped item in
   ROADMAP.md.
@@ -339,7 +382,12 @@ they lived in the Swift shell rather than the engine:
     which also means a third button cannot reintroduce it.
 13. **A 1 px stroke is invisible.** At that size the dab is smaller than the
     antialiased edge that draws it, so almost all of its coverage is falloff.
-    Not yet fixed.
+    **Fix attempted 2026-11-06, unconfirmed on device:** a dab under a pixel
+    is sampled at pixel centres, so whether it shows depends on where it
+    lands. It is now drawn at 1.25 px radius with its flow scaled by the ratio
+    of areas, as Photoshop and Krita do. CI checks a 0.4 px dab draws about the
+    same ink wherever it lands — and the first attempt, at 1 px, failed that
+    check: 1.67 times the ink on a pixel centre as on a corner.
 
 14. **Grain thresholding was the wrong fix.** Replacing the multiply with
     `(coverage - tooth) / (1 - tooth)` made it worse, not better: at Flow 100%
@@ -556,3 +604,48 @@ terms. It answered a question nobody had asked out loud.
 bitmap and read back, so an inverted axis or a banded strip fails in CI. 8 is
 not, and cannot easily be — it needs a real gesture recogniser arbitrating a
 real touch sequence, so it stays a device test (#51b).
+
+### Found by audit, 2026-11-06 — not seen on device
+
+Found by reading the code rather than by a device report, so every one of
+these is **reasoned, not observed**. Kept in the same register because each
+would have reached the device. All five lived in the Swift shell.
+
+22. **A stroke near the window edge erased hidden drawing.** When a stroke was
+    saved into a tile cut by the edge of the window, the part of the tile
+    outside the window was zero-filled before storing. Anything drawn there
+    while the window was larger — before a rotation, or in full screen before
+    Split View or Stage Manager — was erased. On a 13-inch screen in full
+    screen the tile grid happens to line up so rotation alone could not
+    trigger it; any other window size could. Fixed by filling the hidden part
+    from the engine's copy of the tile.
+23. **Low Blending opacities drew nothing.** The stroke's coverage buffer was
+    8-bit. A dab at Opacity *o* carries `o^2.6` — at 5%, a tenth of one 8-bit
+    step — and alpha-over blending rounds each dab back to the nearest step,
+    so every dab below half a step added nothing. Simulated: nothing at all
+    below about 9%, however long the scrub; 60% too dark at 10%. The engine's
+    tests could not see it because they model density in exact arithmetic —
+    the like-with-like error again, this time between a float model and an
+    8-bit GPU. The buffer is now 16-bit integer, and a simulator test renders
+    the low-opacity case in both formats and prints both. **Measured in CI,
+    2026-11-06, on real Metal:** 560 dabs at 5% — exact 0.2071, 16-bit
+    0.2072, 8-bit **0.0000**; 28 dabs at 10% — exact 0.0680, 16-bit 0.0680,
+    8-bit 0.1098. The 8-bit figures are the ones the simulation predicted.
+24. **The end taper never reached the canvas.** The taper shrinks the last
+    dabs when the stroke ends, but the renderer stamps coverage incrementally
+    and only ever stamped dabs it had not seen. The dabs the taper revised had
+    already been stamped at full size. A comment in the renderer said dabs are
+    never revised; `stroke.h` said the opposite. Latent, because the default
+    pen has no taper. The engine now reports the first revised dab and the
+    renderer restamps.
+25. **A second stroke inside one frame could delete the first.** A finished
+    stroke waited for the next frame to be flattened, in a single slot. A new
+    stroke begun within that frame replaced its coverage; a finger touch
+    cancelled within it aborted it; selecting a layer within it committed it
+    to the wrong layer. Fast hatching is where this would show. The commit
+    now captures its layer and ink at the lift, and anything that would
+    disturb it flushes it first.
+26. **Four-finger tap cleared the layer.** Not a fault in code but in design:
+    it is the gesture Procreate uses to hide the interface, so a Procreate
+    user's muscle memory deleted their work. Clearing is now Procreate's
+    three-finger scrub.

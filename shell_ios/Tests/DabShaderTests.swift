@@ -391,6 +391,70 @@ final class DabShaderTests: XCTestCase {
 
     // MARK: - Harness
 
+    // MARK: - Precision and sub-pixel dabs (2026-11-06)
+
+    /// The density a pixel at the centre of `count` identical dabs should reach,
+    /// in exact arithmetic: alpha-over of `perDab`, `count` times.
+    private func exactDensity(perDab: Float, count: Int) -> Float {
+        1 - pow(1 - perDab, Float(count))
+    }
+
+    /// A low Blending opacity must still build.
+    ///
+    /// Each dab at Opacity *o* carries `o^2.6`, which at 5% is about a tenth of
+    /// one 8-bit step. In an 8-bit buffer every such dab rounds to nothing, so a
+    /// stroke at 5% drew nothing however long it was scrubbed. This renders the
+    /// stroke's own centre — 28 dabs, about what one pass of the default pen
+    /// lays on a pixel, then 560 for a twenty-pass scrub — in the shipping
+    /// format, and also in 8-bit for the record.
+    func testLowBlendingOpacityStillBuilds() throws {
+        for (opacity, count) in [(Float(0.05), 28), (Float(0.05), 560), (Float(0.10), 28)] {
+            let perDab = pow(opacity, 2.6)
+            let dabs = Array(repeating: dab(x: 32, y: 32, radius: 20, flow: perDab), count: count)
+            let exact = exactDensity(perDab: perDab, count: count)
+            let shipping = composited(try renderCoverage(dabs), x: 32, y: 32)
+            let eightBit = composited(try renderCoverage(dabs, format: .rgba8Unorm), x: 32, y: 32)
+            print(String(format: "coverage precision: opacity %.0f%%, %ld dabs — exact %.4f, shipping %.4f, 8-bit %.4f",
+                         opacity * 100, count, exact, shipping, eightBit))
+            XCTAssertEqual(shipping, exact, accuracy: max(0.002, exact * 0.05),
+                           "the coverage buffer is too coarse for a \(Int(opacity * 100))% Blending stroke")
+        }
+    }
+
+    /// A dab smaller than a pixel must show wherever it lands.
+    ///
+    /// Drawn at its true size, a 0.4 px dab centred on a pixel corner touches
+    /// no pixel centre and draws nothing — the beaded or missing 1 px line of
+    /// bug 13. Drawn at the minimum size with its flow scaled by area, the ink
+    /// it puts down is about the same wherever it lands.
+    func testSubPixelDabIsDrawnWhereverItLands() throws {
+        var totals: [Float] = []
+        for offset: Float in [0.0, 0.25, 0.5] {
+            let pixels = try renderCoverage([dab(x: 32 + offset, y: 32 + offset, radius: 0.4)])
+            var total: Float = 0
+            for y in 28...36 { for x in 28...36 { total += composited(pixels, x: x, y: y) } }
+            totals.append(total)
+        }
+        print("sub-pixel dab: total ink at three landings \(totals)")
+        XCTAssertTrue(totals.allSatisfy { $0 > 0 }, "a sub-pixel dab vanished: \(totals)")
+        let spread = (totals.max() ?? 0) / max(totals.min() ?? 1, 1e-6)
+        XCTAssertLessThan(spread, 1.5, "a sub-pixel dab's weight depends on where it lands: \(totals)")
+    }
+
+    /// Below the minimum size, weight goes as area: half the radius, a quarter
+    /// of the ink. At and above it, nothing changes.
+    func testSubPixelDabsTradeSizeForOpacity() throws {
+        func total(_ radius: Float) throws -> Float {
+            let pixels = try renderCoverage([dab(x: 32.5, y: 32.5, radius: radius)])
+            var sum: Float = 0
+            for y in 26...38 { for x in 26...38 { sum += composited(pixels, x: x, y: y) } }
+            return sum
+        }
+        let full = try total(MS_MIN_DRAWN_RADIUS)
+        let half = try total(MS_MIN_DRAWN_RADIUS / 2)
+        XCTAssertEqual(half / full, 0.25, accuracy: 0.02)
+    }
+
     private struct Coverage {
         var single: Float
         var overlap: Float
@@ -405,9 +469,9 @@ final class DabShaderTests: XCTestCase {
     /// What the composite pass would produce: ink density capped by geometry.
     /// Every assertion goes through this rather than reading a raw channel, so
     /// the tests check what reaches the canvas rather than an intermediate.
-    private func composited(_ pixels: [UInt8], x: Int, y: Int) -> Float {
+    private func composited(_ pixels: [Float], x: Int, y: Int) -> Float {
         let i = (y * size + x) * 4
-        return min(Float(pixels[i]) / 255.0, Float(pixels[i + 3]) / 255.0)
+        return min(pixels[i], pixels[i + 3])
     }
 
     /// True well inside the dab, where the analytic edge has already reached 1.
@@ -433,11 +497,12 @@ final class DabShaderTests: XCTestCase {
                                 scale: Float = 1,
                                 movement: MSGrainMovement = MSGrainCanvas,
                                 brightness: Float = 0,
-                                contrast: Float = 0) throws -> [UInt8] {
+                                contrast: Float = 0,
+                                format: MTLPixelFormat = StrokeCoverage.pixelFormat) throws -> [Float] {
         let device = try metalDevice()
         let queue = try XCTUnwrap(device.makeCommandQueue())
         let library = try device.makeDefaultLibrary(bundle: Bundle(for: type(of: self)))
-        let texture = try makeCoverageTexture(device: device)
+        let texture = try makeCoverageTexture(device: device, format: format)
         let grain = try XCTUnwrap(GrainTexture.make(device: device))
 
         try render(dabs, device: device, queue: queue, library: library,
@@ -454,9 +519,12 @@ final class DabShaderTests: XCTestCase {
         return device
     }
 
-    private func makeCoverageTexture(device: MTLDevice) throws -> MTLTexture {
+    /// The shipping format unless a test asks for another — every existing
+    /// test now runs on exactly what the renderer accumulates into.
+    private func makeCoverageTexture(device: MTLDevice,
+                                     format: MTLPixelFormat) throws -> MTLTexture {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba8Unorm, width: size, height: size, mipmapped: false)
+            pixelFormat: format, width: size, height: size, mipmapped: false)
         descriptor.usage = [.renderTarget, .shaderRead]
         // Shared rather than private: the test has to read it back, which the
         // app never does.
@@ -466,14 +534,14 @@ final class DabShaderTests: XCTestCase {
         return texture
     }
 
-    private func makePipeline(device: MTLDevice,
-                              library: MTLLibrary) throws -> MTLRenderPipelineState {
+    private func makePipeline(device: MTLDevice, library: MTLLibrary,
+                              format: MTLPixelFormat) throws -> MTLRenderPipelineState {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.label = "Dab coverage under test"
         descriptor.vertexFunction = try XCTUnwrap(library.makeFunction(name: "dab_vertex"))
         descriptor.fragmentFunction = try XCTUnwrap(library.makeFunction(name: "dab_coverage_fragment"))
         let attachment = descriptor.colorAttachments[0]!
-        attachment.pixelFormat = .rgba8Unorm
+        attachment.pixelFormat = format
         attachment.isBlendingEnabled = true
 
         // These must stay identical to Renderer's. That duplication is the
@@ -497,7 +565,8 @@ final class DabShaderTests: XCTestCase {
                         movement: MSGrainMovement = MSGrainCanvas,
                         brightness: Float = 0,
                         contrast: Float = 0) throws {
-        let pipeline = try makePipeline(device: device, library: library)
+        let pipeline = try makePipeline(device: device, library: library,
+                                        format: texture.pixelFormat)
 
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = texture
@@ -526,9 +595,13 @@ final class DabShaderTests: XCTestCase {
         // whether or not the sample is reached.
         encoder.setFragmentTexture(grain ?? GrainTexture.make(device: device), index: 0)
 
-        var dabs = dabs
-        encoder.setVertexBytes(&dabs, length: MemoryLayout<MSDab>.stride * dabs.count,
-                               index: Int(MSBufferIndexVertices.rawValue))
+        // A buffer, not setVertexBytes: Metal caps inline bytes at 4 KB, which
+        // is 128 dabs, and the precision tests stamp hundreds.
+        let length = MemoryLayout<MSDab>.stride * dabs.count
+        let dabBuffer = try XCTUnwrap(dabs.withUnsafeBytes { raw in
+            device.makeBuffer(bytes: raw.baseAddress!, length: length, options: .storageModeShared)
+        })
+        encoder.setVertexBuffer(dabBuffer, offset: 0, index: Int(MSBufferIndexVertices.rawValue))
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6,
                                instanceCount: dabs.count)
         encoder.endEncoding()
@@ -536,13 +609,26 @@ final class DabShaderTests: XCTestCase {
         buffer.waitUntilCompleted()
     }
 
-    private func readBack(_ texture: MTLTexture) -> [UInt8] {
-        var pixels = [UInt8](repeating: 0, count: size * size * 4)
-        pixels.withUnsafeMutableBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            texture.getBytes(base, bytesPerRow: size * 4,
-                             from: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0)
+    /// RGBA normalised to 0...1, whichever unorm format the texture is.
+    private func readBack(_ texture: MTLTexture) -> [Float] {
+        let count = size * size * 4
+        switch texture.pixelFormat {
+        case .rgba16Unorm:
+            var raw = [UInt16](repeating: 0, count: count)
+            raw.withUnsafeMutableBytes { bytes in
+                guard let base = bytes.baseAddress else { return }
+                texture.getBytes(base, bytesPerRow: size * 8,
+                                 from: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0)
+            }
+            return raw.map { Float($0) / 65535.0 }
+        default:
+            var raw = [UInt8](repeating: 0, count: count)
+            raw.withUnsafeMutableBytes { bytes in
+                guard let base = bytes.baseAddress else { return }
+                texture.getBytes(base, bytesPerRow: size * 4,
+                                 from: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0)
+            }
+            return raw.map { Float($0) / 255.0 }
         }
-        return pixels
     }
 }

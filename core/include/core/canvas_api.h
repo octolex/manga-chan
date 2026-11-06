@@ -129,6 +129,19 @@ int32_t mc_canvas_load_tile_from(MCCanvas* canvas, MCLayerId layer,
 /* Clears the active layer. Recorded as a normal undoable action. */
 void mc_canvas_clear(MCCanvas* canvas);
 
+/* The colour on screen at canvas pixel (x, y), for the eyedropper: every
+ * visible layer composited over white, exactly as the renderer does it —
+ * under group, live layers, over group, with clipping, opacity and blend
+ * modes. Written to `outRGBA` as four straight 0...255 bytes.
+ *
+ * `storedAsBGRA` says how the shell's tiles are laid out. The engine stores
+ * whatever bytes it is handed, and the iOS shell hands it BGRA from a
+ * bgra8Unorm texture; channel order matters to the non-separable blend modes
+ * (Hue, Saturation, Color, Luminosity), so it is swapped before blending, not
+ * after. */
+void mc_canvas_sample_composite(MCCanvas* canvas, int32_t x, int32_t y,
+                                int32_t storedAsBGRA, uint8_t* outRGBA);
+
 /* MARK: - Composite plan */
 
 /*

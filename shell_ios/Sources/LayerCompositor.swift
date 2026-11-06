@@ -389,10 +389,19 @@ final class LayerCompositor {
 
             tileScratch.withUnsafeMutableBytes { raw in
                 guard let base = raw.baseAddress else { return }
-                // Edge tiles are partial, so zero first: the remainder must be
-                // defined rather than whatever the previous tile left behind.
+                // A tile cut by the edge of the window. Only the visible part
+                // comes back from the texture, so the rest is filled from what
+                // the engine already holds for that tile — whatever was drawn
+                // there while the window was larger, before a rotation or in
+                // full screen before Split View. It used to be zero-filled,
+                // and storing the tile then erased that drawing. Zero only
+                // when the engine has nothing, so the remainder is never
+                // whatever the previous tile left behind.
                 if regionWidth < tileSize || regionHeight < tileSize {
-                    raw.initializeMemory(as: UInt8.self, repeating: 0)
+                    let pixels = base.assumingMemoryBound(to: UInt8.self)
+                    if !engine.loadTile(tile, from: layer, into: pixels) {
+                        raw.initializeMemory(as: UInt8.self, repeating: 0)
+                    }
                 }
                 texture.getBytes(base,
                                  bytesPerRow: bytesPerRow,

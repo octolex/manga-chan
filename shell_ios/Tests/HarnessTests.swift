@@ -75,6 +75,13 @@ final class HarnessTests: XCTestCase {
                        MemoryLayout<MCDab>.offset(of: \.grainOffset))
     }
 
+    func testTheShaderAndEngineAgreeOnTheSmallestDrawnDab() {
+        // The engine notes tiles out to the size the shader actually draws a
+        // sub-pixel dab at. If the two numbers drifted, a hairline at a tile
+        // edge would be drawn into a tile nobody captured — and lost at commit.
+        XCTAssertEqual(MS_MIN_DRAWN_RADIUS, MC_MIN_DRAWN_RADIUS)
+    }
+
     func testTheEngineFillsTheDabsTheShellUploads() {
         // A short stroke through the C ABI, read back exactly as the renderer
         // reads it: reinterpreting the engine's array as MSDab without a copy.

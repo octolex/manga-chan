@@ -1,9 +1,11 @@
 #include "core/brush_api.h"
 
 #include "core/brush.h"
+#include "core/quickshape.h"
 #include "core/stroke.h"
 #include "core/texture.h"
 
+#include <algorithm>
 #include <cstring>
 #include <type_traits>
 #include <vector>
@@ -24,6 +26,8 @@ static_assert(offsetof(MCDab, roundness) == offsetof(Dab, roundness), "dab round
 static_assert(offsetof(MCDab, hardness) == offsetof(Dab, hardness), "dab hardness offset");
 static_assert(offsetof(MCDab, grainOffset) == offsetof(Dab, grainOffset), "dab grainOffset offset");
 static_assert(std::is_trivially_copyable<Dab>::value, "dabs must be memcpy-able to the GPU");
+static_assert(MC_MIN_DRAWN_RADIUS == kMinimumDrawnRadius,
+              "the C ABI and the engine must agree on the smallest drawn radius");
 
 // The two capacities are declared in two files and can drift apart silently:
 // the ABI header is plain C and cannot see the C++ constant. A mismatch would
@@ -112,6 +116,62 @@ MCModulation toC(const Modulation& m) {
     return out;
 }
 
+InputSettings fromC(const MCInputSettings& s) {
+    InputSettings out;
+    out.pressureCurve = fromC(s.pressureCurve);
+    out.pressureSmoothing = s.pressureSmoothing;
+    out.stabilization = s.stabilization;
+    out.motionFiltering = s.motionFiltering;
+    out.motionFilteringExpression = s.motionFilteringExpression;
+    return out;
+}
+
+MCInputSettings toC(const InputSettings& s) {
+    MCInputSettings out;
+    out.pressureCurve = toC(s.pressureCurve);
+    out.pressureSmoothing = s.pressureSmoothing;
+    out.stabilization = s.stabilization;
+    out.motionFiltering = s.motionFiltering;
+    out.motionFilteringExpression = s.motionFilteringExpression;
+    return out;
+}
+
+QuickShape fromC(const MCQuickShape& q) {
+    QuickShape out;
+    switch (q.kind) {
+    case MC_SHAPE_LINE: out.kind = ShapeKind::Line; break;
+    case MC_SHAPE_ARC: out.kind = ShapeKind::Arc; break;
+    case MC_SHAPE_ELLIPSE: out.kind = ShapeKind::Ellipse; break;
+    case MC_SHAPE_POLYLINE: out.kind = ShapeKind::Polyline; break;
+    default: out.kind = ShapeKind::None; break;
+    }
+    out.closed = q.closed != 0;
+    out.vertexCount = std::clamp(q.vertexCount, 0, QuickShape::kMaxVertices);
+    for (int i = 0; i < QuickShape::kMaxVertices; ++i) {
+        out.vx[i] = q.vx[i];
+        out.vy[i] = q.vy[i];
+    }
+    out.cx = q.cx; out.cy = q.cy; out.rx = q.rx; out.ry = q.ry;
+    out.rotation = q.rotation; out.start = q.start; out.sweep = q.sweep;
+    out.pressure = q.pressure; out.tilt = q.tilt;
+    return out;
+}
+
+MCQuickShape toC(const QuickShape& q) {
+    MCQuickShape out{};
+    out.kind = static_cast<int32_t>(q.kind);
+    out.closed = q.closed ? 1 : 0;
+    out.vertexCount = q.vertexCount;
+    for (int i = 0; i < QuickShape::kMaxVertices; ++i) {
+        out.vx[i] = q.vx[i];
+        out.vy[i] = q.vy[i];
+    }
+    out.cx = q.cx; out.cy = q.cy; out.rx = q.rx; out.ry = q.ry;
+    out.rotation = q.rotation; out.start = q.start; out.sweep = q.sweep;
+    out.pressure = q.pressure; out.tilt = q.tilt;
+    return out;
+}
+
 Brush fromC(const MCBrush& b) {
     Brush out;
     out.size = b.size;
@@ -142,6 +202,9 @@ Brush fromC(const MCBrush& b) {
     out.taper = convert(b.taper);
     out.smoothing = b.smoothing;
     out.minimumSizeFraction = b.minimumSizeFraction;
+    out.stabilization = b.stabilization;
+    out.motionFiltering = b.motionFiltering;
+    out.motionFilteringExpression = b.motionFilteringExpression;
     return out;
 }
 
@@ -175,6 +238,9 @@ MCBrush toC(const Brush& b) {
     out.taper = convert(b.taper);
     out.smoothing = b.smoothing;
     out.minimumSizeFraction = b.minimumSizeFraction;
+    out.stabilization = b.stabilization;
+    out.motionFiltering = b.motionFiltering;
+    out.motionFilteringExpression = b.motionFilteringExpression;
     return out;
 }
 
@@ -247,6 +313,24 @@ void mc_stroke_finish(MCStrokePath* path) {
     path->path.finish();
 }
 
+MCInputSettings mc_input_settings_default(void) {
+    return toC(InputSettings{});
+}
+
+float mc_response_curve_evaluate(const MCResponseCurve* curve, float t) {
+    if (curve == nullptr) return t;
+    return fromC(*curve).evaluate(t);
+}
+
+void mc_stroke_set_input_settings(MCStrokePath* path, const MCInputSettings* settings) {
+    if (path == nullptr || settings == nullptr) return;
+    path->path.setInputSettings(fromC(*settings));
+}
+
+size_t mc_stroke_first_revised_dab(const MCStrokePath* path) {
+    return path == nullptr ? 0 : path->path.firstRevisedDab();
+}
+
 size_t mc_stroke_dab_count(const MCStrokePath* path) {
     return path == nullptr ? 0 : path->path.dabs().size();
 }
@@ -278,6 +362,42 @@ size_t mc_stroke_copy_tiles(const MCStrokePath* path, int32_t* outXY, size_t cap
 
 float mc_stroke_length(const MCStrokePath* path) {
     return path == nullptr ? 0.0f : path->path.length();
+}
+
+int32_t mc_quickshape_detect(const MCStrokePath* path, MCQuickShape* out) {
+    if (path == nullptr || out == nullptr) return MC_SHAPE_NONE;
+    const QuickShape shape = detectShape(path->path.nodeSamples());
+    *out = toC(shape);
+    return out->kind;
+}
+
+void mc_quickshape_constrain(MCQuickShape* shape) {
+    if (shape == nullptr) return;
+    QuickShape q = fromC(*shape);
+    constrainShape(q);
+    *shape = toC(q);
+}
+
+void mc_quickshape_move_end(MCQuickShape* shape, float x, float y, int32_t constrained) {
+    if (shape == nullptr) return;
+    QuickShape q = fromC(*shape);
+    moveShapeEnd(q, x, y, constrained != 0);
+    *shape = toC(q);
+}
+
+MCStrokePath* mc_quickshape_stroke(const MCQuickShape* shape, const MCBrush* brush,
+                                   uint64_t seed, double startTime,
+                                   int32_t fromPressureDevice) {
+    if (shape == nullptr || brush == nullptr) return nullptr;
+    Brush exact = fromC(*brush);
+    exact.smoothing = 0.0f;
+    exact.stabilization = 0.0f;
+    exact.motionFiltering = 0.0f;
+    auto* path = new MCStrokePath(exact, seed);
+    for (const StrokeSample& s : shapeSamples(fromC(*shape), startTime, fromPressureDevice != 0)) {
+        path->path.addSample(s);
+    }
+    return path;
 }
 
 }  // extern "C"

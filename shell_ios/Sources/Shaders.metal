@@ -151,13 +151,28 @@ vertex DabRasterData dab_vertex(uint vertexID [[vertex_id]],
     MSDab dab = dabs[instanceID];
     float2 corner = corners[vertexID];
 
-    // Grow the quad by a pixel so the analytic edge has somewhere to fade.
-    // Without this the antialiased rim would be clipped by the quad itself and
-    // every dab would show a faint polygonal edge.
-    float margin = dab.radius > 0.0 ? (dab.radius + 1.0) / dab.radius : 1.0;
-    float2 local = corner * margin;
+    // Sub-pixel dabs are drawn at MS_MIN_DRAWN_RADIUS on each axis that is
+    // smaller than it, with their flow scaled by the ratio of areas.
+    //
+    // A disc much under a pixel is sampled at pixel centres, so whether it
+    // shows at all depended on where it landed: a 1 px line drew beaded or not
+    // at all (bug 13). Trading size for opacity below a pixel is what
+    // Photoshop and Krita do. Per axis, so a thin flat nib — roundness 0.1 on
+    // a 5 px brush is half a pixel across — keeps its weight too. Where
+    // neither axis is raised the scale is exactly 1 and nothing changes.
+    float axisX = max(dab.radius, MS_MIN_DRAWN_RADIUS);
+    float axisY = max(dab.radius * dab.roundness, MS_MIN_DRAWN_RADIUS);
+    bool raised = dab.radius < MS_MIN_DRAWN_RADIUS
+               || dab.radius * dab.roundness < MS_MIN_DRAWN_RADIUS;
+    float areaScale = raised ? (dab.radius * dab.radius * dab.roundness) / (axisX * axisY)
+                             : 1.0;
 
-    float2 scaled = float2(local.x, local.y * dab.roundness) * dab.radius;
+    // Grow the quad by a pixel on each axis so the analytic edge has somewhere
+    // to fade. Without this the antialiased rim would be clipped by the quad
+    // itself and every dab would show a faint polygonal edge.
+    float2 local = corner * float2((axisX + 1.0) / axisX, (axisY + 1.0) / axisY);
+
+    float2 scaled = local * float2(axisX, axisY);
     float s = sin(dab.angle);
     float c = cos(dab.angle);
     float2 rotated = float2(scaled.x * c - scaled.y * s,
@@ -180,7 +195,7 @@ vertex DabRasterData dab_vertex(uint vertexID [[vertex_id]],
                           0.0, 1.0);
     out.local = local;
     out.grainUV = grainPixel * invGrainScale;
-    out.flow = dab.flow;
+    out.flow = dab.flow * areaScale;
     out.hardness = dab.hardness;
     return out;
 }

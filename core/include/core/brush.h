@@ -412,11 +412,26 @@ struct Brush {
     /// this StreamLine. It trades latency for steadiness, so it belongs to the
     /// brush rather than to the input layer — an inking pen wants it and a
     /// sketching pencil does not.
+    ///
+    /// The value is the pull *per 240 Hz sample*, applied in time since
+    /// 2026-11-06 — see `input_filter.h`. A Pencil draws exactly as before; a
+    /// finger, at a quarter of the rate, now gets the same smoothing instead
+    /// of a quarter of it.
     float smoothing = 0.0f;
 
     /// Minimum size as a fraction of `size`, so that a zero-pressure sample
     /// tapers rather than disappearing and leaving a gap in the stroke.
     float minimumSizeFraction = 0.05f;
+
+    /// Procreate's Stabilization → Amount, 0...1: a trailing average of the
+    /// recent path. See `input_filter.h`.
+    float stabilization = 0.0f;
+
+    /// Procreate's Motion filtering → Amount and Expression, 0...1 each. The
+    /// 1€ filter; see `input_filter.h`. Amount 0 is off whatever Expression
+    /// says.
+    float motionFiltering = 0.0f;
+    float motionFilteringExpression = 0.0f;
 };
 
 /// How much of the Opacity slider one dab carries in a **Blending** style:

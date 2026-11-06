@@ -31,6 +31,8 @@
 //
 
 #include "core/brush.h"
+#include "core/input_filter.h"
+#include "core/stroke_sample.h"
 #include "core/tile.h"
 
 #include <cstdint>
@@ -39,44 +41,26 @@
 
 namespace mc {
 
-/// One input sample, in canvas pixels.
+/// The smallest radius the dab shader draws, in canvas pixels.
 ///
-/// Every channel the hardware can report is carried, whether or not the
-/// current brush consumes it. Widening this later would mean touching every
-/// stage at once, and a few unused floats per sample cost nothing next to the
-/// dabs they produce.
-struct StrokeSample {
-    float x = 0.0f;
-    float y = 0.0f;
-
-    /// 0...1. Devices without pressure report a constant, not zero.
-    float pressure = 1.0f;
-
-    /// Altitude from the screen plane in radians. π/2 is upright, 0 is flat.
-    float tilt = 1.5707963f;
-
-    /// Direction the barrel points, in radians.
-    float azimuth = 0.0f;
-
-    /// Barrel roll in radians, or negative when the hardware cannot report it.
-    /// A brush keyed to roll needs to tell "flat" from "not available".
-    float roll = -1.0f;
-
-    /// Seconds. Only differences matter, so any monotonic clock will do.
-    double timestamp = 0.0;
-
-    /// True when a pressure-capable device drew this — a Pencil rather than a
-    /// finger. It selects which of the brush's two tapers applies.
-    ///
-    /// Carried per sample rather than per stroke because that is where every
-    /// other device fact already lives, and because the shell reads it from
-    /// the same UITouch it reads pressure and tilt from. In practice it is
-    /// constant across a stroke: one stroke is one touch.
-    ///
-    /// It cannot be inferred. A finger reports a synthesised pressure and an
-    /// upright tilt, and so does a Pencil held perpendicular.
-    bool fromPressureDevice = true;
-};
+/// A dab smaller than this is drawn at this size with its flow scaled by the
+/// ratio of areas, `(radius / kMinimumDrawnRadius)^2`, rather than drawn at
+/// its true size. A disc much under a pixel is sampled at pixel centres, so
+/// whether it shows at all depends on where it lands — the cause of the 1 px
+/// line that drew invisible or beaded (bug 13). Trading size for opacity below
+/// this is what Photoshop and Krita do; at exactly this radius the two agree,
+/// so nothing changes for a brush that never goes this small.
+///
+/// 1.25 rather than 1, measured: in CI at a 1 px minimum a 0.4 px dab put down
+/// 1.67 times as much ink landing on a pixel centre as on a pixel corner. The
+/// shader's antialiasing band is about a pixel wide, and a disc only a pixel
+/// across is mostly band, so where it lands still mattered. A quarter pixel
+/// more makes the disc wide enough to sample evenly, and touches only brushes
+/// under 2.5 px.
+///
+/// The shader holds the same number as `MS_MIN_DRAWN_RADIUS`, and the harness
+/// tests that the two agree.
+inline constexpr float kMinimumDrawnRadius = 1.25f;
 
 /// One stamp of the brush shape. This is the entire contract with the GPU:
 /// whatever the brush model grows into, the renderer only ever sees these.
@@ -120,6 +104,11 @@ public:
     /// pixels either — which matters more, because undo must be exact.
     explicit StrokePath(const Brush& brush, uint64_t seed = 0x9E3779B97F4A7C15ULL);
 
+    /// The app-wide Pressure and Smoothing settings. Must be called before the
+    /// first sample; a stroke that changed its filters part-way would kink at
+    /// the point it changed, so a late call is ignored rather than honoured.
+    void setInputSettings(const InputSettings& settings);
+
     /// Samples must arrive in time order. Duplicates of the previous position
     /// are dropped: a zero-length tangent would NaN its way through the whole
     /// spline.
@@ -153,6 +142,26 @@ public:
 
     bool finished() const noexcept { return finished_; }
 
+    /// Index of the first dab revised after it was emitted, or `dabs().size()`
+    /// when none was.
+    ///
+    /// Emission is append-only *except* for the end taper, which shrinks dabs
+    /// already handed out. A renderer that accumulates coverage incrementally
+    /// has already stamped those at full size, and the accumulation cannot be
+    /// taken back — so it needs to know, and restamp. Until 2026-11-06 the
+    /// renderer assumed nothing was ever revised, and the end taper never
+    /// reached the canvas.
+    size_t firstRevisedDab() const noexcept {
+        return firstRevised_ < dabs_.size() ? firstRevised_ : dabs_.size();
+    }
+
+    /// The samples that became spline nodes, after the input filter: what the
+    /// stroke is actually drawn through. QuickShape fits shapes to these.
+    const std::vector<StrokeSample>& nodeSamples() const noexcept { return nodeSamples_; }
+
+    /// The brush this stroke was begun with.
+    const Brush& brush() const noexcept { return brush_; }
+
 private:
     /// A smoothed sample plus the speed we arrived at it with. Velocity is
     /// derived once here rather than recomputed per dab, because it depends on
@@ -184,6 +193,9 @@ private:
     void applyEndTaper();
 
     Brush brush_;
+    InputFilter filter_;
+    std::vector<StrokeSample> nodeSamples_;
+    size_t firstRevised_ = static_cast<size_t>(-1);
     uint64_t rng_;
 
     std::vector<Node> nodes_;   // smoothed

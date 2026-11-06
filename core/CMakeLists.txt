@@ -9,6 +9,8 @@ add_library(core STATIC
     src/tile_codec.cpp
     src/layer.cpp
     src/layer_stack.cpp
+    src/input_filter.cpp
+    src/quickshape.cpp
     src/stroke.cpp
     src/texture.cpp
     src/tile_spill.cpp

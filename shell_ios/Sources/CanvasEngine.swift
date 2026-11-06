@@ -194,6 +194,20 @@ final class CanvasEngine {
             overDirty: raw.overDirty != 0)
     }
 
+    /// The colour on screen at a canvas pixel: every visible layer composited
+    /// over white, the way the renderer does it. For the eyedropper.
+    ///
+    /// The tiles hold BGRA, because that is the byte order of the
+    /// `.bgra8Unorm` textures they are read back from — so the engine is told,
+    /// and swaps before blending rather than after.
+    func compositeColor(atPixelX x: Int32, y: Int32) -> simd_float3 {
+        var rgba = [UInt8](repeating: 255, count: 4)
+        rgba.withUnsafeMutableBufferPointer { buffer in
+            mc_canvas_sample_composite(handle, x, y, 1, buffer.baseAddress)
+        }
+        return simd_float3(Float(rgba[0]) / 255, Float(rgba[1]) / 255, Float(rgba[2]) / 255)
+    }
+
     func invalidateCaches() {
         mc_canvas_invalidate_caches(handle)
     }

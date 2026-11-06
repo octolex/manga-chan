@@ -159,6 +159,11 @@ final class HUDView: UIView {
                                         ? "     —" : String(format: "%6.1f", input.hoverOffset)))
             lines.append(String(format: "squeeze  %6d", input.squeezeCount))
             lines.append(String(format: "dbl-tap  %6d", input.doubleTapCount))
+            // Estimated Pencil force, then corrected: count, and the worst
+            // correction. Decides whether corrections need applying at all.
+            lines.append(String(format: "est frc  %ld/%ld  max %.3f",
+                                input.forceCorrected, input.forceEstimated,
+                                input.forceMaxError))
 
             lines.append("")
             lines.append(contentsOf: staticInfo)
