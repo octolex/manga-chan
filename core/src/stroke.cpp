@@ -31,13 +31,46 @@ float lerp(float a, float b, float t) noexcept {
     return a + (b - a) * t;
 }
 
-float catmullRom(float p0, float p1, float p2, float p3, float t) noexcept {
-    const float t2 = t * t;
-    const float t3 = t2 * t;
-    return 0.5f * ((2.0f * p1)
-                 + (-p0 + p2) * t
-                 + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2
-                 + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+struct Vec2 {
+    float x;
+    float y;
+};
+
+float lengthBetween(Vec2 a, Vec2 b) noexcept {
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+Vec2 mix(Vec2 a, Vec2 b, float wa, float wb) noexcept {
+    return Vec2{a.x * wa + b.x * wb, a.y * wa + b.y * wb};
+}
+
+/// Centripetal Catmull-Rom (alpha = 1/2) through p1 and p2, at t in 0...1.
+///
+/// Uniform until 2026-11-06. The uniform parameterisation treats every pair of
+/// samples as the same distance apart, and when they are not — a fast corner,
+/// where one gap is ten times the next — it overshoots and can form a cusp or
+/// a small loop inside one segment. Yuksel, Schaefer and Keyser proved the
+/// centripetal choice is the one that cannot, within a segment ("On the
+/// parameterization of Catmull-Rom curves", 2009; CAD 2011). It costs four
+/// square roots per segment, and it passes through exactly the same samples.
+///
+/// Evaluated with the Barry-Goldman pyramid, which needs every knot interval
+/// non-zero; the caller guarantees it by never passing coincident points.
+Vec2 centripetalCatmullRom(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, float t) noexcept {
+    const float t0 = 0.0f;
+    const float t1 = t0 + std::sqrt(std::max(lengthBetween(p0, p1), 1e-4f));
+    const float t2 = t1 + std::sqrt(std::max(lengthBetween(p1, p2), 1e-4f));
+    const float t3 = t2 + std::sqrt(std::max(lengthBetween(p2, p3), 1e-4f));
+    const float u = t1 + (t2 - t1) * t;
+
+    const Vec2 a1 = mix(p0, p1, (t1 - u) / (t1 - t0), (u - t0) / (t1 - t0));
+    const Vec2 a2 = mix(p1, p2, (t2 - u) / (t2 - t1), (u - t1) / (t2 - t1));
+    const Vec2 a3 = mix(p2, p3, (t3 - u) / (t3 - t2), (u - t2) / (t3 - t2));
+    const Vec2 b1 = mix(a1, a2, (t2 - u) / (t2 - t0), (u - t0) / (t2 - t0));
+    const Vec2 b2 = mix(a2, a3, (t3 - u) / (t3 - t1), (u - t1) / (t3 - t1));
+    return mix(b1, b2, (t2 - u) / (t2 - t1), (u - t1) / (t2 - t1));
 }
 
 /// Tilt as an artist means it: 0 upright, 1 flat to the glass.
@@ -48,7 +81,12 @@ float tiltInput(float altitudeRadians) noexcept {
 }  // namespace
 
 StrokePath::StrokePath(const Brush& brush, uint64_t seed)
-    : brush_(brush), rng_(seed) {}
+    : brush_(brush), filter_(brush, InputSettings{}), rng_(seed) {}
+
+void StrokePath::setInputSettings(const InputSettings& settings) {
+    if (!nodes_.empty() || finished_) return;
+    filter_ = InputFilter(brush_, settings);
+}
 
 float StrokePath::nextRandom() noexcept {
     // splitmix64. Deterministic from the seed, which is what lets a stroke be
@@ -62,31 +100,29 @@ float StrokePath::nextRandom() noexcept {
     return static_cast<float>((z >> 40) & 0xFFFFFF) / 16777216.0f;
 }
 
-void StrokePath::addSample(const StrokeSample& sample) {
+void StrokePath::addSample(const StrokeSample& raw) {
     if (finished_) return;
 
     // Latched from the first sample; see the field's note for why not the last.
     if (nodes_.empty()) {
-        fromPressureDevice_ = sample.fromPressureDevice;
+        fromPressureDevice_ = raw.fromPressureDevice;
     }
+
+    // Every stabiliser, and the person's pressure curve, run here — before the
+    // spline, so they change the curve itself rather than merely resampling a
+    // jittery one. See input_filter.h.
+    const StrokeSample sample = filter_.filter(raw);
 
     Node node;
     node.pressure = clamp01(sample.pressure);
     node.tilt = sample.tilt;
+    node.x = sample.x;
+    node.y = sample.y;
 
     if (nodes_.empty()) {
-        node.x = sample.x;
-        node.y = sample.y;
         node.velocity = 0.0f;
     } else {
         const Node& previous = nodes_.back();
-        // Pull the sample toward where the path already is. Applied before the
-        // spline rather than after, so smoothing changes the curve itself
-        // rather than merely resampling a jittery one.
-        const float k = clamp01(brush_.smoothing);
-        node.x = lerp(sample.x, previous.x, k);
-        node.y = lerp(sample.y, previous.y, k);
-
         const float dx = node.x - previous.x;
         const float dy = node.y - previous.y;
         const float distance = std::sqrt(dx * dx + dy * dy);
@@ -101,6 +137,7 @@ void StrokePath::addSample(const StrokeSample& sample) {
 
     lastTimestamp_ = sample.timestamp;
     nodes_.push_back(node);
+    nodeSamples_.push_back(sample);
     emitReadySegments(false);
 }
 
@@ -121,10 +158,21 @@ void StrokePath::emitReadySegments(bool flushing) {
 
 void StrokePath::emitSegment(size_t index) {
     const size_t last = nodes_.size() - 1;
-    const Node& p0 = nodes_[index == 0 ? 0 : index - 1];
     const Node& p1 = nodes_[index];
     const Node& p2 = nodes_[index + 1];
-    const Node& p3 = nodes_[std::min(last, index + 2)];
+    const Vec2 v1{p1.x, p1.y};
+    const Vec2 v2{p2.x, p2.y};
+    // At either end of the stroke there is no neighbour to aim the tangent
+    // with. A phantom point reflected through the end sample stands in for
+    // it: the centripetal knots need every interval non-zero, which a
+    // duplicated endpoint would not give, and the reflection makes the end
+    // tangent the chord — the natural "keep going the way it was going".
+    const Vec2 v0 = index == 0
+        ? Vec2{2.0f * p1.x - p2.x, 2.0f * p1.y - p2.y}
+        : Vec2{nodes_[index - 1].x, nodes_[index - 1].y};
+    const Vec2 v3 = index + 2 <= last
+        ? Vec2{nodes_[index + 2].x, nodes_[index + 2].y}
+        : Vec2{2.0f * p2.x - p1.x, 2.0f * p2.y - p1.y};
 
     if (!cursor_.valid) {
         cursor_.x = p1.x;
@@ -144,8 +192,9 @@ void StrokePath::emitSegment(size_t index) {
         const float t = static_cast<float>(step) / static_cast<float>(kSubsteps);
 
         Walker target;
-        target.x = catmullRom(p0.x, p1.x, p2.x, p3.x, t);
-        target.y = catmullRom(p0.y, p1.y, p2.y, p3.y, t);
+        const Vec2 point = centripetalCatmullRom(v0, v1, v2, v3, t);
+        target.x = point.x;
+        target.y = point.y;
         // Attributes interpolate linearly. Splining them too would overshoot
         // past full pressure on a sharp change and then clamp, which reads as
         // a flat spot in the width exactly where the stroke is most expressive.
@@ -351,7 +400,9 @@ void StrokePath::placeDab(const Walker& at, float dirX, float dirY) {
 void StrokePath::noteTiles(const Dab& dab) {
     // One pixel of slack for the antialiased edge. The radius is taken at its
     // widest, so an elliptical dab is fully covered whatever its angle.
-    const float reach = dab.radius + 1.0f;
+    // The shader draws nothing smaller than kMinimumDrawnRadius — see
+    // brush_api.h — so the reach is taken from what it actually draws.
+    const float reach = std::max(dab.radius, kMinimumDrawnRadius) + 1.0f;
     const int32_t minX = static_cast<int32_t>(std::floor(dab.x - reach));
     const int32_t maxX = static_cast<int32_t>(std::floor(dab.x + reach));
     const int32_t minY = static_cast<int32_t>(std::floor(dab.y - reach));
@@ -388,6 +439,7 @@ void StrokePath::applyEndTaper() {
         if (distance >= endTaper.length) break;
 
         const float t = distance / endTaper.length;
+        firstRevised_ = std::min(firstRevised_, i);
         dabs_[i].radius = std::max(
             kMinimumRadius,
             dabs_[i].radius * lerp(clamp01(endTaper.scale), 1.0f, t));

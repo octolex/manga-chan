@@ -145,9 +145,34 @@ typedef struct {
 
     MCStrokeTapers taper;
 
-    float smoothing;
+    float smoothing;           /* StreamLine amount; pull per 240 Hz sample, applied in time */
     float minimumSizeFraction;
+
+    float stabilization;              /* Stabilization amount, 0...1 */
+    float motionFiltering;            /* Motion filtering amount, 0...1; 0 is off */
+    float motionFilteringExpression;  /* Motion filtering expression, 0...1 */
 } MCBrush;
+
+/* Matches mc::InputSettings: Procreate's Preferences → Pressure and Smoothing.
+ * App-wide, applied to every stroke whatever the brush. */
+typedef struct {
+    MCResponseCurve pressureCurve;    /* the person's pressure curve; count 0 is linear */
+    float pressureSmoothing;          /* 0...1 */
+    float stabilization;              /* 0...1, a floor under every brush's own */
+    float motionFiltering;            /* 0...1, a floor under every brush's own */
+    float motionFilteringExpression;  /* 0...1, used when the global filtering wins */
+} MCInputSettings;
+
+/* Everything off and the curve linear. */
+MCInputSettings mc_input_settings_default(void);
+
+/* Evaluates a response curve at t in 0...1. For drawing the curve in the UI
+ * with exactly the arithmetic the engine applies. */
+float mc_response_curve_evaluate(const MCResponseCurve* curve, float t);
+
+/* The smallest radius the dab shader draws. Must equal MS_MIN_DRAWN_RADIUS in
+ * ShaderTypes.h; the harness checks. See mc::kMinimumDrawnRadius. */
+#define MC_MIN_DRAWN_RADIUS 1.0f
 
 /* The default inking brush: hard edge, tight spacing, width on pressure. */
 MCBrush mc_brush_ink_pen(void);
@@ -212,6 +237,15 @@ void mc_stroke_add_sample(MCStrokePath* path,
 /* Flushes the tail of the stroke and applies the end taper. */
 void mc_stroke_finish(MCStrokePath* path);
 
+/* Applies the app-wide input settings. Call before the first sample; ignored
+ * after it. */
+void mc_stroke_set_input_settings(MCStrokePath* path, const MCInputSettings* settings);
+
+/* Index of the first dab revised after emission (the end taper does this), or
+ * the dab count when none was. A renderer that has already stamped dabs at or
+ * past this index must restamp the stroke. */
+size_t mc_stroke_first_revised_dab(const MCStrokePath* path);
+
 size_t mc_stroke_dab_count(const MCStrokePath* path);
 
 /* Contiguous, oldest first. Invalidated by the next mc_stroke_add_sample. */
@@ -231,6 +265,49 @@ size_t mc_stroke_copy_tiles(const MCStrokePath* path, int32_t* outXY, size_t cap
 
 /* Total arc length walked, in canvas pixels. Useful for the HUD. */
 float mc_stroke_length(const MCStrokePath* path);
+
+/* ---- QuickShape ------------------------------------------------------------
+ * Draw and hold: the stroke snaps to a line, arc, ellipse or polygon. See
+ * core/quickshape.h. The shell decides when (the hold); the engine decides
+ * what, and walks the shape out as an ordinary stroke. */
+
+typedef enum {
+    MC_SHAPE_NONE = 0,
+    MC_SHAPE_LINE = 1,
+    MC_SHAPE_ARC = 2,
+    MC_SHAPE_ELLIPSE = 3,
+    MC_SHAPE_POLYLINE = 4,
+} MCShapeKind;
+
+#define MC_QUICKSHAPE_MAX_VERTICES 16
+
+typedef struct {
+    int32_t kind;          /* MCShapeKind */
+    int32_t closed;
+    int32_t vertexCount;
+    float vx[MC_QUICKSHAPE_MAX_VERTICES];
+    float vy[MC_QUICKSHAPE_MAX_VERTICES];
+    float cx, cy, rx, ry, rotation;
+    float start, sweep;
+    float pressure, tilt;
+} MCQuickShape;
+
+/* Fits a shape to the stroke drawn so far. Returns its kind; MC_SHAPE_NONE
+ * means leave the stroke alone. */
+int32_t mc_quickshape_detect(const MCStrokePath* path, MCQuickShape* out);
+
+/* Line to the nearest 15 degrees, ellipse to a circle. */
+void mc_quickshape_constrain(MCQuickShape* shape);
+
+/* While the pen is still held after the snap, a line's end follows it. */
+void mc_quickshape_move_end(MCQuickShape* shape, float x, float y, int32_t constrained);
+
+/* A new, unfinished stroke drawing `shape` with `brush`. Stabilisers are off
+ * for it — the shape is already exact, and StreamLine would pull its end
+ * short. Finish it when the pen lifts, exactly like any other stroke. */
+MCStrokePath* mc_quickshape_stroke(const MCQuickShape* shape, const MCBrush* brush,
+                                   uint64_t seed, double startTime,
+                                   int32_t fromPressureDevice);
 
 #ifdef __cplusplus
 }
