@@ -75,6 +75,26 @@ constrain the minimum target at all.
 
 ---
 
+## RGBA16Unorm is blendable on this GPU
+
+**Source:** Metal Feature Set Tables, 2026-10-23, "Texture capabilities by pixel
+format", ordinary 64-bit formats (read 2026-11-06).
+
+```
+RGBA16Unorm   GPU family 1, Apple2: Filter Write Color MSAA Blend
+              Apple3 … Apple11:     All
+```
+
+"All" includes Blend and Color (render target), so a 16-bit-per-channel
+integer target can take the stroke's alpha-over and maximum blends on the
+Apple9 iPad.
+
+**Why this matters:** it is what the stroke coverage buffer is since bug 23.
+At 8 bits, Blending's `opacity^2.6` per dab rounded to nothing below about 9%
+Opacity. Half float (`RGBA16Float`, also "All") was the alternative and was
+rejected on precision: it is precise near 0 and coarse near 1, where a scrubbed
+patch spends its time.
+
 ## Still unverified
 
 Written down so nobody mistakes an assumption for a checked fact.

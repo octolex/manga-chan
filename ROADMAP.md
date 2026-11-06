@@ -71,6 +71,13 @@ Pixels cross between GPU and engine **once per stroke**, never per frame. Undo
 and redo re-upload only the tiles that actually changed, so their cost tracks
 the size of the edit rather than the size of the document.
 
+*No longer true, noted 2026-11-06 by an audit.* Since layers moved to one
+screen-sized texture each (M2), undo marks every layer stale and the next frame
+re-uploads each visible one whole; the engine's list of changed tiles is only
+logged. The cost is now per layer on screen, not per edit. Unmeasured — the HUD
+does not show undo cost — and left as it is until the per-tile render
+restructure, which changes how layers reach the GPU anyway.
+
 **Verified on device.** Undo and redo confirmed across non-linear history —
 undo, draw, undo, redo — including redo-branch invalidation. Full-canvas
 stroke commit costs 6.5 ms, once per stroke rather than per frame.
@@ -400,6 +407,45 @@ look independent must not secretly multiply, or no brush preset survives being
 edited. Flow 100% still yields alpha 1, so the default inking brush is
 bit-identical to before.
 
+### The Procreate-parity pass (2026-11-06)
+
+An audit, then a read of the literature against the code, both with one goal:
+someone who knows Procreate should already know this app. What changed, and
+what each choice cost:
+
+- **Gestures are Procreate's.** Holding two or three fingers repeats undo or
+  redo; a three-finger scrub clears; a four-finger tap hides the interface;
+  touch and hold picks a colour; draw and hold snaps to a shape. The
+  four-finger tap used to *clear the layer*, which turned a Procreate user's
+  muscle memory into lost work (bug 26). Every canvas gesture now ignores
+  Pencil touches. The three delays are guesses until measured.
+- **Three stabilisers, under Procreate's names** — `core/input_filter.h`.
+  StreamLine became time-based: the same value meant four times less smoothing
+  for a 60 Hz finger than a 240 Hz Pencil. Stabilization is a trailing average;
+  Motion filtering is the 1€ filter (Casiez et al., CHI 2012). App-wide floors
+  and a pressure curve live in a Pressure and Smoothing panel. *The cost:* the
+  mappings from slider to filter constant are ours, not measured against
+  Procreate, and how the global and brush values combine (we take the larger)
+  is undocumented in Procreate.
+- **Centripetal Catmull-Rom.** The uniform spline could overshoot into a loop
+  at a fast corner — on a hairpin test input it swung 25 px past the samples;
+  centripetal stays within 0.3. Yuksel, Schaefer and Keyser proved
+  centripetal cannot loop within a segment. *The cost:* four square roots per
+  segment, and every stroke's curve moves by a fraction of a pixel.
+- **16-bit stroke coverage** (bug 23). *The cost:* 22 MB more GPU memory on a
+  13-inch screen, and twice the bandwidth for the coverage pass.
+- **Sub-pixel dabs trade size for opacity** (bug 13). Below 1 px radius a dab is
+  drawn at 1 px with its flow scaled by area. *The cost:* a hairline is softer
+  than a true sub-pixel line would be, which is what every other painting app
+  accepts too.
+- **QuickShape refuses rather than guesses.** A stroke that is not clearly a
+  line, arc, ellipse or polygon stays as drawn. The thresholds are ours, in
+  `core/quickshape.cpp`, and tested on synthetic wobbly shapes; what a hand
+  actually draws is the device's question.
+- **The eyedropper reads the engine, not the screen.** The engine composites
+  the pixel with the same plan the renderer uses, so it is tested in CI — and
+  it means the renderer's drawable can stay framebuffer-only.
+
 ### How complete is the brush definition
 
 The goal is a brush definition that can express what Procreate's can. This
@@ -414,7 +460,7 @@ transcription of one real brush's studio:
 | Section | Have | Partial | Missing | Total |
 |---|---:|---:|---:|---:|
 | Stroke path | 2 | 0 | 3 | 5 |
-| Stabilization | 0 | 1 | 3 | 4 |
+| Stabilization | 3 | 0 | 1 | 4 |
 | Taper | 2 | 1 | 6 | 9 |
 | Shape | 4 | 0 | 9 | 13 |
 | Grain | 4 | 2 | 8 | 14 |
@@ -422,9 +468,10 @@ transcription of one real brush's studio:
 | Dynamics | 3 | 1 | 1 | 5 |
 | Apple Pencil | 1 | 2 | 6 | 9 |
 | Properties | 1 | 1 | 3 | 5 |
-| **Total** | **17** | **10** | **46** | **73** |
+| **Total** | **20** | **9** | **44** | **73** |
 
-**23% complete, 14% partial, 63% missing.** Was 15/12/73 when this section was
+**27% complete, 12% partial, 60% missing.** The three Stabilization settings
+moved on 2026-11-06. Was 15/12/73 when this section was
 written on 2026-09-08; the three structural gaps closed the next day moved four
 settings to complete and one to partial, Rendering style moved to partial on
 2026-09-09 when the Glaze/Blending split landed, and grain Brightness and
@@ -525,6 +572,11 @@ only in a commit message is a task nobody will find.
 | ~~**A left/right toggle for the quick bar**~~ | **Closed 2026-09-09.** The device answered the question: the palm covers them. The whole chrome now moves together from a toolbar button and the choice persists. `edge` turned out to be written and never read — dead state pretending to be a feature — so it was deleted rather than exposed. See bug 20 |
 | **Prediction jitter matches the stroke** | The predicted tip is built with seed 1, the committed stroke with its own seed, so a jittered brush flickers at the tip as one replaces the other. **Not a one-line fix**, though it looks like one: passing the same seed through still restarts the sequence at draw zero, while the committed stroke is already dozens of draws in. The prediction has to *continue* the stroke's generator state, which means forking a stroke rather than building a fresh one. Deferred because no brush with jitter exists yet, so the flicker has nothing to show on |
 | **Showing the scrubbing gain while dragging** | `PrecisionSlider.currentGain` is published and unused. A "1/4" next to the readout would tell a person the slowdown is deliberate rather than the app struggling. Reported as *"the slider behavior is perfect"* on 2026-09-09, so the confusion it guards against did not happen — this now needs a reason to exist, not just an absence of one |
+| **StreamLine → Pressure** | Procreate documents it only loosely ("smoothing kicks in with pressure"). Implementing a reading of a sentence is how bug 21 happened; it waits for a measurement |
+| **Applying Pencil force corrections** | UIKit corrects estimated force up to ~50 ms late, and the engine is append-only, so applying them means revising dabs already drawn — the taper's restamp, again. The HUD now counts estimates and the largest correction; the size of that number decides whether it is worth it |
+| **A full pressure curve** | The global curve has two fixed handles, which already make an S-curve. Procreate's adds points on tap. Waits on someone wanting a shape two points cannot make |
+| **Edit Shape after QuickShape** | Procreate offers handles to adjust a snapped shape after lifting. Ours adjusts a line's end only while the pen is still down |
+| **Display P3** | Procreate offers a P3 canvas. Ours is sRGB throughout. Nothing yet says this matters for manga, which prints in CMYK or greyscale |
 | **A curve editor for the pressure response** | The curve exists in the model and is tested; nothing exposes it, which is why that setting is marked partial rather than complete in the table above |
 
 ### Decisions worth revisiting
@@ -568,6 +620,13 @@ only in a commit message is a task nobody will find.
 
 `predictedTouches` into a transient overlay only. `maximumDrawableCount = 2`.
 End-to-end latency measurement.
+
+**What to measure against** (read 2026-11-06): Annett et al., GI 2014, found
+inking delay is noticed at about 50 ms; Ink & Switch argue ~20 ms is what feels
+right. Neither is Procreate. **How to measure without a Mac:** a slow-motion
+video from a phone, of the same fast Pencil sweep in both apps, read as the gap
+between nib and ink divided by the speed. Same hand, same camera, same frame
+rate — like with like.
 
 The milestone where having no Mac hurts most — a cloud-Mac day may be worth
 ~€5 here if the in-app HUD is not saying enough.

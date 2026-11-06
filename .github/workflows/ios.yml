@@ -181,7 +181,7 @@ jobs:
           # test says the GPU matched the CPU; it does not say whether it
           # matched by one level or by the whole tolerance, which is the
           # difference between comfortable and fragile.
-          grep -E 'blend shaders:|worst case:|rejects programmable' \
+          grep -E 'blend shaders:|worst case:|rejects programmable|coverage precision:|sub-pixel dab:' \
             xcodebuild-test.log || echo '(no measurements printed)'
 
       - name: Build app (unsigned)
@@ -390,13 +390,23 @@ jobs:
 
           # A fixed tag, so the URL added to SideStore never changes. Created
           # once, then only its asset is replaced.
-          gh release view sidestore-source >/dev/null 2>&1 || \
-            gh release create sidestore-source \
-              --title "SideStore source (do not delete)" \
-              --notes "The app source SideStore reads. Its \`source.json\` asset is replaced by every build so this tag's URL stays stable. Deleting this release breaks updates for anyone who added the source." \
-              --prerelease
+          #
+          # From main only. A pull request's build used to overwrite this asset
+          # too, so anyone still on the old URL was offered whichever branch
+          # built last rather than what was merged (found 2026-11-06). The
+          # source.json on main, which is what the README advertises, was
+          # already main-only; this keeps the legacy URL to the same rule.
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            gh release view sidestore-source >/dev/null 2>&1 || \
+              gh release create sidestore-source \
+                --title "SideStore source (do not delete)" \
+                --notes "The app source SideStore reads. Its \`source.json\` asset is replaced by every build so this tag's URL stays stable. Deleting this release breaks updates for anyone who added the source." \
+                --prerelease
 
-          gh release upload sidestore-source source.json --clobber
+            gh release upload sidestore-source source.json --clobber
+          else
+            echo "Not a push to main: the legacy source asset is left alone"
+          fi
           echo "Release asset updated for $TAG"
 
       # The endpoint SideStore should actually read.

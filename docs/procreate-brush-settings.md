@@ -30,13 +30,19 @@ Legend: ✅ we have it · 🔶 partial · ⬜ missing
 
 | | Setting | Type |
 |---|---|---|
-| 🔶 | StreamLine → Cantidad — Amount (our `smoothing`) | percentage |
+| ✅ | StreamLine → Cantidad — Amount (our `smoothing`) | percentage |
 | ⬜ | StreamLine → Presión — Pressure | percentage |
-| ⬜ | Estabilización → Cantidad — Amount | percentage |
-| ⬜ | Filtro de movimiento → Cantidad, Expresión | percentage |
+| ✅ | Estabilización → Cantidad — Amount | percentage |
+| ✅ | Filtro de movimiento → Cantidad, Expresión | percentage |
 
-Three *separate* smoothing mechanisms, not one. We have a single `smoothing`
-that corresponds to StreamLine.
+Three *separate* smoothing mechanisms, not one. Since 2026-11-06 all three
+exist, in `core/input_filter.h`, and the panel names them as Procreate does —
+our `smoothing` had been labelled "Stabilization", which is the name of a
+different one of the three. **The arithmetic is the established technique for
+each of Procreate's descriptions, not a measurement of Procreate**: StreamLine
+an exponential average in time, Stabilization a trailing average, Motion
+filtering the 1€ filter. StreamLine → Pressure stays missing because its
+meaning is not documented clearly enough to implement without measuring it.
 
 ## Ahusamiento — Taper
 

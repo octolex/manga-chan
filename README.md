@@ -54,7 +54,8 @@ machine — nobody edits code there.
 
 ## Releases
 
-Every build publishes a release tagged `v0.1.<run number>`, with the unsigned
+Every build publishes a release tagged `v<series>.<run number>` — `v0.3.n` while
+M3 is open, the series coming from the `VERSION` file — with the unsigned
 `.ipa` attached and notes listing what changed since the previous one.
 
 **Add this to SideStore once** and updates arrive as a tap, with no downloading,
@@ -77,7 +78,7 @@ require — are in [docs/versioning.md](docs/versioning.md).
 ### Why the version number moves
 
 `project.yml` pins `MARKETING_VERSION` to `0.0.1` for local builds, but CI
-overrides it with `0.1.<run number>` and asserts the value actually reached
+overrides it with `<series>.<run number>` and asserts the value actually reached
 `Info.plist`. SideStore decides an update exists by comparing that string, so a
 fixed version means no update is ever offered — and the symptom is a source
 that looks broken rather than a version that did not move. The assertion exists
@@ -102,7 +103,7 @@ Everything published so far is pre-alpha and none of it is a public build.
 | Path | What it is |
 |---|---|
 | `core/` | C++20 engine core. No platform or graphics dependencies. |
-| `tests/` | Host-side tests for `core/`. 13 suites, ~26,000 checks, under a minute — though most of that count is per-dab assertions inside loops in one suite, so it overstates how many distinct things are tested. |
+| `tests/` | Host-side tests for `core/`. 15 suites, ~40,000 checks, under a minute — though most of that count is per-dab assertions inside loops in one suite, so it overstates how many distinct things are tested. |
 | `shell_ios/` | Swift + UIKit app. `project.yml` replaces the `.xcodeproj`. |
 | `shell_ios/Tests/` | Simulator tests. Real Metal, so shaders are checked against the CPU reference rather than by eye. |
 | `docs/` | Verified platform facts, a transcription of Procreate's brush settings, and the Procreate measurements every brush decision rests on. |
