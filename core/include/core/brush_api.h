@@ -172,7 +172,7 @@ float mc_response_curve_evaluate(const MCResponseCurve* curve, float t);
 
 /* The smallest radius the dab shader draws. Must equal MS_MIN_DRAWN_RADIUS in
  * ShaderTypes.h; the harness checks. See mc::kMinimumDrawnRadius. */
-#define MC_MIN_DRAWN_RADIUS 1.0f
+#define MC_MIN_DRAWN_RADIUS 1.25f
 
 /* The default inking brush: hard edge, tight spacing, width on pressure. */
 MCBrush mc_brush_ink_pen(void);

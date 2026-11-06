@@ -39,7 +39,7 @@ typedef struct {
 /// of areas, so a hairline keeps its weight wherever it lands between pixel
 /// centres. Must equal MC_MIN_DRAWN_RADIUS in core/brush_api.h; the harness
 /// tests check. See mc::kMinimumDrawnRadius.
-#define MS_MIN_DRAWN_RADIUS 1.0f
+#define MS_MIN_DRAWN_RADIUS 1.25f
 
 typedef enum {
     MSGrainCanvas = 0,   // grain fixed to the canvas, like the tooth of paper

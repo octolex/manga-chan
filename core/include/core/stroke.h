@@ -51,9 +51,16 @@ namespace mc {
 /// this is what Photoshop and Krita do; at exactly this radius the two agree,
 /// so nothing changes for a brush that never goes this small.
 ///
+/// 1.25 rather than 1, measured: in CI at a 1 px minimum a 0.4 px dab put down
+/// 1.67 times as much ink landing on a pixel centre as on a pixel corner. The
+/// shader's antialiasing band is about a pixel wide, and a disc only a pixel
+/// across is mostly band, so where it lands still mattered. A quarter pixel
+/// more makes the disc wide enough to sample evenly, and touches only brushes
+/// under 2.5 px.
+///
 /// The shader holds the same number as `MS_MIN_DRAWN_RADIUS`, and the harness
 /// tests that the two agree.
-inline constexpr float kMinimumDrawnRadius = 1.0f;
+inline constexpr float kMinimumDrawnRadius = 1.25f;
 
 /// One stamp of the brush shape. This is the entire contract with the GPU:
 /// whatever the brush model grows into, the renderer only ever sees these.

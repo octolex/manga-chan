@@ -384,9 +384,10 @@ they lived in the Swift shell rather than the engine:
     antialiased edge that draws it, so almost all of its coverage is falloff.
     **Fix attempted 2026-11-06, unconfirmed on device:** a dab under a pixel
     is sampled at pixel centres, so whether it shows depends on where it
-    lands. It is now drawn at 1 px radius with its flow scaled by the ratio of
-    areas, as Photoshop and Krita do. CI checks a 0.4 px dab draws about the
-    same ink wherever it lands.
+    lands. It is now drawn at 1.25 px radius with its flow scaled by the ratio
+    of areas, as Photoshop and Krita do. CI checks a 0.4 px dab draws about the
+    same ink wherever it lands — and the first attempt, at 1 px, failed that
+    check: 1.67 times the ink on a pixel centre as on a corner.
 
 14. **Grain thresholding was the wrong fix.** Replacing the multiply with
     `(coverage - tooth) / (1 - tooth)` made it worse, not better: at Flow 100%

@@ -434,8 +434,9 @@ what each choice cost:
   segment, and every stroke's curve moves by a fraction of a pixel.
 - **16-bit stroke coverage** (bug 23). *The cost:* 22 MB more GPU memory on a
   13-inch screen, and twice the bandwidth for the coverage pass.
-- **Sub-pixel dabs trade size for opacity** (bug 13). Below 1 px radius a dab is
-  drawn at 1 px with its flow scaled by area. *The cost:* a hairline is softer
+- **Sub-pixel dabs trade size for opacity** (bug 13). Below 1.25 px radius a dab
+  is drawn at 1.25 px with its flow scaled by area. 1.25 because 1 measured
+  1.67× more ink on a pixel centre than a corner in CI. *The cost:* a hairline is softer
   than a true sub-pixel line would be, which is what every other painting app
   accepts too.
 - **QuickShape refuses rather than guesses.** A stroke that is not clearly a
