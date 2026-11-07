@@ -64,6 +64,15 @@ struct QuickShape {
     /// weight the hand was drawing at rather than at an arbitrary one.
     float pressure = 1.0f;
     float tilt = 1.5707963f;
+
+    /// How far the stroke missed each fit that was tried, as a multiple of
+    /// that fit's limit: at or below 1 it fits, above 1 it was refused. 0 when
+    /// the fit was not tried. Logged by the shell on every hold, so the limits
+    /// in quickshape.cpp can be set from strokes octolex actually drew.
+    float lineMiss = 0.0f;
+    float arcMiss = 0.0f;
+    float ellipseMiss = 0.0f;
+    float polylineMiss = 0.0f;
 };
 
 /// Decides which shape `samples` is, and fits it. `kind` is None when no

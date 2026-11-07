@@ -207,6 +207,84 @@ void testDetectThroughTheAbi() {
     CHECK_EQ(mc_quickshape_detect(nullptr, &shape), MC_SHAPE_NONE);
 }
 
+// ---- The 2026-11-07 loosening ----------------------------------------------
+
+/// A sloppier hand: the wobble scaled up from what the first tests used.
+std::vector<StrokeSample> sloppyEllipse(float wobbleScale) {
+    std::vector<std::pair<float, float>> pts;
+    for (int i = 0; i < 400; ++i) {
+        const float t = 2.0f * kPi * static_cast<float>(i) / 399.0f;
+        const float u = (200.0f + wobbleScale * wobble(i)) * std::cos(t);
+        const float v = (100.0f + wobbleScale * wobble(i + 7)) * std::sin(t);
+        pts.emplace_back(400.0f + u, 300.0f + v);
+    }
+    return traced(pts);
+}
+
+void testSloppierShapesNowSnap() {
+    std::printf("loosened: a sloppier ellipse and line snap, and report how close they came\n");
+    // A wobble big enough that the first limits refused it. Every new limit
+    // is at least 1.71 times the old one, so a miss above 1/1.71 under the
+    // new limits was a refusal under the old.
+    const QuickShape oval = detectShape(sloppyEllipse(6.5f));
+    std::printf("    sloppy ellipse: kind %d, miss %.2f\n", static_cast<int>(oval.kind), oval.ellipseMiss);
+    CHECK(oval.kind == ShapeKind::Ellipse);
+    CHECK(oval.ellipseMiss > 0.0f && oval.ellipseMiss <= 1.0f);
+    CHECK(oval.ellipseMiss * 1.71f > 1.0f);   // the first limits refused it
+
+    // A line wandering about 20 px either side over 400 px. The new line
+    // limits are at least 1.5 times the old, so a miss above 1/1.5 was a
+    // refusal before.
+    std::vector<std::pair<float, float>> pts;
+    for (int i = 0; i < 200; ++i) {
+        const float t = static_cast<float>(i) / 199.0f;
+        pts.emplace_back(100.0f + 400.0f * t, 200.0f + 18.0f * std::sin(t * 9.0f) + 2.0f * wobble(i));
+    }
+    const QuickShape line = detectShape(traced(pts));
+    std::printf("    wavering line: kind %d, miss %.2f\n", static_cast<int>(line.kind), line.lineMiss);
+    CHECK(line.kind == ShapeKind::Line);
+    CHECK(line.lineMiss * 1.5f > 1.0f);   // the first limits refused it
+}
+
+void testRefusalsSayHowFarTheyMissed() {
+    std::printf("a refused stroke reports every fit it tried, each above 1\n");
+    std::vector<std::pair<float, float>> pts;
+    for (int i = 0; i < 300; ++i) {
+        const float t = static_cast<float>(i) * 0.08f;
+        pts.emplace_back(200.0f + 80.0f * std::sin(t * 2.3f) + 30.0f * std::sin(t * 7.1f),
+                         200.0f + 60.0f * std::cos(t * 1.7f));
+    }
+    const QuickShape s = detectShape(traced(pts));
+    std::printf("    scribble: line %.2f, arc %.2f, ellipse %.2f, polygon %.2f\n",
+                s.lineMiss, s.arcMiss, s.ellipseMiss, s.polylineMiss);
+    CHECK(s.kind == ShapeKind::None);
+    const float tried[] = {s.lineMiss, s.arcMiss, s.ellipseMiss, s.polylineMiss};
+    int reported = 0;
+    for (float m : tried) {
+        if (m > 0.0f) { ++reported; CHECK(m > 1.0f); }
+    }
+    CHECK(reported >= 2);
+}
+
+void testABoxIsStillNotAnEllipse() {
+    std::printf("loosened, a box is still a polygon rather than an ellipse\n");
+    std::vector<std::pair<float, float>> pts;
+    auto edge = [&](float x0, float y0, float x1, float y1) {
+        for (int i = 0; i < 60; ++i) {
+            const float t = static_cast<float>(i) / 60.0f;
+            pts.emplace_back(x0 + (x1 - x0) * t + 1.5f * wobble(i), y0 + (y1 - y0) * t + 1.5f * wobble(i + 3));
+        }
+    };
+    edge(100, 100, 400, 100);
+    edge(400, 100, 400, 400);
+    edge(400, 400, 100, 400);
+    edge(100, 400, 100, 108);
+    const QuickShape s = detectShape(traced(pts));
+    std::printf("    box: kind %d, ellipse miss %.2f\n", static_cast<int>(s.kind), s.ellipseMiss);
+    CHECK(s.kind == ShapeKind::Polyline);
+    CHECK_EQ(s.vertexCount, 4);
+}
+
 // ---- Eyedropper -------------------------------------------------------------
 
 std::vector<uint8_t> solidTile(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
@@ -284,6 +362,9 @@ int main() {
     testConstrain();
     testShapeSamplesDrawTheShape();
     testDetectThroughTheAbi();
+    testSloppierShapesNowSnap();
+    testRefusalsSayHowFarTheyMissed();
+    testABoxIsStillNotAnEllipse();
     testEyedropperOnBlankCanvasIsWhite();
     testEyedropperReadsBgraAsTheShellStoresIt();
     testEyedropperHonoursOpacityAndVisibility();

@@ -316,6 +316,8 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-11-07 | B2 three-finger scrub clears, two-finger tap undoes it | Pass — "works better than in Procreate" |
 | 2026-11-07 | B3 holding two fingers undoes repeatedly | Pass; the 0.65 s pause feels right by eye, not yet measured against Procreate |
 | 2026-11-07 | B4 eyedropper | Pass, with one finding: near the top edge or a corner the ring went off screen, as Procreate's does. Fixed the same day — the ring now orbits the finger at a fixed distance, turning by the smallest angle that keeps it on screen, and glides there; CI checks every finger position on a 16 pt grid in both orientations |
+| 2026-11-07 | B5 QuickShape line: snap, end follows the Pencil, finger constrains to 15° | Pass |
+| 2026-11-07 | B6 QuickShape ellipse, polygon, arc | Snap, but only from a nearly perfect shape — too strict. A box shows "Polygon", never a square. No scaling or rotating a snapped shape. Decided: limits loosened now and every hold logged (HUD `shape` line, `session.log`); editing, squares and keep-as-vector deferred to the vector work (ROADMAP) |
 
 Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:

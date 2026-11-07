@@ -164,6 +164,9 @@ final class HUDView: UIView {
             lines.append(String(format: "est frc  %ld/%ld  max %.3f",
                                 input.forceCorrected, input.forceEstimated,
                                 input.forceMaxError))
+            // The last QuickShape hold, and how far it missed each shape:
+            // at or below 1 snaps. What the next round's limits come from.
+            lines.append("shape    " + input.lastShapeFit)
 
             lines.append("")
             lines.append(contentsOf: staticInfo)

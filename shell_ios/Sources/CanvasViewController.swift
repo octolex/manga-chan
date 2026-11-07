@@ -941,11 +941,29 @@ final class CanvasViewController: UIViewController {
     /// if one fits, replace the stroke with it.
     private func snapToShape() {
         quickShapeTimer = nil
-        guard activeTouch != nil, snappedShape == nil,
-              let stroke, let shape = stroke.detectShape() else { return }
+        guard activeTouch != nil, snappedShape == nil, let stroke else { return }
+        let fit = stroke.fitShape()
+        recordShapeFit(fit)
+        guard fit.kind != Int32(MC_SHAPE_NONE.rawValue) else { return }
+        let shape = fit
         snappedShape = shape
         replaceStroke(with: shape)
         toast.show(Self.name(of: shape, constrained: false))
+    }
+
+    /// Every hold's fit goes to the log and the HUD, refusals included: how
+    /// far the stroke missed each shape, as a multiple of that shape's limit
+    /// (at or below 1 snaps). The limits were loosened once by judgement on
+    /// 2026-11-07; the next change to them should come from these numbers.
+    private func recordShapeFit(_ fit: MCQuickShape) {
+        func miss(_ value: Float) -> String { value > 0 ? String(format: "%.2f", value) : "—" }
+        let result = fit.kind == Int32(MC_SHAPE_NONE.rawValue)
+            ? "none" : Self.name(of: fit, constrained: false).lowercased()
+        let line = "\(result) · line \(miss(fit.lineMiss)) arc \(miss(fit.arcMiss)) "
+                 + "ellipse \(miss(fit.ellipseMiss)) polygon \(miss(fit.polylineMiss))"
+        Diagnostics.log("quickshape: " + line)
+        inputStats.lastShapeFit = line
+        hud.update(input: inputStats)
     }
 
     private func constrainSnappedShape() {

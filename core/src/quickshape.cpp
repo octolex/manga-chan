@@ -17,6 +17,30 @@ constexpr double kSnapStep = kPi / 12.0;
 /// the spline through them adds no visible rounding at a polygon's corners.
 constexpr double kSampleStep = 1.5;
 
+/// How far a stroke may miss each shape and still snap to it.
+///
+/// Loosened on 2026-11-07 after the first device round: octolex found a shape
+/// had to be drawn nearly perfectly before QuickShape would take it, and asked
+/// for the fitting to be more aggressive — not the hold timing. Roughly
+/// doubled across the board, and every refusal now records how far it missed
+/// (QuickShape::*Miss), so the next round sets these from real strokes rather
+/// than from a second guess. The first values are kept beside each one.
+namespace limits {
+constexpr double kLineDeviationPx = 4.0;        // was 2.5
+constexpr double kLineDeviationOfChord = 0.08;  // was 0.04
+constexpr double kLineBackwards = 0.15;         // was 0.10, of the chord
+constexpr double kClosedGapPx = 16.0;           // was 10
+constexpr double kClosedGapOfDiagonal = 0.35;   // was 0.25
+constexpr double kClosedTravel = 1.8;           // was 2.0, diagonals
+constexpr double kEllipseMean = 0.12;           // was 0.07, of the radius
+constexpr double kEllipseMax = 0.35;            // was 0.20
+constexpr double kArcMean = 0.08;               // was 0.04, of the radius
+constexpr double kArcMax = 0.20;                // was 0.10
+constexpr double kPolygonDeviationPx = 5.0;     // was 3
+constexpr double kPolygonDeviationOfDiagonal = 0.06;  // was 0.035
+constexpr double kPolygonTurnDegrees = 30.0;    // was 35
+}  // namespace limits
+
 /// The speed the generated samples pretend to travel at, so a brush with
 /// speed dynamics draws a shape at a moderate, steady speed rather than at
 /// whatever the hold implied.
@@ -117,7 +141,9 @@ bool fitEllipse(const std::vector<P>& pts, QuickShape& out) {
         maxError = std::max(maxError, e);
     }
     meanError /= static_cast<double>(pts.size());
-    if (meanError > 0.07 || maxError > 0.2) return false;
+    out.ellipseMiss = static_cast<float>(std::max(meanError / limits::kEllipseMean,
+                                                  maxError / limits::kEllipseMax));
+    if (out.ellipseMiss > 1.0f) return false;
 
     out.kind = ShapeKind::Ellipse;
     out.closed = true;
@@ -167,7 +193,9 @@ bool fitArc(const std::vector<P>& pts, double diagonal, QuickShape& out) {
         maxError = std::max(maxError, e);
     }
     meanError /= n;
-    if (meanError > 0.04 || maxError > 0.1) return false;
+    out.arcMiss = static_cast<float>(std::max(meanError / limits::kArcMean,
+                                              maxError / limits::kArcMax));
+    if (out.arcMiss > 1.0f) return false;
 
     // Signed sweep, unwrapped point to point.
     double sweep = 0.0;
@@ -196,7 +224,8 @@ bool fitArc(const std::vector<P>& pts, double diagonal, QuickShape& out) {
 }
 
 bool fitPolyline(const std::vector<P>& pts, double diagonal, bool closed, QuickShape& out) {
-    const double epsilon = std::max(3.0, 0.035 * diagonal);
+    const double epsilon = std::max(limits::kPolygonDeviationPx,
+                                    limits::kPolygonDeviationOfDiagonal * diagonal);
     std::vector<size_t> keep{0};
     douglasPeucker(pts, 0, pts.size() - 1, epsilon, keep);
     keep.push_back(pts.size() - 1);
@@ -210,20 +239,27 @@ bool fitPolyline(const std::vector<P>& pts, double diagonal, bool closed, QuickS
         corners.pop_back();
     }
     const size_t n = corners.size();
-    if (n < 3 || n > static_cast<size_t>(QuickShape::kMaxVertices)) return false;
+    if (n > static_cast<size_t>(QuickShape::kMaxVertices)) {
+        out.polylineMiss = static_cast<float>(n) / static_cast<float>(QuickShape::kMaxVertices);
+        return false;
+    }
+    if (n < 3) return false;
 
     // A smooth curve simplifies to a few vertices too, but its turns are
     // shallow. A polygon is drawn with corners, and that is what tells them
     // apart.
-    const double minimumTurn = 35.0 * kPi / 180.0;
+    const double minimumTurn = limits::kPolygonTurnDegrees * kPi / 180.0;
     const size_t interiorFrom = closed ? 0 : 1;
     const size_t interiorTo = closed ? n : n - 1;
+    double shallowest = kPi;
     for (size_t i = interiorFrom; i < interiorTo; ++i) {
         const P& a = corners[(i + n - 1) % n];
         const P& b = corners[i];
         const P& c = corners[(i + 1) % n];
-        if (turn(a, b, c) < minimumTurn) return false;
+        shallowest = std::min(shallowest, turn(a, b, c));
     }
+    out.polylineMiss = static_cast<float>(minimumTurn / std::max(shallowest, 1e-6));
+    if (shallowest < minimumTurn) return false;
 
     out.kind = ShapeKind::Polyline;
     out.closed = closed;
@@ -298,11 +334,14 @@ QuickShape detectShape(const std::vector<StrokeSample>& samples) {
             if (along < 0.0) backwards -= along;
         }
     }
-    if (chord > 0.0 && backwards <= 0.1 * chord) {
-        const double tolerance = std::max(2.5, 0.04 * chord);
+    if (chord > 0.0) {
+        const double tolerance = std::max(limits::kLineDeviationPx,
+                                          limits::kLineDeviationOfChord * chord);
         double worst = 0.0;
         for (const P& p : pts) worst = std::max(worst, lineDistance(p, first, last));
-        if (worst <= tolerance) {
+        out.lineMiss = static_cast<float>(std::max(worst / tolerance,
+                                                   backwards / (limits::kLineBackwards * chord)));
+        if (out.lineMiss <= 1.0f) {
             out.kind = ShapeKind::Line;
             out.vertexCount = 2;
             out.vx[0] = static_cast<float>(first.x);
@@ -314,16 +353,22 @@ QuickShape detectShape(const std::vector<StrokeSample>& samples) {
     }
 
     // Closed: ends near the start, having gone round rather than out and back.
-    const bool closed = chord <= std::max(10.0, 0.25 * diagonal) && travelled >= 2.0 * diagonal;
+    const bool closed = chord <= std::max(limits::kClosedGapPx,
+                                          limits::kClosedGapOfDiagonal * diagonal)
+                     && travelled >= limits::kClosedTravel * diagonal;
+    // A refusal keeps `out` rather than returning a fresh shape, so the miss
+    // ratios of every fit that was tried reach the log.
     if (closed) {
         if (fitEllipse(pts, out)) return out;
         if (fitPolyline(pts, diagonal, true, out)) return out;
-        return QuickShape{};
+        out.kind = ShapeKind::None;
+        return out;
     }
 
     if (fitArc(pts, diagonal, out)) return out;
     if (fitPolyline(pts, diagonal, false, out)) return out;
-    return QuickShape{};
+    out.kind = ShapeKind::None;
+    return out;
 }
 
 void constrainShape(QuickShape& shape) {
