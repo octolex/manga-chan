@@ -45,6 +45,10 @@ Stated directly, so it does not have to be restated each session.
   resume from its step marked *next* — it exists so a compacted or new session
   does not lose the thread. It is private on purpose; nothing in it belongs in
   the public repo until it has been turned into a finding here.
+- **Device findings are batched on one branch** (octolex, 2026-11-07). A
+  small fix found mid-round goes onto the round's open branch and draft PR,
+  not straight to `main`; the round keeps testing the build it is on. Merge
+  when octolex says the batch is ready, or when a fix blocks the round.
 - **Observation mode, except for reverse-engineering** (octolex, 2026-09-09).
   For ordinary changes they draw with the build and report what looks wrong;
   they do not work through numbered checklists. Give a short "what changed,
