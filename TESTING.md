@@ -311,6 +311,11 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | Metal grain sampler matches the engine reference | Pass, in CI — worst 3 of 255 over ~600 px |
 | 2026-09-02 | Canvas grain unchanged by overlapping dabs under Maximum | Pass, in CI |
 | 2026-09-02 | Rolling grain scrolls with arc length; canvas grain ignores it | Pass, in CI |
+| 2026-11-07 | B0 v0.3.104 installs | Pass — `app 0.3.104 (104)`. SideStore stayed on 0.3.100 until the source was set to the raw.githubusercontent.com URL, while both URLs already served 0.3.104 |
+| 2026-11-07 | B1 four-finger tap hides and restores the interface (bug 26) | Pass |
+| 2026-11-07 | B2 three-finger scrub clears, two-finger tap undoes it | Pass — "works better than in Procreate" |
+| 2026-11-07 | B3 holding two fingers undoes repeatedly | Pass; the 0.65 s pause feels right by eye, not yet measured against Procreate |
+| 2026-11-07 | B4 eyedropper | Pass, with one finding: near the top edge or a corner the ring went off screen, as Procreate's does. Fixed the same day — the ring now orbits the finger at a fixed distance, turning by the smallest angle that keeps it on screen, and glides there; CI checks every finger position on a 16 pt grid in both orientations |
 
 Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:

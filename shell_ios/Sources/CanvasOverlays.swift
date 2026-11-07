@@ -50,19 +50,40 @@ final class EyedropperLoupe: UIView {
                                     startAngle: 0, endAngle: .pi, clockwise: true).cgPath
     }
 
-    func show(at point: CGPoint, picked pickedColor: UIColor, current currentColor: UIColor) {
+    /// Fingertip clearance: the ring's centre stays this far from the finger,
+    /// whichever side it is on, so the fingertip can never cover it.
+    private let distance: CGFloat = 88
+
+    /// The angle the ring currently sits at around the finger. Nil while
+    /// hidden, so the next appearance starts where it fits instead of gliding
+    /// in from wherever the last pick left it.
+    private var angle: CGFloat?
+
+    /// - Parameter bounds: where the ring may go, in the superview's
+    ///   coordinates — the visible canvas less its safe-area insets.
+    func show(at point: CGPoint, within bounds: CGRect,
+              picked pickedColor: UIColor, current currentColor: UIColor) {
+        let radius = diameter / 2
+        let target = LoupePlacement.angle(finger: point, bounds: bounds,
+                                          radius: radius, distance: distance)
+        let eased = angle.map { LoupePlacement.ease(from: $0, to: target, fraction: 0.35) }
+            ?? target
+        angle = eased
+
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         picked.strokeColor = pickedColor.cgColor
         current.strokeColor = currentColor.cgColor
-        // Above the finger, so the finger does not cover the colour it is
-        // choosing.
-        center = CGPoint(x: point.x, y: point.y - diameter * 0.75)
+        let centre = LoupePlacement.center(finger: point, angle: eased, distance: distance)
+        center = LoupePlacement.clamped(centre, bounds: bounds, radius: radius)
         isHidden = false
         CATransaction.commit()
     }
 
-    func hide() { isHidden = true }
+    func hide() {
+        isHidden = true
+        angle = nil
+    }
 }
 
 /// A short notice at the top of the canvas — "Ellipse", "Line, 15°" — that

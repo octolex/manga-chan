@@ -107,6 +107,7 @@ targets:
       # way it can go wrong — a value that jumps when the gain changes, a drag
       # that sticks at an end — is invisible in a screenshot.
       - path: Sources/SliderScrubbing.swift
+      - path: Sources/LoupePlacement.swift
       - path: Sources/StrokeCoverage.swift
       # The colour picker and the scroll view it lives in. Three bugs reached
       # the device here in one build, all of them visible in a screenshot and

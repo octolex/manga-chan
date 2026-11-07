@@ -359,7 +359,8 @@ final class CanvasViewController: UIViewController {
         switch gesture.state {
         case .began, .changed:
             let ink = renderer.inkColor
-            eyedropperLoupe.show(at: point, picked: pickedColor,
+            eyedropperLoupe.show(at: point, within: view.bounds.inset(by: view.safeAreaInsets),
+                                 picked: pickedColor,
                                  current: UIColor(red: CGFloat(ink.x), green: CGFloat(ink.y),
                                                   blue: CGFloat(ink.z), alpha: 1))
         case .ended:
