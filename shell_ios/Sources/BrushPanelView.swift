@@ -57,6 +57,21 @@ final class BrushPanelView: UIView {
     private var sliders: [String: PrecisionSlider] = [:]
     private var formatters: [String: (Float) -> String] = [:]
 
+    // MARK: Search
+    //
+    // octolex, 2026-11-07: "a search field for settings", to be improved for
+    // the final UI. The panel already has more settings than fit on a screen,
+    // and the Brush Studio has six times as many still to come. Matching is a
+    // case-insensitive substring of the row's own name and its section's
+    // name, so "taper" finds both taper sections and "end" finds both End
+    // rows. Procreate's own names are what the rows are called, so a
+    // Procreate user types what they already know.
+    private let searchField = UISearchTextField()
+    private var sections: [CollapsibleSection] = []
+    /// The text each row is found by, keyed by the row view.
+    private var searchTerms: [ObjectIdentifier: String] = [:]
+    private var colourViews: [UIView] = []
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         build()
@@ -108,7 +123,22 @@ final class BrushPanelView: UIView {
         hug.priority = .defaultHigh
         hug.isActive = true
 
-        stack.addArrangedSubview(heading("Colour"))
+        searchField.placeholder = "Search settings"
+        searchField.overrideUserInterfaceStyle = .dark
+        searchField.returnKeyType = .done
+        searchField.autocorrectionType = .no
+        searchField.autocapitalizationType = .none
+        searchField.addAction(UIAction { [weak self] _ in
+            self?.applySearch(self?.searchField.text ?? "")
+        }, for: .editingChanged)
+        searchField.addAction(UIAction { [weak self] _ in
+            self?.searchField.resignFirstResponder()
+        }, for: .primaryActionTriggered)
+        stack.addArrangedSubview(searchField)
+
+        let colourHeading = heading("Colour")
+        stack.addArrangedSubview(colourHeading)
+        colourViews = [colourHeading, picker]
         picker.translatesAutoresizingMaskIntoConstraints = false
         picker.onChange = { [weak self] colour in
             guard let self else { return }
@@ -351,7 +381,26 @@ final class BrushPanelView: UIView {
     private func section(_ title: String,
                          expanded: Bool = false,
                          rows: [UIView]) -> UIView {
-        CollapsibleSection(title: title.uppercased(), expanded: expanded, rows: rows)
+        let section = CollapsibleSection(title: title.uppercased(), expanded: expanded, rows: rows)
+        section.searchText = rows.map { searchTerms[ObjectIdentifier($0)] ?? "" }
+        section.titleText = title
+        sections.append(section)
+        return section
+    }
+
+    /// Shows only the rows whose name, or whose section's name, contains the
+    /// query; every other row and every empty section hides. Clearing the
+    /// field puts each section back open or closed as it was before.
+    private func applySearch(_ text: String) {
+        let query = text.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else {
+            for section in sections { section.endSearch() }
+            for view in colourViews { view.isHidden = false }
+            return
+        }
+        for section in sections { section.showMatches(for: query) }
+        let colourMatches = "colour color".contains(query)
+        for view in colourViews { view.isHidden = !colourMatches }
     }
 
     /// A labelled switch, for the settings that are genuinely on or off.
@@ -378,6 +427,7 @@ final class BrushPanelView: UIView {
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = 12
+        searchTerms[ObjectIdentifier(row)] = title
         return row
     }
 
@@ -465,6 +515,7 @@ final class BrushPanelView: UIView {
         let row = UIStackView(arrangedSubviews: [header, control])
         row.axis = .vertical
         row.spacing = 2
+        searchTerms[ObjectIdentifier(row)] = title
         return row
     }
 
@@ -501,6 +552,7 @@ final class BrushPanelView: UIView {
         let row = UIStackView(arrangedSubviews: [control, note])
         row.axis = .vertical
         row.spacing = 6
+        searchTerms[ObjectIdentifier(row)] = "Rendering style Blending Glaze"
         return row
     }
 
@@ -530,6 +582,8 @@ final class BrushPanelView: UIView {
         let row = UIStackView(arrangedSubviews: [control, note])
         row.axis = .vertical
         row.spacing = 8
+        // Procreate calls the two Texture and Movement; both names find it.
+        searchTerms[ObjectIdentifier(row)] = "Grain behaviour Canvas Rolling Texture Movement"
         return row
     }
 }
@@ -542,8 +596,19 @@ private final class CollapsibleSection: UIStackView {
 
     private let chevron = UILabel()
     private let body = UIStackView()
+    private let rows: [UIView]
+
+    /// Set by the panel: the section's own name, and each row's search text in
+    /// the order of `rows`.
+    var titleText = ""
+    var searchText: [String] = []
+
+    /// Whether the section was open when a search began, so clearing the
+    /// search puts it back as the person left it.
+    private var openBeforeSearch: Bool?
 
     init(title: String, expanded: Bool, rows: [UIView]) {
+        self.rows = rows
         super.init(frame: .zero)
 
         let label = UILabel()
@@ -595,5 +660,29 @@ private final class CollapsibleSection: UIStackView {
 
     @objc private func toggleSection() {
         setExpanded(body.isHidden)
+    }
+
+    /// Shows the rows matching `query`, open, or hides the whole section when
+    /// none do. A match on the section's own name shows every row in it.
+    func showMatches(for query: String) {
+        if openBeforeSearch == nil { openBeforeSearch = !body.isHidden }
+        let wholeSection = titleText.lowercased().contains(query)
+        var any = false
+        for (index, row) in rows.enumerated() {
+            let text = index < searchText.count ? searchText[index].lowercased() : ""
+            let match = wholeSection || text.contains(query)
+            row.isHidden = !match
+            any = any || match
+        }
+        isHidden = !any
+        if any { setExpanded(true) }
+    }
+
+    func endSearch() {
+        guard let wasOpen = openBeforeSearch else { return }
+        for row in rows { row.isHidden = false }
+        isHidden = false
+        setExpanded(wasOpen)
+        openBeforeSearch = nil
     }
 }

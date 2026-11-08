@@ -443,6 +443,15 @@ what each choice cost:
   line, arc, ellipse or polygon stays as drawn. The thresholds are ours, in
   `core/quickshape.cpp`, and tested on synthetic wobbly shapes; what a hand
   actually draws is the device's question.
+- **The default pen reaches a hairline** (2026-11-08). Procreate's Studio
+  Pen reads Pressure → Size 100%: no pressure, no width. Ours stopped at 25%
+  of the size, so a 40 px pen could not draw under 10 px. *The cost:* a light
+  touch now draws much thinner than before, which is the point but changes the
+  pen's feel.
+- **A search field on the brush panel** (asked for 2026-11-07, "to be improved
+  for the final UI"). A substring of each row's and section's name, under
+  Procreate's names. The full Brush Studio will have six times the rows, which
+  is when search stops being a convenience.
 - **The eyedropper reads the engine, not the screen.** The engine composites
   the pixel with the same plan the renderer uses, so it is tested in CI — and
   it means the renderer's drawable can stay framebuffer-only.
@@ -468,11 +477,13 @@ transcription of one real brush's studio:
 | Rendering | 0 | 2 | 7 | 9 |
 | Dynamics | 3 | 1 | 1 | 5 |
 | Apple Pencil | 1 | 2 | 6 | 9 |
-| Properties | 1 | 1 | 3 | 5 |
-| **Total** | **20** | **9** | **44** | **73** |
+| Properties | 0 | 1 | 4 | 5 |
+| **Total** | **19** | **9** | **45** | **73** |
 
-**27% complete, 12% partial, 60% missing.** The three Stabilization settings
-moved on 2026-11-06. Was 15/12/73 when this section was
+**26% complete, 12% partial, 62% missing.** The three Stabilization settings
+moved on 2026-11-06. On 2026-11-08 Max / min size moved back to missing: it had
+been ticked against our pressure floor, and Procreate's pair are the Size
+slider's limits — a correction, not a regression. Was 15/12/73 when this section was
 written on 2026-09-08; the three structural gaps closed the next day moved four
 settings to complete and one to partial, Rendering style moved to partial on
 2026-09-09 when the Glaze/Blending split landed, and grain Brightness and

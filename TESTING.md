@@ -319,6 +319,9 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-11-07 | B5 QuickShape line: snap, end follows the Pencil, finger constrains to 15° | Pass |
 | 2026-11-07 | B6 QuickShape ellipse, polygon, arc | Snap, but only from a nearly perfect shape — too strict. A box shows "Polygon", never a square. No scaling or rotating a snapped shape. Decided: limits loosened now and every hold logged (HUD `shape` line, `session.log`); editing, squares and keep-as-vector deferred to the vector work (ROADMAP) |
 | 2026-11-07 | B7 Blending at Opacity 5%, twenty-pass scrub (bug 23) | Pass — builds to a visible grey close to the predicted B 79 swatch, judged by eye. The previous build drew nothing |
+| 2026-11-07 | B8 end taper narrows to a point (bug 24) | Pass. Finding: the start taper is swallowed when pressure rises soon after the start — later, wider dabs cover the tip |
+| 2026-11-08 | P15 the same in Procreate | Procreate swallows it the same way: a round cap the dab's radius. **Ours matches; no change** |
+| 2026-11-08 | P16 Studio Pen size settings | Apple Pencil → Pressure → Size 100%; Properties → Min size 0%, Max size 21%. Default pen changed to match: width at no pressure 25% → 0%, floor 8% → 0% (approved, D4) |
 
 Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:

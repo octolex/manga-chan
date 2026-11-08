@@ -300,6 +300,24 @@ void testRevisedDabsAreReported() {
     CHECK(b.dabs().back().radius < b.dabs()[b.firstRevisedDab() - 1].radius);
 }
 
+void testInkPenGoesToAHairline() {
+    std::printf("the default pen reaches a hairline at light pressure, at any size\n");
+    // Procreate's Studio Pen: Apple Pencil -> Pressure -> Size 100%, minimum
+    // size 0% (read 2026-11-08). Until then ours stopped at 25% of the size.
+    Brush pen = inkPen();
+    pen.size = 40.0f;
+    pen.smoothing = 0.0f;
+    StrokePath path(pen);
+    for (int i = 0; i < 40; ++i) {
+        path.addSample(sampleAt(10.0f * i, 0.0f, i / 240.0, 0.02f));
+    }
+    path.finish();
+    float widest = 0.0f;
+    for (const Dab& d : path.dabs()) widest = std::max(widest, d.radius);
+    std::printf("    40 px pen at 2%% pressure: widest dab radius %.3f px\n", widest);
+    CHECK(widest * 2.0f < 1.0f);
+}
+
 }  // namespace
 
 int main() {
@@ -315,5 +333,6 @@ int main() {
     testCentripetalSplineDoesNotLoop();
     testSubPixelDabsReachTheTilesTheyAreDrawnIn();
     testRevisedDabsAreReported();
+    testInkPenGoesToAHairline();
     return check::report("test_input");
 }
