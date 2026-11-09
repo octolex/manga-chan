@@ -45,6 +45,17 @@ Stated directly, so it does not have to be restated each session.
   resume from its step marked *next* — it exists so a compacted or new session
   does not lose the thread. It is private on purpose; nothing in it belongs in
   the public repo until it has been turned into a finding here.
+- **Device findings are batched on one branch** (octolex, 2026-11-07). A
+  small fix found mid-round goes onto the round's open branch and draft PR,
+  not straight to `main`; the round keeps testing the build it is on. Merge
+  when octolex says the batch is ready, or when a fix blocks the round.
+- **Ask for diagnostics by id, not wholesale** (octolex, 2026-11-09). The app
+  keeps a numbered, categorised log (Pressure and Smoothing panel →
+  Diagnostics…): S strokes, Q QuickShape, F frames, G gestures, L layers,
+  C settings, E errors, B build. When a finding needs data, name the entries
+  — "S12 to S15, and every E" — and octolex copies exactly those. They worry
+  about sending too much; asking narrowly is the point. "Copy summary" is for
+  when nothing yet says where to look.
 - **Observation mode, except for reverse-engineering** (octolex, 2026-09-09).
   For ordinary changes they draw with the build and report what looks wrong;
   they do not work through numbered checklists. Give a short "what changed,

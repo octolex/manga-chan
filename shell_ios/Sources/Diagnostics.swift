@@ -144,6 +144,13 @@ enum Diagnostics {
     }
 
     static func log(_ message: String) {
+        // Failures also become error entries in the browsable log, where they
+        // can be asked for by id. Hopped to the main thread, which owns it:
+        // this function is called from crash and background paths too.
+        let upper = message.uppercased()
+        if upper.contains("FAIL") || upper.contains("ERROR") || upper.contains("UNCAUGHT") {
+            DispatchQueue.main.async { DiagnosticLog.shared.add(.error, message) }
+        }
         let stamp = Self.timestampFormatter.string(from: Date())
         let line = "[\(stamp)] \(message)\n"
         // Also goes to the console, which is useful in the Simulator on CI.
@@ -158,6 +165,22 @@ enum Diagnostics {
         ioQueue.sync {
             try? handle?.synchronize()
         }
+    }
+
+    /// The last `count` lines of this session's log, for the diagnostic
+    /// report. Reads only the file's last 16 KB, so a long session costs the
+    /// same to report as a short one.
+    static func tail(lines count: Int) -> [String] {
+        flush()
+        guard let file = try? FileHandle(forReadingFrom: currentLogURL) else { return [] }
+        defer { try? file.close() }
+        let size = (try? file.seekToEnd()) ?? 0
+        let start = size > 16_384 ? size - 16_384 : 0
+        try? file.seek(toOffset: start)
+        guard let data = try? file.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return [] }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        return Array(lines.suffix(count))
     }
 
     private static let timestampFormatter: DateFormatter = {

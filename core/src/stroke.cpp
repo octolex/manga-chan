@@ -121,6 +121,7 @@ void StrokePath::addSample(const StrokeSample& raw) {
 
     if (nodes_.empty()) {
         node.velocity = 0.0f;
+        firstTimestamp_ = sample.timestamp;
     } else {
         const Node& previous = nodes_.back();
         const float dx = node.x - previous.x;
@@ -129,7 +130,12 @@ void StrokePath::addSample(const StrokeSample& raw) {
 
         // A duplicate position yields a zero-length tangent, which propagates
         // NaN through the entire spline rather than failing locally.
-        if (distance < 1e-4f) return;
+        if (distance < 1e-4f) {
+            // A pen resting where it landed still reports force, and while
+            // the touch-down settles that force is exactly what is needed.
+            settleStartPressure(node.pressure, sample.timestamp);
+            return;
+        }
 
         const double dt = sample.timestamp - lastTimestamp_;
         node.velocity = dt > 1e-6 ? static_cast<float>(distance / dt) : previous.velocity;
@@ -138,7 +144,24 @@ void StrokePath::addSample(const StrokeSample& raw) {
     lastTimestamp_ = sample.timestamp;
     nodes_.push_back(node);
     nodeSamples_.push_back(sample);
+
+    // The start of a Pencil stroke waits for its pressure to settle; see
+    // kTouchDownSettle. Nothing is emitted until then, so the held nodes can
+    // still be revised — the engine stays append-only.
+    if (fromPressureDevice_ && sample.timestamp - firstTimestamp_ < kTouchDownSettle) {
+        settleStartPressure(node.pressure, sample.timestamp);
+        return;
+    }
     emitReadySegments(false);
+}
+
+void StrokePath::settleStartPressure(float pressure, double timestamp) {
+    if (!fromPressureDevice_ || nodes_.empty() || cursor_.valid) return;
+    if (timestamp - firstTimestamp_ >= kTouchDownSettle) return;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        nodes_[i].pressure = std::min(nodes_[i].pressure, pressure);
+        nodeSamples_[i].pressure = std::min(nodeSamples_[i].pressure, pressure);
+    }
 }
 
 void StrokePath::emitReadySegments(bool flushing) {

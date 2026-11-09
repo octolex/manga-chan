@@ -154,6 +154,8 @@ QuickShape fromC(const MCQuickShape& q) {
     out.cx = q.cx; out.cy = q.cy; out.rx = q.rx; out.ry = q.ry;
     out.rotation = q.rotation; out.start = q.start; out.sweep = q.sweep;
     out.pressure = q.pressure; out.tilt = q.tilt;
+    out.lineMiss = q.lineMiss; out.arcMiss = q.arcMiss;
+    out.ellipseMiss = q.ellipseMiss; out.polylineMiss = q.polylineMiss;
     return out;
 }
 
@@ -169,6 +171,8 @@ MCQuickShape toC(const QuickShape& q) {
     out.cx = q.cx; out.cy = q.cy; out.rx = q.rx; out.ry = q.ry;
     out.rotation = q.rotation; out.start = q.start; out.sweep = q.sweep;
     out.pressure = q.pressure; out.tilt = q.tilt;
+    out.lineMiss = q.lineMiss; out.arcMiss = q.arcMiss;
+    out.ellipseMiss = q.ellipseMiss; out.polylineMiss = q.polylineMiss;
     return out;
 }
 

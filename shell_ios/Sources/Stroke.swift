@@ -67,5 +67,14 @@ struct InputStats {
     var forceEstimated: Int = 0
     var forceCorrected: Int = 0
     var forceMaxError: Float = 0
+
+    /// The last QuickShape hold: what it snapped to, and how far the stroke
+    /// missed each shape as a multiple of its limit.
+    var lastShapeFit: String = "—"
+
+    /// The first raw Pencil pressures of the last stroke, before any curve
+    /// or settling. What sets kTouchDownSettle: how long a touch-down spike
+    /// really lasts on this Pencil.
+    var startPressures: [Float] = []
 }
 

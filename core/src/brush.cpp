@@ -187,7 +187,12 @@ Brush inkPen() {
     // the line read as ink rather than as a wash: a light pass is *thinner*,
     // not greyer.
     b.sizeDynamics.byPressure.enabled = true;
-    b.sizeDynamics.byPressure.minimum = 0.25f;
+    // No pressure, no width — Procreate's Studio Pen reads Apple Pencil →
+    // Pressure → Size 100% (octolex, 2026-11-08), so the lightest touch draws
+    // a hairline at any size. It was 0.25 until then, which put a 40 px pen's
+    // thinnest line at 10 px. The sub-pixel rule (kMinimumDrawnRadius) is what
+    // keeps a near-zero width an even hairline instead of gaps.
+    b.sizeDynamics.byPressure.minimum = 0.0f;
     b.sizeDynamics.byPressure.maximum = 1.0f;
     // Slightly above linear, so the middle of the pressure range is where
     // most of the control lives rather than the very top. Expressed as the
@@ -196,7 +201,8 @@ Brush inkPen() {
     b.sizeDynamics.byPressure.curve = ResponseCurve::exponent(1.4f);
 
     b.smoothing = 0.35f;
-    b.minimumSizeFraction = 0.08f;
+    // No floor either, for the same reason. It was 8%.
+    b.minimumSizeFraction = 0.0f;
     return b;
 }
 

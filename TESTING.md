@@ -311,6 +311,19 @@ Not bugs; do not report these until the milestone that addresses them.
 | 2026-09-02 | Metal grain sampler matches the engine reference | Pass, in CI — worst 3 of 255 over ~600 px |
 | 2026-09-02 | Canvas grain unchanged by overlapping dabs under Maximum | Pass, in CI |
 | 2026-09-02 | Rolling grain scrolls with arc length; canvas grain ignores it | Pass, in CI |
+| 2026-11-07 | B0 v0.3.104 installs | Pass — `app 0.3.104 (104)`. SideStore stayed on 0.3.100 until the source was set to the raw.githubusercontent.com URL, while both URLs already served 0.3.104 |
+| 2026-11-07 | B1 four-finger tap hides and restores the interface (bug 26) | Pass |
+| 2026-11-07 | B2 three-finger scrub clears, two-finger tap undoes it | Pass — "works better than in Procreate" |
+| 2026-11-07 | B3 holding two fingers undoes repeatedly | Pass; the 0.65 s pause feels right by eye, not yet measured against Procreate |
+| 2026-11-07 | B4 eyedropper | Pass, with one finding: near the top edge or a corner the ring went off screen, as Procreate's does. Fixed the same day — the ring now orbits the finger at a fixed distance, turning by the smallest angle that keeps it on screen, and glides there; CI checks every finger position on a 16 pt grid in both orientations |
+| 2026-11-07 | B5 QuickShape line: snap, end follows the Pencil, finger constrains to 15° | Pass |
+| 2026-11-07 | B6 QuickShape ellipse, polygon, arc | Snap, but only from a nearly perfect shape — too strict. A box shows "Polygon", never a square. No scaling or rotating a snapped shape. Decided: limits loosened now and every hold logged (HUD `shape` line, `session.log`); editing, squares and keep-as-vector deferred to the vector work (ROADMAP) |
+| 2026-11-07 | B7 Blending at Opacity 5%, twenty-pass scrub (bug 23) | Pass — builds to a visible grey close to the predicted B 79 swatch, judged by eye. The previous build drew nothing |
+| 2026-11-07 | B8 end taper narrows to a point (bug 24) | Pass. Finding: the start taper is swallowed when pressure rises soon after the start — later, wider dabs cover the tip |
+| 2026-11-08 | P15 the same in Procreate | Procreate swallows it the same way: a round cap the dab's radius. **Ours matches; no change** |
+| 2026-11-08 | P16 Studio Pen size settings | Apple Pencil → Pressure → Size 100%; Properties → Min size 0%, Max size 21%. Default pen changed to match: width at no pressure 25% → 0%, floor 8% → 0% (approved, D4) |
+| 2026-11-09 | B8c Pressure smoothing 50% against 0% | Smoother, still not Procreate. Pressure noise is part of the "separate circles" look, not all of it; parked until the canvas can zoom and the two apps can be compared at one magnification |
+| 2026-11-09 | B8d estimated Pencil force against its correction | 13405 of 13405 estimates corrected, largest correction **0.08**. Too small to explain bug 27, which rules the estimate out as its cause |
 
 Bugs found on device, all invisible to CI because
 they lived in the Swift shell rather than the engine:
@@ -649,3 +662,19 @@ would have reached the device. All five lived in the Swift shell.
     it is the gesture Procreate uses to hide the interface, so a Procreate
     user's muscle memory deleted their work. Clearing is now Procreate's
     three-finger scrub.
+
+### Found on device, 2026-11-07 round
+
+27. **A light stroke began with a big blob.** With Size at no pressure 0% and
+    Minimum size 0% — the Studio Pen's values, and since D4 the default pen's —
+    a stroke started lightly drew one dab near full size, then ran on as a
+    ~1 px hairline (screenshot, 2026-11-09). The first dab takes the pressure
+    of the touch-down sample. UIKit's corrections to estimated force peaked at
+    0.08 on the device (B8d), too small to explain it, so the reasoned cause is
+    a real force spike as the nib strikes the glass; the earlier 25% floor had
+    hidden it. Fixed in the engine: for the first 25 ms of a Pencil stroke the
+    held start takes the lowest pressure seen so far — a spike that falls away
+    is discounted, a stroke that ramps up is unchanged. Without the fix the
+    test draws a 17 px first dab, with it 0.2 px. **25 ms is a guess**; the
+    HUD's `start p` line shows each stroke's first raw pressures, which is the
+    measurement that sets it.

@@ -190,9 +190,16 @@ brush editor exposes it.
 |---|---|---|
 | ⬜ | Orientar con la pantalla — Orient to screen | bool |
 | ⬜ | Fuerza de dedo — Finger strength | percentage |
-| ✅ | Tamaño máximo / mínimo — Max / min size | percentage |
+| ⬜ | Tamaño máximo / mínimo — Max / min size | percentage |
 | 🔶 | Opacidad máxima — Max opacity | maximum level |
 | ⬜ | Opacidad mínima — Min opacity | percentage |
+
+**Max / min size was ticked wrongly until 2026-11-08.** It had been matched
+against our `minimumSizeFraction`, which is a floor under pressure. Procreate's
+pair are the limits of the Size slider — the sidebar's range — as tutorials
+describe them ("Size Limits"); the Studio Pen reads Max 21%, Min 0%. We have a
+fixed 1–400 px range and nothing to set it with, so the row is missing. Not
+yet confirmed against Procreate's own handbook.
 
 ## Materiales, Vista previa, Acerca de
 

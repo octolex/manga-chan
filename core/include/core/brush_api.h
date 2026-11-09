@@ -290,6 +290,9 @@ typedef struct {
     float cx, cy, rx, ry, rotation;
     float start, sweep;
     float pressure, tilt;
+    /* How far the stroke missed each fit tried, as a multiple of its limit:
+     * <= 1 fits, > 1 refused, 0 not tried. For the log. */
+    float lineMiss, arcMiss, ellipseMiss, polylineMiss;
 } MCQuickShape;
 
 /* Fits a shape to the stroke drawn so far. Returns its kind; MC_SHAPE_NONE

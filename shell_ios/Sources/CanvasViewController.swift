@@ -149,6 +149,10 @@ final class CanvasViewController: UIViewController {
     /// `touchesEstimatedPropertiesUpdated`.
     private var forceEstimates: [Int: Float] = [:]
 
+    /// The stroke in progress, summarised for the diagnostic report.
+    private var strokeRecord = StrokeRecord()
+    private var strokeStartTime: TimeInterval = 0
+
     override func loadView() {
         view = metalView
         view.backgroundColor = .white
@@ -181,6 +185,9 @@ final class CanvasViewController: UIViewController {
             }
             self.renderer = renderer
             hud.addStaticLine(MTLCreateSystemDefaultDevice()?.name ?? "unknown GPU")
+            let device = UIDevice.current
+            DiagnosticLog.shared.add(.build, "\(AppVersion.short) · \(device.model) · \(device.systemName) \(device.systemVersion)",
+                                     detail: "gpu \(MTLCreateSystemDefaultDevice()?.name ?? "unknown")")
             hud.addStaticLine("2f undo · 3f redo · hold repeats")
             hud.addStaticLine("3f scrub clear · 4f full screen")
             renderer.onLayersChanged = { [weak self] in
@@ -300,18 +307,22 @@ final class CanvasViewController: UIViewController {
     }
 
     @objc private func handleUndo() {
-        _ = renderer?.undo()
+        let done = renderer?.undo() ?? false
+        DiagnosticLog.shared.add(.gesture, done ? "undo" : "undo — nothing to undo")
     }
 
     @objc private func handleRedo() {
-        _ = renderer?.redo()
+        let done = renderer?.redo() ?? false
+        DiagnosticLog.shared.add(.gesture, done ? "redo" : "redo — nothing to redo")
     }
 
     @objc private func handleRapidUndo(_ gesture: UILongPressGestureRecognizer) {
+        if gesture.state == .began { DiagnosticLog.shared.add(.gesture, "hold: rapid undo") }
         repeatWhileHeld(gesture) { [weak self] in self?.renderer?.undo() ?? false }
     }
 
     @objc private func handleRapidRedo(_ gesture: UILongPressGestureRecognizer) {
+        if gesture.state == .began { DiagnosticLog.shared.add(.gesture, "hold: rapid redo") }
         repeatWhileHeld(gesture) { [weak self] in self?.renderer?.redo() ?? false }
     }
 
@@ -343,6 +354,7 @@ final class CanvasViewController: UIViewController {
         if gesture.track(gesture.translation(in: view).x) {
             renderer?.clearActiveLayer()
             toast.show("Layer cleared")
+            DiagnosticLog.shared.add(.gesture, "three-finger scrub: layer cleared")
         }
     }
 
@@ -359,12 +371,16 @@ final class CanvasViewController: UIViewController {
         switch gesture.state {
         case .began, .changed:
             let ink = renderer.inkColor
-            eyedropperLoupe.show(at: point, picked: pickedColor,
+            eyedropperLoupe.show(at: point, within: view.bounds.inset(by: view.safeAreaInsets),
+                                 picked: pickedColor,
                                  current: UIColor(red: CGFloat(ink.x), green: CGFloat(ink.y),
                                                   blue: CGFloat(ink.z), alpha: 1))
         case .ended:
             eyedropperLoupe.hide()
             renderer.setInkRGB(sampled)
+            DiagnosticLog.shared.add(.gesture, String(format: "eyedropper picked #%02X%02X%02X at (%.0f, %.0f) pt",
+                                                      Int(sampled.x * 255), Int(sampled.y * 255),
+                                                      Int(sampled.z * 255), point.x, point.y))
             if !brushPanel.isHidden {
                 brushPanel.sync(brush: renderer.brush, color: pickedColor)
             }
@@ -377,6 +393,7 @@ final class CanvasViewController: UIViewController {
 
     @objc private func toggleFullScreen() {
         isFullScreen.toggle()
+        DiagnosticLog.shared.add(.gesture, isFullScreen ? "full screen on" : "full screen off")
         if isFullScreen {
             layersPanel.isHidden = true
             brushPanel.isHidden = true
@@ -556,6 +573,7 @@ final class CanvasViewController: UIViewController {
     private func setUpPressurePanel() {
         pressurePanel.isHidden = true
         pressurePanel.sync(inputSettings)
+        pressurePanel.onCopyReport = { [weak self] in self?.showDiagnostics() }
         pressurePanel.onChange = { [weak self] settings in
             guard let self else { return }
             // Takes effect on the next stroke: the filters are fixed when a
@@ -612,6 +630,12 @@ final class CanvasViewController: UIViewController {
 
     @objc private func toggleBrushPanel() {
         brushPanel.isHidden.toggle()
+        if brushPanel.isHidden, let renderer {
+            // A snapshot on close rather than one per slider tick: what was
+            // set, not every value passed on the way.
+            DiagnosticLog.shared.add(.settings, "brush, as the panel closed",
+                                     detail: DiagnosticReport.describe(renderer.brush).joined(separator: "\n"))
+        }
         if !brushPanel.isHidden, let renderer {
             showOnly(brushPanel)
             let ink = renderer.inkColor
@@ -631,6 +655,10 @@ final class CanvasViewController: UIViewController {
 
     @objc private func togglePressurePanel() {
         pressurePanel.isHidden.toggle()
+        if pressurePanel.isHidden {
+            DiagnosticLog.shared.add(.settings, "pressure and smoothing, as the panel closed",
+                                     detail: inputDescription().joined(separator: "\n"))
+        }
         if !pressurePanel.isHidden {
             showOnly(pressurePanel)
             pressurePanel.sync(inputSettings)
@@ -769,6 +797,10 @@ final class CanvasViewController: UIViewController {
                                seed: strokeSeed,
                                input: inputSettings.engineSettings)
         noteForceEstimates([touch])
+        inputStats.startPressures = []
+        strokeRecord = StrokeRecord(device: touch.type == .pencil ? "pencil" : "finger")
+        strokeStartTime = touch.timestamp
+        noteStartPressures([touch])
         path.append([strokePoint(from: touch)])
         stroke = path
         snappedShape = nil
@@ -810,6 +842,7 @@ final class CanvasViewController: UIViewController {
         // would discard most of a fast stroke.
         let coalesced = event?.coalescedTouches(for: active) ?? [active]
         noteForceEstimates(coalesced)
+        noteStartPressures(coalesced)
         stroke.append(coalesced.map(strokePoint(from:)))
         renderer?.setStroke(stroke, sampleCount: coalesced.count)
         recordInput(from: active, samplesThisEvent: coalesced.count)
@@ -858,6 +891,19 @@ final class CanvasViewController: UIViewController {
         }
         // Bounded: an update that never comes must not grow this forever.
         if forceEstimates.count > 4096 { forceEstimates.removeAll(keepingCapacity: true) }
+    }
+
+    /// Keeps the stroke's first eight raw Pencil pressures for the HUD and
+    /// the log: the measurement behind the touch-down settle window.
+    private func noteStartPressures(_ touches: [UITouch]) {
+        for touch in touches where touch.type == .pencil && touch.maximumPossibleForce > 0 {
+            let pressure = Float(touch.force / touch.maximumPossibleForce)
+            strokeRecord.pressureMin = min(strokeRecord.pressureMin, pressure)
+            strokeRecord.pressureMax = max(strokeRecord.pressureMax, pressure)
+            if inputStats.startPressures.count < 8 {
+                inputStats.startPressures.append(pressure)
+            }
+        }
     }
 
     override func touchesEstimatedPropertiesUpdated(_ touches: Set<UITouch>) {
@@ -919,11 +965,86 @@ final class CanvasViewController: UIViewController {
         renderer?.setPrediction(nil)
         renderer?.endStroke(tiles: tiles)
 
+        strokeRecord.samples = stroke.sampleCount
+        strokeRecord.dabs = stroke.dabCount
+        strokeRecord.durationMs = (touch.timestamp - strokeStartTime) * 1000
+        strokeRecord.lengthPx = stroke.length
+        strokeRecord.startPressures = inputStats.startPressures
+        if strokeRecord.device == "finger" { strokeRecord.pressureMin = 0.5; strokeRecord.pressureMax = 0.5 }
+        DiagnosticReport.shared.record(stroke: strokeRecord)
+        if let renderer {
+            var detail = DiagnosticReport.describe(stroke.brush)
+            detail += inputDescription()
+            detail.append(String(format: "pencil force so far: %ld estimated, %ld corrected, max correction %.3f",
+                                 inputStats.forceEstimated, inputStats.forceCorrected,
+                                 inputStats.forceMaxError))
+            detail.append("layer \(renderer.canvas.activeLayer) of \(renderer.canvas.layerCount)")
+            DiagnosticLog.shared.add(.stroke, strokeRecord.line, detail: detail.joined(separator: "\n"))
+        }
+
+        if !inputStats.startPressures.isEmpty {
+            Diagnostics.log("stroke start pressures: "
+                + inputStats.startPressures.map { String(format: "%.2f", $0) }.joined(separator: " "))
+        }
         if inputStats.forceEstimated > 0 {
             Diagnostics.log("force estimates: \(inputStats.forceEstimated) estimated, "
-                            + "\(inputStats.forceCorrected) corrected, max error "
+                            + "\(inputStats.forceCorrected) corrected, max correction "
                             + String(format: "%.3f", inputStats.forceMaxError))
         }
+    }
+
+    // MARK: - Diagnostic report
+
+    /// Opens the diagnostic log, from which entries are copied by id, or the
+    /// whole summary when nobody knows yet what to look for.
+    private func showDiagnostics() {
+        let viewer = DiagnosticsViewController()
+        viewer.makeSummary = { [weak self] in self?.diagnosticSummary() ?? "" }
+        viewer.modalPresentationStyle = .formSheet
+        present(viewer, animated: true)
+    }
+
+    /// The curated summary report. See DiagnosticReport for what is in it
+    /// and, deliberately, what is not.
+    private func diagnosticSummary() -> String {
+        guard let renderer else { return "" }
+        let stats = renderer.latestStats
+        let device = UIDevice.current
+        let header = [
+            "build \(AppVersion.short)",
+            "device \(device.model), \(device.systemName) \(device.systemVersion)",
+            "gpu \(MTLCreateSystemDefaultDevice()?.name ?? "unknown")",
+            String(format: "drawable %.0f x %.0f  panel %ld Hz", stats.drawableSize.width,
+                   stats.drawableSize.height, stats.displayMaxFPS),
+            "controls \(controlSide == .leading ? "left" : "right")  full screen \(isFullScreen ? "on" : "off")",
+        ]
+        let engine = [
+            String(format: "fps %.1f  last commit: gpu wait %.2f ms, readback %.2f ms",
+                   stats.fps, stats.gpuWaitMs, stats.lastCaptureMs),
+            "layers \(stats.layerCount) (live \(stats.liveLayerCount))  undo depth \(stats.undoDepth)",
+            "tiles live \(stats.liveTiles) resident \(stats.residentTiles) compressed \(stats.compressedTiles) spilled \(stats.spilledTiles)",
+            "memory resident \(stats.residentBytes / 1024) KB compressed \(stats.compressedBytes / 1024) KB spill \(stats.spillBytes / 1024) KB",
+            String(format: "pencil force: %ld estimated, %ld corrected, max correction %.3f",
+                   inputStats.forceEstimated, inputStats.forceCorrected, inputStats.forceMaxError),
+        ]
+        let text = DiagnosticReport.shared.text(header: header,
+                                                brush: DiagnosticReport.describe(renderer.brush),
+                                                input: inputDescription(), engine: engine,
+                                                logTail: Diagnostics.tail(lines: 40))
+        Diagnostics.log("diagnostic summary copied (\(text.utf8.count) bytes)")
+        return text
+    }
+
+    /// The person's Pressure and Smoothing settings as report lines.
+    private func inputDescription() -> [String] {
+        let curve = inputSettings.curveIsLinear ? "linear"
+            : inputSettings.curve.map { String(format: "(%.2f, %.2f)", $0.x, $0.y) }.joined(separator: " ")
+        return [
+            "pressure curve \(curve)",
+            String(format: "pressure smoothing %.2f  stabilization %.2f  motion filtering %.2f expression %.2f",
+                   inputSettings.pressureSmoothing, inputSettings.stabilization,
+                   inputSettings.motionFiltering, inputSettings.motionFilteringExpression),
+        ]
     }
 
     // MARK: - QuickShape
@@ -940,11 +1061,31 @@ final class CanvasViewController: UIViewController {
     /// if one fits, replace the stroke with it.
     private func snapToShape() {
         quickShapeTimer = nil
-        guard activeTouch != nil, snappedShape == nil,
-              let stroke, let shape = stroke.detectShape() else { return }
+        guard activeTouch != nil, snappedShape == nil, let stroke else { return }
+        let fit = stroke.fitShape()
+        recordShapeFit(fit)
+        guard fit.kind != Int32(MC_SHAPE_NONE.rawValue) else { return }
+        let shape = fit
         snappedShape = shape
         replaceStroke(with: shape)
         toast.show(Self.name(of: shape, constrained: false))
+    }
+
+    /// Every hold's fit goes to the log and the HUD, refusals included: how
+    /// far the stroke missed each shape, as a multiple of that shape's limit
+    /// (at or below 1 snaps). The limits were loosened once by judgement on
+    /// 2026-11-07; the next change to them should come from these numbers.
+    private func recordShapeFit(_ fit: MCQuickShape) {
+        func miss(_ value: Float) -> String { value > 0 ? String(format: "%.2f", value) : "—" }
+        let result = fit.kind == Int32(MC_SHAPE_NONE.rawValue)
+            ? "none" : Self.name(of: fit, constrained: false).lowercased()
+        let line = "\(result) · line \(miss(fit.lineMiss)) arc \(miss(fit.arcMiss)) "
+                 + "ellipse \(miss(fit.ellipseMiss)) polygon \(miss(fit.polylineMiss))"
+        Diagnostics.log("quickshape: " + line)
+        inputStats.lastShapeFit = line
+        strokeRecord.shape = line
+        DiagnosticLog.shared.add(.shape, line)
+        hud.update(input: inputStats)
     }
 
     private func constrainSnappedShape() {
@@ -954,6 +1095,7 @@ final class CanvasViewController: UIViewController {
         snappedShape = shape
         replaceStroke(with: shape)
         toast.show(Self.name(of: shape, constrained: true))
+        DiagnosticLog.shared.add(.shape, "constrained by a finger: \(Self.name(of: shape, constrained: true))")
     }
 
     private func moveSnappedLineEnd(to location: CGPoint) {
@@ -1056,14 +1198,17 @@ extension CanvasViewController: LayersPanelDelegate {
 
     func layersPanelDidRequestAdd(_ panel: LayersPanelView) {
         renderer?.addLayer()
+        DiagnosticLog.shared.add(.layer, "added; now \(renderer?.canvas.layerCount ?? 0) layers")
     }
 
     func layersPanel(_ panel: LayersPanelView, didSelect layer: MCLayerId) {
         renderer?.selectLayer(layer)
+        DiagnosticLog.shared.add(.layer, "selected layer \(layer)")
     }
 
     func layersPanel(_ panel: LayersPanelView, didRequestDelete layer: MCLayerId) {
         renderer?.removeLayer(layer)
+        DiagnosticLog.shared.add(.layer, "deleted layer \(layer); now \(renderer?.canvas.layerCount ?? 0) layers")
     }
 
     func layersPanel(_ panel: LayersPanelView, didUpdate properties: LayerProperties,

@@ -443,6 +443,22 @@ what each choice cost:
   line, arc, ellipse or polygon stays as drawn. The thresholds are ours, in
   `core/quickshape.cpp`, and tested on synthetic wobbly shapes; what a hand
   actually draws is the device's question.
+- **The default pen reaches a hairline** (2026-11-08). Procreate's Studio
+  Pen reads Pressure → Size 100%: no pressure, no width. Ours stopped at 25%
+  of the size, so a 40 px pen could not draw under 10 px. *The cost:* a light
+  touch now draws much thinner than before, which is the point but changes the
+  pen's feel.
+- **A search field on the brush panel** (asked for 2026-11-07, "to be improved
+  for the final UI"). A substring of each row's and section's name, under
+  Procreate's names. The full Brush Studio will have six times the rows, which
+  is when search stops being a convenience.
+- **A copyable diagnostic report** (asked for 2026-11-09). One button copies
+  a curated report — settings, the last 20 strokes as one line of numbers
+  each, a 600-frame window of CPU and GPU times, and the last 40 log lines —
+  for pasting to Claude. Curated rather than complete on purpose: a raw sample
+  log is thousands of lines nobody reads, and the numbers that decided bugs
+  13, 23 and 27 fit in one line per stroke. Never the drawing. Bounded at
+  16 KB, checked in CI.
 - **The eyedropper reads the engine, not the screen.** The engine composites
   the pixel with the same plan the renderer uses, so it is tested in CI — and
   it means the renderer's drawable can stay framebuffer-only.
@@ -468,11 +484,13 @@ transcription of one real brush's studio:
 | Rendering | 0 | 2 | 7 | 9 |
 | Dynamics | 3 | 1 | 1 | 5 |
 | Apple Pencil | 1 | 2 | 6 | 9 |
-| Properties | 1 | 1 | 3 | 5 |
-| **Total** | **20** | **9** | **44** | **73** |
+| Properties | 0 | 1 | 4 | 5 |
+| **Total** | **19** | **9** | **45** | **73** |
 
-**27% complete, 12% partial, 60% missing.** The three Stabilization settings
-moved on 2026-11-06. Was 15/12/73 when this section was
+**26% complete, 12% partial, 62% missing.** The three Stabilization settings
+moved on 2026-11-06. On 2026-11-08 Max / min size moved back to missing: it had
+been ticked against our pressure floor, and Procreate's pair are the Size
+slider's limits — a correction, not a regression. Was 15/12/73 when this section was
 written on 2026-09-08; the three structural gaps closed the next day moved four
 settings to complete and one to partial, Rendering style moved to partial on
 2026-09-09 when the Glaze/Blending split landed, and grain Brightness and
@@ -576,7 +594,7 @@ only in a commit message is a task nobody will find.
 | **StreamLine → Pressure** | Procreate documents it only loosely ("smoothing kicks in with pressure"). Implementing a reading of a sentence is how bug 21 happened; it waits for a measurement |
 | **Applying Pencil force corrections** | UIKit corrects estimated force up to ~50 ms late, and the engine is append-only, so applying them means revising dabs already drawn — the taper's restamp, again. The HUD now counts estimates and the largest correction; the size of that number decides whether it is worth it |
 | **A full pressure curve** | The global curve has two fixed handles, which already make an S-curve. Procreate's adds points on tap. Waits on someone wanting a shape two points cannot make |
-| **Edit Shape after QuickShape** | Procreate offers handles to adjust a snapped shape after lifting. Ours adjusts a line's end only while the pen is still down |
+| **Editing a QuickShape, and squares** | Decided with octolex 2026-11-07, after the first device round (B6). Procreate lets a snapped shape be scaled and rotated about the side opposite the pen, and snaps a box to a rectangle or a square; ours adjusts a line's end only, and a box stays a general polygon. Deferred to the vector work in M6, together with offering the snapped shape as a vector shape or rasterising it into the layer, which stays the default. Built on pixels now, the editing would be built twice — and "keep it as a vector" only exists once vector shapes do. What changed now instead: the fitting limits were roughly doubled, and every hold logs how far it missed each shape |
 | **Display P3** | Procreate offers a P3 canvas. Ours is sRGB throughout. Nothing yet says this matters for manga, which prints in CMYK or greyscale |
 | **A curve editor for the pressure response** | The curve exists in the model and is tested; nothing exposes it, which is why that setting is marked partial rather than complete in the table above |
 

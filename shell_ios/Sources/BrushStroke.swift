@@ -79,6 +79,9 @@ final class BrushStroke {
 
     var dabCount: Int { Int(mc_stroke_dab_count(handle)) }
 
+    /// Arc length walked so far, in canvas pixels.
+    var length: Float { mc_stroke_length(handle) }
+
     var isEmpty: Bool { dabCount == 0 }
 
     /// The first dab the end taper revised after it was emitted, or
@@ -90,9 +93,16 @@ final class BrushStroke {
     /// Fits a shape to the stroke drawn so far, in canvas pixels. Nil when the
     /// stroke is not clearly a shape, and should be left as drawn.
     func detectShape() -> MCQuickShape? {
+        let shape = fitShape()
+        return shape.kind == Int32(MC_SHAPE_NONE.rawValue) ? nil : shape
+    }
+
+    /// The fit, whether or not it found a shape — with how far the stroke
+    /// missed each one tried, for the log.
+    func fitShape() -> MCQuickShape {
         var shape = MCQuickShape()
-        let kind = mc_quickshape_detect(handle, &shape)
-        return kind == Int32(MC_SHAPE_NONE.rawValue) ? nil : shape
+        mc_quickshape_detect(handle, &shape)
+        return shape
     }
 
     /// A fresh, unfinished stroke drawing `shape` with this stroke's brush.
