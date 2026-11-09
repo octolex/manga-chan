@@ -40,6 +40,10 @@ struct DiagnosticEntry: Equatable {
     }
 
     let id: String
+    /// Order of arrival across every category. Entries are listed by this,
+    /// not by time: two added within one clock tick would otherwise sort by
+    /// id as text, and "F1000" sorts before "F901".
+    let sequence: Int
     let category: Category
     let time: Date
     /// One line, shown in the list.
@@ -63,6 +67,7 @@ final class DiagnosticLog {
 
     private var byCategory: [DiagnosticEntry.Category: [DiagnosticEntry]] = [:]
     private var counters: [DiagnosticEntry.Category: Int] = [:]
+    private var sequence = 0
 
     /// Called whenever an entry is added, so an open viewer can refresh.
     var onChange: (() -> Void)?
@@ -72,8 +77,10 @@ final class DiagnosticLog {
              detail: String = "", time: Date = Date()) -> String {
         let number = (counters[category] ?? 0) + 1
         counters[category] = number
-        let entry = DiagnosticEntry(id: "\(category.letter)\(number)", category: category,
-                                    time: time, summary: summary, detail: detail)
+        sequence += 1
+        let entry = DiagnosticEntry(id: "\(category.letter)\(number)", sequence: sequence,
+                                    category: category, time: time, summary: summary,
+                                    detail: detail)
         var list = byCategory[category] ?? []
         list.append(entry)
         if list.count > Self.capacityPerCategory {
@@ -96,7 +103,7 @@ final class DiagnosticLog {
                     || entry.summary.lowercased().contains(query)
                     || entry.detail.lowercased().contains(query)
             }
-            .sorted { $0.time == $1.time ? $0.id < $1.id : $0.time < $1.time }
+            .sorted { $0.sequence < $1.sequence }
     }
 
     func count(in category: DiagnosticEntry.Category) -> Int { byCategory[category]?.count ?? 0 }
