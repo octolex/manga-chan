@@ -452,6 +452,13 @@ what each choice cost:
   for the final UI"). A substring of each row's and section's name, under
   Procreate's names. The full Brush Studio will have six times the rows, which
   is when search stops being a convenience.
+- **A copyable diagnostic report** (asked for 2026-11-09). One button copies
+  a curated report — settings, the last 20 strokes as one line of numbers
+  each, a 600-frame window of CPU and GPU times, and the last 40 log lines —
+  for pasting to Claude. Curated rather than complete on purpose: a raw sample
+  log is thousands of lines nobody reads, and the numbers that decided bugs
+  13, 23 and 27 fit in one line per stroke. Never the drawing. Bounded at
+  16 KB, checked in CI.
 - **The eyedropper reads the engine, not the screen.** The engine composites
   the pixel with the same plan the renderer uses, so it is tested in CI — and
   it means the renderer's drawable can stay framebuffer-only.

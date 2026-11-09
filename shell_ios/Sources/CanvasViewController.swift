@@ -149,6 +149,10 @@ final class CanvasViewController: UIViewController {
     /// `touchesEstimatedPropertiesUpdated`.
     private var forceEstimates: [Int: Float] = [:]
 
+    /// The stroke in progress, summarised for the diagnostic report.
+    private var strokeRecord = StrokeRecord()
+    private var strokeStartTime: TimeInterval = 0
+
     override func loadView() {
         view = metalView
         view.backgroundColor = .white
@@ -557,6 +561,7 @@ final class CanvasViewController: UIViewController {
     private func setUpPressurePanel() {
         pressurePanel.isHidden = true
         pressurePanel.sync(inputSettings)
+        pressurePanel.onCopyReport = { [weak self] in self?.copyDiagnosticReport() }
         pressurePanel.onChange = { [weak self] settings in
             guard let self else { return }
             // Takes effect on the next stroke: the filters are fixed when a
@@ -771,6 +776,8 @@ final class CanvasViewController: UIViewController {
                                input: inputSettings.engineSettings)
         noteForceEstimates([touch])
         inputStats.startPressures = []
+        strokeRecord = StrokeRecord(device: touch.type == .pencil ? "pencil" : "finger")
+        strokeStartTime = touch.timestamp
         noteStartPressures([touch])
         path.append([strokePoint(from: touch)])
         stroke = path
@@ -867,9 +874,13 @@ final class CanvasViewController: UIViewController {
     /// Keeps the stroke's first eight raw Pencil pressures for the HUD and
     /// the log: the measurement behind the touch-down settle window.
     private func noteStartPressures(_ touches: [UITouch]) {
-        for touch in touches where touch.type == .pencil
-            && touch.maximumPossibleForce > 0 && inputStats.startPressures.count < 8 {
-            inputStats.startPressures.append(Float(touch.force / touch.maximumPossibleForce))
+        for touch in touches where touch.type == .pencil && touch.maximumPossibleForce > 0 {
+            let pressure = Float(touch.force / touch.maximumPossibleForce)
+            strokeRecord.pressureMin = min(strokeRecord.pressureMin, pressure)
+            strokeRecord.pressureMax = max(strokeRecord.pressureMax, pressure)
+            if inputStats.startPressures.count < 8 {
+                inputStats.startPressures.append(pressure)
+            }
         }
     }
 
@@ -932,6 +943,14 @@ final class CanvasViewController: UIViewController {
         renderer?.setPrediction(nil)
         renderer?.endStroke(tiles: tiles)
 
+        strokeRecord.samples = stroke.sampleCount
+        strokeRecord.dabs = stroke.dabCount
+        strokeRecord.durationMs = (touch.timestamp - strokeStartTime) * 1000
+        strokeRecord.lengthPx = stroke.length
+        strokeRecord.startPressures = inputStats.startPressures
+        if strokeRecord.device == "finger" { strokeRecord.pressureMin = 0.5; strokeRecord.pressureMax = 0.5 }
+        DiagnosticReport.shared.record(stroke: strokeRecord)
+
         if !inputStats.startPressures.isEmpty {
             Diagnostics.log("stroke start pressures: "
                 + inputStats.startPressures.map { String(format: "%.2f", $0) }.joined(separator: " "))
@@ -941,6 +960,48 @@ final class CanvasViewController: UIViewController {
                             + "\(inputStats.forceCorrected) corrected, max error "
                             + String(format: "%.3f", inputStats.forceMaxError))
         }
+    }
+
+    // MARK: - Diagnostic report
+
+    /// Copies the report to the clipboard for pasting to Claude. See
+    /// DiagnosticReport for what is in it and, deliberately, what is not.
+    private func copyDiagnosticReport() {
+        guard let renderer else { return }
+        let stats = renderer.latestStats
+        let device = UIDevice.current
+        let header = [
+            "build \(AppVersion.short)",
+            "device \(device.model), \(device.systemName) \(device.systemVersion)",
+            "gpu \(MTLCreateSystemDefaultDevice()?.name ?? "unknown")",
+            String(format: "drawable %.0f x %.0f  panel %ld Hz", stats.drawableSize.width,
+                   stats.drawableSize.height, stats.displayMaxFPS),
+            "controls \(controlSide == .leading ? "left" : "right")  full screen \(isFullScreen ? "on" : "off")",
+        ]
+        let curve = inputSettings.curveIsLinear ? "linear"
+            : inputSettings.curve.map { String(format: "(%.2f, %.2f)", $0.x, $0.y) }.joined(separator: " ")
+        let input = [
+            "pressure curve \(curve)",
+            String(format: "pressure smoothing %.2f  stabilization %.2f  motion filtering %.2f expression %.2f",
+                   inputSettings.pressureSmoothing, inputSettings.stabilization,
+                   inputSettings.motionFiltering, inputSettings.motionFilteringExpression),
+        ]
+        let engine = [
+            String(format: "fps %.1f  last commit: gpu wait %.2f ms, readback %.2f ms",
+                   stats.fps, stats.gpuWaitMs, stats.lastCaptureMs),
+            "layers \(stats.layerCount) (live \(stats.liveLayerCount))  undo depth \(stats.undoDepth)",
+            "tiles live \(stats.liveTiles) resident \(stats.residentTiles) compressed \(stats.compressedTiles) spilled \(stats.spilledTiles)",
+            "memory resident \(stats.residentBytes / 1024) KB compressed \(stats.compressedBytes / 1024) KB spill \(stats.spillBytes / 1024) KB",
+            String(format: "pencil force: %ld estimated, %ld corrected, max correction %.3f",
+                   inputStats.forceEstimated, inputStats.forceCorrected, inputStats.forceMaxError),
+        ]
+        let text = DiagnosticReport.shared.text(header: header,
+                                                brush: DiagnosticReport.describe(renderer.brush),
+                                                input: input, engine: engine,
+                                                logTail: Diagnostics.tail(lines: 40))
+        UIPasteboard.general.string = text
+        Diagnostics.log("diagnostic report copied (\(text.utf8.count) bytes)")
+        toast.show("Report copied — paste it to Claude")
     }
 
     // MARK: - QuickShape
@@ -979,6 +1040,7 @@ final class CanvasViewController: UIViewController {
                  + "ellipse \(miss(fit.ellipseMiss)) polygon \(miss(fit.polylineMiss))"
         Diagnostics.log("quickshape: " + line)
         inputStats.lastShapeFit = line
+        strokeRecord.shape = line
         hud.update(input: inputStats)
     }
 

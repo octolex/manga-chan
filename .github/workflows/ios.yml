@@ -181,7 +181,7 @@ jobs:
           # test says the GPU matched the CPU; it does not say whether it
           # matched by one level or by the whole tolerance, which is the
           # difference between comfortable and fragile.
-          grep -E 'blend shaders:|worst case:|rejects programmable|coverage precision:|sub-pixel dab:' \
+          grep -E 'blend shaders:|worst case:|rejects programmable|coverage precision:|sub-pixel dab:|diagnostic report:' \
             xcodebuild-test.log || echo '(no measurements printed)'
 
       - name: Build app (unsigned)

@@ -223,6 +223,7 @@ final class PressureCurveView: UIView, ScrollDragImmune {
 final class PressureSmoothingPanel: UIView {
 
     var onChange: ((PressureSmoothingSettings) -> Void)?
+    var onCopyReport: (() -> Void)?
 
     private(set) var settings = PressureSmoothingSettings()
     private let scrollView = RestorableScrollView()
@@ -338,6 +339,22 @@ final class PressureSmoothingPanel: UIView {
         floorNote.textColor = UIColor(white: 1, alpha: 0.45)
         floorNote.text = "A floor under every brush: a brush with more of its own keeps it."
         stack.addArrangedSubview(floorNote)
+
+        // Here until there is an Actions panel to hold it, which is where
+        // Procreate keeps Help. It belongs to the app, not to a brush.
+        let report = UIButton(type: .system)
+        report.setTitle("Copy diagnostic report", for: .normal)
+        report.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        report.contentHorizontalAlignment = .leading
+        report.addAction(UIAction { [weak self] _ in self?.onCopyReport?() }, for: .touchUpInside)
+        stack.addArrangedSubview(report)
+        let reportNote = UILabel()
+        reportNote.numberOfLines = 0
+        reportNote.font = .systemFont(ofSize: 11)
+        reportNote.textColor = UIColor(white: 1, alpha: 0.45)
+        reportNote.text = "Settings, the last 20 strokes as numbers, frame times and the "
+                        + "recent log. Never the drawing. Paste it to Claude."
+        stack.addArrangedSubview(reportNote)
     }
 
     private func heading(_ text: String) -> UILabel {

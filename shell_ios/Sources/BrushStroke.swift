@@ -79,6 +79,9 @@ final class BrushStroke {
 
     var dabCount: Int { Int(mc_stroke_dab_count(handle)) }
 
+    /// Arc length walked so far, in canvas pixels.
+    var length: Float { mc_stroke_length(handle) }
+
     var isEmpty: Bool { dabCount == 0 }
 
     /// The first dab the end taper revised after it was emitted, or

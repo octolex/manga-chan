@@ -178,6 +178,9 @@ final class Renderer: NSObject {
 
     var canvas: CanvasEngine { engine }
 
+    /// The latest frame statistics, for the diagnostic report.
+    var latestStats: FrameStats { stats }
+
     init(layer: CAMetalLayer) throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw RendererError.noDevice }
         guard let queue = device.makeCommandQueue() else { throw RendererError.noCommandQueue }
@@ -747,6 +750,7 @@ final class Renderer: NSObject {
         }
 
         let cpuMs = (CACurrentMediaTime() - cpuStart) * 1000.0
+        DiagnosticReport.shared.recordCPU(cpuMs)
         recordFrame(cpuMs: cpuMs, targetTimestamp: targetTimestamp,
                     dabCount: dabCount, plan: plan)
     }
@@ -794,6 +798,7 @@ final class Renderer: NSObject {
     }
 
     private func recordGPUTime(_ gpuMs: Double) {
+        DiagnosticReport.shared.recordGPU(gpuMs)
         smoothedGPUMs = smoothedGPUMs == 0 ? gpuMs : smoothedGPUMs * 0.9 + gpuMs * 0.1
     }
 }
