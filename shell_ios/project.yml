@@ -109,6 +109,7 @@ targets:
       - path: Sources/SliderScrubbing.swift
       - path: Sources/LoupePlacement.swift
       - path: Sources/DiagnosticReport.swift
+      - path: Sources/DiagnosticLog.swift
       - path: Sources/StrokeCoverage.swift
       # The colour picker and the scroll view it lives in. Three bugs reached
       # the device here in one build, all of them visible in a screenshot and

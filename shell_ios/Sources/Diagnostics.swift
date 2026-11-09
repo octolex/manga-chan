@@ -144,6 +144,13 @@ enum Diagnostics {
     }
 
     static func log(_ message: String) {
+        // Failures also become error entries in the browsable log, where they
+        // can be asked for by id. Hopped to the main thread, which owns it:
+        // this function is called from crash and background paths too.
+        let upper = message.uppercased()
+        if upper.contains("FAIL") || upper.contains("ERROR") || upper.contains("UNCAUGHT") {
+            DispatchQueue.main.async { DiagnosticLog.shared.add(.error, message) }
+        }
         let stamp = Self.timestampFormatter.string(from: Date())
         let line = "[\(stamp)] \(message)\n"
         // Also goes to the console, which is useful in the Simulator on CI.

@@ -343,7 +343,7 @@ final class PressureSmoothingPanel: UIView {
         // Here until there is an Actions panel to hold it, which is where
         // Procreate keeps Help. It belongs to the app, not to a brush.
         let report = UIButton(type: .system)
-        report.setTitle("Copy diagnostic report", for: .normal)
+        report.setTitle("Diagnostics…", for: .normal)
         report.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
         report.contentHorizontalAlignment = .leading
         report.addAction(UIAction { [weak self] _ in self?.onCopyReport?() }, for: .touchUpInside)
@@ -352,8 +352,8 @@ final class PressureSmoothingPanel: UIView {
         reportNote.numberOfLines = 0
         reportNote.font = .systemFont(ofSize: 11)
         reportNote.textColor = UIColor(white: 1, alpha: 0.45)
-        reportNote.text = "Settings, the last 20 strokes as numbers, frame times and the "
-                        + "recent log. Never the drawing. Paste it to Claude."
+        reportNote.text = "Numbered log entries to copy when Claude asks for them by id, "
+                        + "or a summary. Numbers only, never the drawing."
         stack.addArrangedSubview(reportNote)
     }
 

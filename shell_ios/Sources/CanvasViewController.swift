@@ -185,6 +185,9 @@ final class CanvasViewController: UIViewController {
             }
             self.renderer = renderer
             hud.addStaticLine(MTLCreateSystemDefaultDevice()?.name ?? "unknown GPU")
+            let device = UIDevice.current
+            DiagnosticLog.shared.add(.build, "\(AppVersion.short) · \(device.model) · \(device.systemName) \(device.systemVersion)",
+                                     detail: "gpu \(MTLCreateSystemDefaultDevice()?.name ?? "unknown")")
             hud.addStaticLine("2f undo · 3f redo · hold repeats")
             hud.addStaticLine("3f scrub clear · 4f full screen")
             renderer.onLayersChanged = { [weak self] in
@@ -304,18 +307,22 @@ final class CanvasViewController: UIViewController {
     }
 
     @objc private func handleUndo() {
-        _ = renderer?.undo()
+        let done = renderer?.undo() ?? false
+        DiagnosticLog.shared.add(.gesture, done ? "undo" : "undo — nothing to undo")
     }
 
     @objc private func handleRedo() {
-        _ = renderer?.redo()
+        let done = renderer?.redo() ?? false
+        DiagnosticLog.shared.add(.gesture, done ? "redo" : "redo — nothing to redo")
     }
 
     @objc private func handleRapidUndo(_ gesture: UILongPressGestureRecognizer) {
+        if gesture.state == .began { DiagnosticLog.shared.add(.gesture, "hold: rapid undo") }
         repeatWhileHeld(gesture) { [weak self] in self?.renderer?.undo() ?? false }
     }
 
     @objc private func handleRapidRedo(_ gesture: UILongPressGestureRecognizer) {
+        if gesture.state == .began { DiagnosticLog.shared.add(.gesture, "hold: rapid redo") }
         repeatWhileHeld(gesture) { [weak self] in self?.renderer?.redo() ?? false }
     }
 
@@ -347,6 +354,7 @@ final class CanvasViewController: UIViewController {
         if gesture.track(gesture.translation(in: view).x) {
             renderer?.clearActiveLayer()
             toast.show("Layer cleared")
+            DiagnosticLog.shared.add(.gesture, "three-finger scrub: layer cleared")
         }
     }
 
@@ -370,6 +378,9 @@ final class CanvasViewController: UIViewController {
         case .ended:
             eyedropperLoupe.hide()
             renderer.setInkRGB(sampled)
+            DiagnosticLog.shared.add(.gesture, String(format: "eyedropper picked #%02X%02X%02X at (%.0f, %.0f) pt",
+                                                      Int(sampled.x * 255), Int(sampled.y * 255),
+                                                      Int(sampled.z * 255), point.x, point.y))
             if !brushPanel.isHidden {
                 brushPanel.sync(brush: renderer.brush, color: pickedColor)
             }
@@ -382,6 +393,7 @@ final class CanvasViewController: UIViewController {
 
     @objc private func toggleFullScreen() {
         isFullScreen.toggle()
+        DiagnosticLog.shared.add(.gesture, isFullScreen ? "full screen on" : "full screen off")
         if isFullScreen {
             layersPanel.isHidden = true
             brushPanel.isHidden = true
@@ -561,7 +573,7 @@ final class CanvasViewController: UIViewController {
     private func setUpPressurePanel() {
         pressurePanel.isHidden = true
         pressurePanel.sync(inputSettings)
-        pressurePanel.onCopyReport = { [weak self] in self?.copyDiagnosticReport() }
+        pressurePanel.onCopyReport = { [weak self] in self?.showDiagnostics() }
         pressurePanel.onChange = { [weak self] settings in
             guard let self else { return }
             // Takes effect on the next stroke: the filters are fixed when a
@@ -618,6 +630,12 @@ final class CanvasViewController: UIViewController {
 
     @objc private func toggleBrushPanel() {
         brushPanel.isHidden.toggle()
+        if brushPanel.isHidden, let renderer {
+            // A snapshot on close rather than one per slider tick: what was
+            // set, not every value passed on the way.
+            DiagnosticLog.shared.add(.settings, "brush, as the panel closed",
+                                     detail: DiagnosticReport.describe(renderer.brush).joined(separator: "\n"))
+        }
         if !brushPanel.isHidden, let renderer {
             showOnly(brushPanel)
             let ink = renderer.inkColor
@@ -637,6 +655,10 @@ final class CanvasViewController: UIViewController {
 
     @objc private func togglePressurePanel() {
         pressurePanel.isHidden.toggle()
+        if pressurePanel.isHidden {
+            DiagnosticLog.shared.add(.settings, "pressure and smoothing, as the panel closed",
+                                     detail: inputDescription().joined(separator: "\n"))
+        }
         if !pressurePanel.isHidden {
             showOnly(pressurePanel)
             pressurePanel.sync(inputSettings)
@@ -950,6 +972,15 @@ final class CanvasViewController: UIViewController {
         strokeRecord.startPressures = inputStats.startPressures
         if strokeRecord.device == "finger" { strokeRecord.pressureMin = 0.5; strokeRecord.pressureMax = 0.5 }
         DiagnosticReport.shared.record(stroke: strokeRecord)
+        if let renderer {
+            var detail = DiagnosticReport.describe(stroke.brush)
+            detail += inputDescription()
+            detail.append(String(format: "pencil force so far: %ld estimated, %ld corrected, max correction %.3f",
+                                 inputStats.forceEstimated, inputStats.forceCorrected,
+                                 inputStats.forceMaxError))
+            detail.append("layer \(renderer.canvas.activeLayer) of \(renderer.canvas.layerCount)")
+            DiagnosticLog.shared.add(.stroke, strokeRecord.line, detail: detail.joined(separator: "\n"))
+        }
 
         if !inputStats.startPressures.isEmpty {
             Diagnostics.log("stroke start pressures: "
@@ -957,17 +988,26 @@ final class CanvasViewController: UIViewController {
         }
         if inputStats.forceEstimated > 0 {
             Diagnostics.log("force estimates: \(inputStats.forceEstimated) estimated, "
-                            + "\(inputStats.forceCorrected) corrected, max error "
+                            + "\(inputStats.forceCorrected) corrected, max correction "
                             + String(format: "%.3f", inputStats.forceMaxError))
         }
     }
 
     // MARK: - Diagnostic report
 
-    /// Copies the report to the clipboard for pasting to Claude. See
-    /// DiagnosticReport for what is in it and, deliberately, what is not.
-    private func copyDiagnosticReport() {
-        guard let renderer else { return }
+    /// Opens the diagnostic log, from which entries are copied by id, or the
+    /// whole summary when nobody knows yet what to look for.
+    private func showDiagnostics() {
+        let viewer = DiagnosticsViewController()
+        viewer.makeSummary = { [weak self] in self?.diagnosticSummary() ?? "" }
+        viewer.modalPresentationStyle = .formSheet
+        present(viewer, animated: true)
+    }
+
+    /// The curated summary report. See DiagnosticReport for what is in it
+    /// and, deliberately, what is not.
+    private func diagnosticSummary() -> String {
+        guard let renderer else { return "" }
         let stats = renderer.latestStats
         let device = UIDevice.current
         let header = [
@@ -977,14 +1017,6 @@ final class CanvasViewController: UIViewController {
             String(format: "drawable %.0f x %.0f  panel %ld Hz", stats.drawableSize.width,
                    stats.drawableSize.height, stats.displayMaxFPS),
             "controls \(controlSide == .leading ? "left" : "right")  full screen \(isFullScreen ? "on" : "off")",
-        ]
-        let curve = inputSettings.curveIsLinear ? "linear"
-            : inputSettings.curve.map { String(format: "(%.2f, %.2f)", $0.x, $0.y) }.joined(separator: " ")
-        let input = [
-            "pressure curve \(curve)",
-            String(format: "pressure smoothing %.2f  stabilization %.2f  motion filtering %.2f expression %.2f",
-                   inputSettings.pressureSmoothing, inputSettings.stabilization,
-                   inputSettings.motionFiltering, inputSettings.motionFilteringExpression),
         ]
         let engine = [
             String(format: "fps %.1f  last commit: gpu wait %.2f ms, readback %.2f ms",
@@ -997,11 +1029,22 @@ final class CanvasViewController: UIViewController {
         ]
         let text = DiagnosticReport.shared.text(header: header,
                                                 brush: DiagnosticReport.describe(renderer.brush),
-                                                input: input, engine: engine,
+                                                input: inputDescription(), engine: engine,
                                                 logTail: Diagnostics.tail(lines: 40))
-        UIPasteboard.general.string = text
-        Diagnostics.log("diagnostic report copied (\(text.utf8.count) bytes)")
-        toast.show("Report copied — paste it to Claude")
+        Diagnostics.log("diagnostic summary copied (\(text.utf8.count) bytes)")
+        return text
+    }
+
+    /// The person's Pressure and Smoothing settings as report lines.
+    private func inputDescription() -> [String] {
+        let curve = inputSettings.curveIsLinear ? "linear"
+            : inputSettings.curve.map { String(format: "(%.2f, %.2f)", $0.x, $0.y) }.joined(separator: " ")
+        return [
+            "pressure curve \(curve)",
+            String(format: "pressure smoothing %.2f  stabilization %.2f  motion filtering %.2f expression %.2f",
+                   inputSettings.pressureSmoothing, inputSettings.stabilization,
+                   inputSettings.motionFiltering, inputSettings.motionFilteringExpression),
+        ]
     }
 
     // MARK: - QuickShape
@@ -1041,6 +1084,7 @@ final class CanvasViewController: UIViewController {
         Diagnostics.log("quickshape: " + line)
         inputStats.lastShapeFit = line
         strokeRecord.shape = line
+        DiagnosticLog.shared.add(.shape, line)
         hud.update(input: inputStats)
     }
 
@@ -1051,6 +1095,7 @@ final class CanvasViewController: UIViewController {
         snappedShape = shape
         replaceStroke(with: shape)
         toast.show(Self.name(of: shape, constrained: true))
+        DiagnosticLog.shared.add(.shape, "constrained by a finger: \(Self.name(of: shape, constrained: true))")
     }
 
     private func moveSnappedLineEnd(to location: CGPoint) {
@@ -1153,14 +1198,17 @@ extension CanvasViewController: LayersPanelDelegate {
 
     func layersPanelDidRequestAdd(_ panel: LayersPanelView) {
         renderer?.addLayer()
+        DiagnosticLog.shared.add(.layer, "added; now \(renderer?.canvas.layerCount ?? 0) layers")
     }
 
     func layersPanel(_ panel: LayersPanelView, didSelect layer: MCLayerId) {
         renderer?.selectLayer(layer)
+        DiagnosticLog.shared.add(.layer, "selected layer \(layer)")
     }
 
     func layersPanel(_ panel: LayersPanelView, didRequestDelete layer: MCLayerId) {
         renderer?.removeLayer(layer)
+        DiagnosticLog.shared.add(.layer, "deleted layer \(layer); now \(renderer?.canvas.layerCount ?? 0) layers")
     }
 
     func layersPanel(_ panel: LayersPanelView, didUpdate properties: LayerProperties,

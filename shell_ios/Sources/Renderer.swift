@@ -170,6 +170,7 @@ final class Renderer: NSObject {
     private var smoothedFPS: Double = 0
     private var smoothedGPUMs: Double = 0
     private var smoothedCPUMs: Double = 0
+    private var lastSlowFrameEntry: CFTimeInterval = 0
 
     // The coverage format — four channels, because RGB holds ink density and
     // alpha the stroke's geometry and they need different blend operations,
@@ -397,6 +398,14 @@ final class Renderer: NSObject {
         // texture into tiles.
         stats.gpuWaitMs = (readStarted - waitStarted) * 1000.0
         stats.lastCaptureMs = (CACurrentMediaTime() - readStarted) * 1000.0
+
+        // One frame entry per committed stroke: what the commit cost, and the
+        // recent frame times it sits among.
+        let c = DiagnosticReport.shared.cpu.summary
+        let g = DiagnosticReport.shared.gpu.summary
+        DiagnosticLog.shared.add(.frame, String(
+            format: "commit %ld tiles: gpu wait %.2f ms, readback %.2f ms · cpu p95 %.2f max %.2f · gpu p95 %.2f max %.2f",
+            commit.tiles.count, stats.gpuWaitMs, stats.lastCaptureMs, c.p95, c.max, g.p95, g.max))
 
         stroke = nil
         prediction = nil
@@ -751,6 +760,14 @@ final class Renderer: NSObject {
 
         let cpuMs = (CACurrentMediaTime() - cpuStart) * 1000.0
         DiagnosticReport.shared.recordCPU(cpuMs)
+        // A frame that blew its budget is worth an entry of its own, but at
+        // most one a second, or a stall would bury everything else.
+        let budgetMs = stats.displayMaxFPS > 0 ? 1000.0 / Double(stats.displayMaxFPS) : 16.7
+        if cpuMs > budgetMs, cpuStart - lastSlowFrameEntry > 1 {
+            lastSlowFrameEntry = cpuStart
+            DiagnosticLog.shared.add(.frame, String(format: "slow frame: cpu %.2f ms against a %.1f ms budget, %ld dabs",
+                                                    cpuMs, budgetMs, dabCount))
+        }
         recordFrame(cpuMs: cpuMs, targetTimestamp: targetTimestamp,
                     dabCount: dabCount, plan: plan)
     }
