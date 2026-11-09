@@ -95,15 +95,25 @@ final class DiagnosticLog {
     /// `search` (case-insensitive), oldest first.
     func entries(in categories: Set<DiagnosticEntry.Category> = Set(DiagnosticEntry.Category.allCases),
                  matching search: String = "") -> [DiagnosticEntry] {
+        // Written as plain statements: as one chained expression the Swift
+        // type checker gave up on it in CI.
         let query = search.trimmingCharacters(in: .whitespaces).lowercased()
-        return categories.flatMap { byCategory[$0] ?? [] }
-            .filter { entry in
-                query.isEmpty
-                    || entry.id.lowercased() == query
-                    || entry.summary.lowercased().contains(query)
-                    || entry.detail.lowercased().contains(query)
+        var result: [DiagnosticEntry] = []
+        for category in categories {
+            let list: [DiagnosticEntry] = byCategory[category] ?? []
+            for entry in list where Self.entry(entry, matches: query) {
+                result.append(entry)
             }
-            .sorted { $0.sequence < $1.sequence }
+        }
+        result.sort { (a: DiagnosticEntry, b: DiagnosticEntry) -> Bool in a.sequence < b.sequence }
+        return result
+    }
+
+    private static func entry(_ entry: DiagnosticEntry, matches query: String) -> Bool {
+        if query.isEmpty { return true }
+        if entry.id.lowercased() == query { return true }
+        if entry.summary.lowercased().contains(query) { return true }
+        return entry.detail.lowercased().contains(query)
     }
 
     func count(in category: DiagnosticEntry.Category) -> Int { byCategory[category]?.count ?? 0 }
