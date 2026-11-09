@@ -62,6 +62,24 @@ namespace mc {
 /// tests that the two agree.
 inline constexpr float kMinimumDrawnRadius = 1.25f;
 
+/// How long, in seconds, the start of a Pencil stroke is held back while its
+/// pressure settles.
+///
+/// Found on the device, 2026-11-09: with the default pen going to a hairline
+/// at light pressure (D4), a stroke started lightly began with one big dab and
+/// then ran on at about 1 px. UIKit's corrections to estimated force were
+/// measured on the same device and peak at 0.08, far too small to explain it,
+/// so the reasoned cause is a real force spike as the nib strikes the glass.
+/// During this window the held start takes the lowest pressure seen so far:
+/// a spike that falls away is discounted, and a stroke that starts light and
+/// presses harder is untouched, because its earliest samples are already the
+/// lightest. The price is that the first dab appears this much later; the
+/// predicted tip covers most of it.
+///
+/// **25 ms is a guess** — six Pencil samples. The HUD now shows each stroke's
+/// first raw pressures, which is the measurement that sets it.
+inline constexpr double kTouchDownSettle = 0.025;
+
 /// One stamp of the brush shape. This is the entire contract with the GPU:
 /// whatever the brush model grows into, the renderer only ever sees these.
 struct Dab {
@@ -210,7 +228,12 @@ private:
     float nextSpacing_ = 0.0f;// arc length still to cover before the next dab
     float travelled_ = 0.0f;  // total arc length
     double lastTimestamp_ = 0.0;
+    double firstTimestamp_ = 0.0;
     bool finished_ = false;
+
+    /// While the touch-down is settling, lowers every held node's pressure to
+    /// `pressure` where that is lower. See kTouchDownSettle.
+    void settleStartPressure(float pressure, double timestamp);
 
     /// Latched from the first sample. One stroke is one touch, so a stroke
     /// that changed device mid-way would be a bug in the shell rather than a

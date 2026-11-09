@@ -770,6 +770,8 @@ final class CanvasViewController: UIViewController {
                                seed: strokeSeed,
                                input: inputSettings.engineSettings)
         noteForceEstimates([touch])
+        inputStats.startPressures = []
+        noteStartPressures([touch])
         path.append([strokePoint(from: touch)])
         stroke = path
         snappedShape = nil
@@ -811,6 +813,7 @@ final class CanvasViewController: UIViewController {
         // would discard most of a fast stroke.
         let coalesced = event?.coalescedTouches(for: active) ?? [active]
         noteForceEstimates(coalesced)
+        noteStartPressures(coalesced)
         stroke.append(coalesced.map(strokePoint(from:)))
         renderer?.setStroke(stroke, sampleCount: coalesced.count)
         recordInput(from: active, samplesThisEvent: coalesced.count)
@@ -859,6 +862,15 @@ final class CanvasViewController: UIViewController {
         }
         // Bounded: an update that never comes must not grow this forever.
         if forceEstimates.count > 4096 { forceEstimates.removeAll(keepingCapacity: true) }
+    }
+
+    /// Keeps the stroke's first eight raw Pencil pressures for the HUD and
+    /// the log: the measurement behind the touch-down settle window.
+    private func noteStartPressures(_ touches: [UITouch]) {
+        for touch in touches where touch.type == .pencil
+            && touch.maximumPossibleForce > 0 && inputStats.startPressures.count < 8 {
+            inputStats.startPressures.append(Float(touch.force / touch.maximumPossibleForce))
+        }
     }
 
     override func touchesEstimatedPropertiesUpdated(_ touches: Set<UITouch>) {
@@ -920,6 +932,10 @@ final class CanvasViewController: UIViewController {
         renderer?.setPrediction(nil)
         renderer?.endStroke(tiles: tiles)
 
+        if !inputStats.startPressures.isEmpty {
+            Diagnostics.log("stroke start pressures: "
+                + inputStats.startPressures.map { String(format: "%.2f", $0) }.joined(separator: " "))
+        }
         if inputStats.forceEstimated > 0 {
             Diagnostics.log("force estimates: \(inputStats.forceEstimated) estimated, "
                             + "\(inputStats.forceCorrected) corrected, max error "

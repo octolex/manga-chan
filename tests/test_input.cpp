@@ -318,6 +318,91 @@ void testInkPenGoesToAHairline() {
     CHECK(widest * 2.0f < 1.0f);
 }
 
+/// A 40 px default pen through a run of Pencil samples at 240 Hz, moving
+/// 3 px a sample, with the given pressures and then `rest` at the last one.
+StrokePath penStroke(const std::vector<float>& pressures, int rest, bool pencil = true) {
+    Brush pen = inkPen();
+    pen.size = 40.0f;
+    pen.smoothing = 0.0f;
+    StrokePath path(pen);
+    int i = 0;
+    auto add = [&](float p) {
+        StrokeSample s = sampleAt(3.0f * static_cast<float>(i), 0.0f, i / 240.0, p);
+        s.fromPressureDevice = pencil;
+        path.addSample(s);
+        ++i;
+    };
+    for (float p : pressures) add(p);
+    for (int k = 0; k < rest; ++k) add(pressures.back());
+    path.finish();
+    return path;
+}
+
+void testATouchDownSpikeLeavesNoBlob() {
+    std::printf("a touch-down force spike that falls away does not leave a big first dab\n");
+    // Reasoned shape of the spike: hard for a few samples, then the light
+    // touch the artist meant (octolex's screenshot, 2026-11-09).
+    const StrokePath spike = penStroke({0.9f, 0.6f, 0.25f, 0.03f}, 40);
+    const float first = spike.dabs().front().radius;
+    std::printf("    first dab radius %.2f px (it was the size of a 0.9 pressure dab)\n", first);
+    CHECK(first * 2.0f < 1.0f);
+    for (size_t i = 0; i < 12 && i < spike.dabs().size(); ++i) {
+        CHECK(spike.dabs()[i].radius * 2.0f < 1.0f);
+    }
+}
+
+void testARampUpIsUntouched() {
+    std::printf("a stroke that starts light and presses harder keeps its shape\n");
+    const StrokePath ramp = penStroke({0.03f, 0.1f, 0.3f, 0.6f, 0.9f}, 40);
+    CHECK(ramp.dabs().front().radius * 2.0f < 1.0f);
+    CHECK(ramp.dabs().back().radius > 8.0f);   // full pressure still reaches full width
+}
+
+void testTheStartIsHeldOnlyBriefly() {
+    std::printf("the start is held for the settle window, then released\n");
+    Brush pen = inkPen();
+    pen.smoothing = 0.0f;
+    StrokePath path(pen);
+    for (int i = 0; i < 4; ++i) {   // 12.5 ms in
+        path.addSample(sampleAt(3.0f * i, 0.0f, i / 240.0, 0.5f));
+    }
+    CHECK(path.dabs().empty());
+    for (int i = 4; i < 10; ++i) {  // past 25 ms
+        path.addSample(sampleAt(3.0f * i, 0.0f, i / 240.0, 0.5f));
+    }
+    CHECK(!path.dabs().empty());
+
+    // A finger has no force to settle and is never held.
+    StrokePath finger(pen);
+    for (int i = 0; i < 4; ++i) {
+        StrokeSample s = sampleAt(3.0f * i, 0.0f, i / 240.0, 0.5f);
+        s.fromPressureDevice = false;
+        finger.addSample(s);
+    }
+    CHECK(!finger.dabs().empty());
+
+    // A quick dot inside the window still puts ink down.
+    StrokePath dot(pen);
+    dot.addSample(sampleAt(0.0f, 0.0f, 0.0, 0.9f));
+    dot.addSample(sampleAt(1.0f, 0.0f, 0.004, 0.4f));
+    dot.finish();
+    CHECK(!dot.dabs().empty());
+}
+
+void testAPenRestingWhereItLandedStillSettles() {
+    std::printf("force reported before the pen moves still settles the start\n");
+    Brush pen = inkPen();
+    pen.size = 40.0f;
+    pen.smoothing = 0.0f;
+    StrokePath path(pen);
+    path.addSample(sampleAt(0.0f, 0.0f, 0.0, 0.9f));
+    path.addSample(sampleAt(0.0f, 0.0f, 1 / 240.0, 0.4f));   // same spot, lighter
+    path.addSample(sampleAt(0.0f, 0.0f, 2 / 240.0, 0.03f));
+    for (int i = 3; i < 40; ++i) path.addSample(sampleAt(3.0f * i, 0.0f, i / 240.0, 0.03f));
+    path.finish();
+    CHECK(path.dabs().front().radius * 2.0f < 1.0f);
+}
+
 }  // namespace
 
 int main() {
@@ -334,5 +419,9 @@ int main() {
     testSubPixelDabsReachTheTilesTheyAreDrawnIn();
     testRevisedDabsAreReported();
     testInkPenGoesToAHairline();
+    testATouchDownSpikeLeavesNoBlob();
+    testARampUpIsUntouched();
+    testTheStartIsHeldOnlyBriefly();
+    testAPenRestingWhereItLandedStillSettles();
     return check::report("test_input");
 }

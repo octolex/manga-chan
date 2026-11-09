@@ -167,6 +167,11 @@ final class HUDView: UIView {
             // The last QuickShape hold, and how far it missed each shape:
             // at or below 1 snaps. What the next round's limits come from.
             lines.append("shape    " + input.lastShapeFit)
+            // The last stroke's first raw pressures, one per Pencil sample
+            // (about 4 ms apart). A touch-down spike shows as high values
+            // falling away; how many there are sets the settle window.
+            lines.append("start p  " + (input.startPressures.isEmpty ? "—"
+                : input.startPressures.map { String(format: "%.2f", $0) }.joined(separator: " ")))
 
             lines.append("")
             lines.append(contentsOf: staticInfo)
